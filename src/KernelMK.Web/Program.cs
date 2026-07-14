@@ -9,21 +9,60 @@ using KernelMK.Web.Components.Account;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Serilog;
+using Serilog.Events;
 
-var builder = WebApplication.CreateBuilder(args);
+// Journalisation fichier (rotation quotidienne, 30 jours conservés) + console, pour pouvoir analyser
+// le comportement de l'application une fois installée en Service Windows (pas de fenêtre console).
+var logsPath = Path.Combine(AppContext.BaseDirectory, "logs");
+Directory.CreateDirectory(logsPath);
 
-// Permet d'exécuter l'application comme Service Windows (installation via sc.exe/New-Service) ;
-// sans effet quand elle est lancée normalement (console, IIS Express, dotnet run).
-builder.Host.UseWindowsService(options =>
+Log.Logger = new LoggerConfiguration()
+    .MinimumLevel.Information()
+    .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
+    .MinimumLevel.Override("Microsoft.EntityFrameworkCore", LogEventLevel.Warning)
+    .Enrich.FromLogContext()
+    .WriteTo.Console()
+    .WriteTo.File(
+        Path.Combine(logsPath, "kernelmk-.log"),
+        rollingInterval: RollingInterval.Day,
+        retainedFileCountLimit: 30,
+        shared: true,
+        outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {SourceContext}{NewLine}{Message:lj}{NewLine}{Exception}")
+    .CreateBootstrapLogger();
+
+try
 {
-    options.ServiceName = "KernelMK";
-});
+    Log.Information("Démarrage de kernelMK...");
 
-// Garantit l'existence du dossier de données (fichier SQLite) au premier lancement, y compris depuis l'exécutable publié.
-Directory.CreateDirectory(Path.Combine(builder.Environment.ContentRootPath, "App_Data"));
-Directory.CreateDirectory(Path.Combine(AppContext.BaseDirectory, "backups"));
+    var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddRazorComponents()
+    builder.Host.UseSerilog((context, services, configuration) => configuration
+        .ReadFrom.Configuration(context.Configuration)
+        .ReadFrom.Services(services)
+        .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
+        .MinimumLevel.Override("Microsoft.EntityFrameworkCore", LogEventLevel.Warning)
+        .Enrich.FromLogContext()
+        .WriteTo.Console()
+        .WriteTo.File(
+            Path.Combine(logsPath, "kernelmk-.log"),
+            rollingInterval: RollingInterval.Day,
+            retainedFileCountLimit: 30,
+            shared: true,
+            outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {SourceContext}{NewLine}{Message:lj}{NewLine}{Exception}"));
+
+    // Permet d'exécuter l'application comme Service Windows (installation via sc.exe/New-Service) ;
+    // sans effet quand elle est lancée normalement (console, IIS Express, dotnet run).
+    builder.Host.UseWindowsService(options =>
+    {
+        options.ServiceName = "KernelMK";
+    });
+
+    // Garantit l'existence du dossier de données (fichier SQLite) au premier lancement, y compris depuis l'exécutable publié.
+    Directory.CreateDirectory(Path.Combine(builder.Environment.ContentRootPath, "App_Data"));
+    Directory.CreateDirectory(Path.Combine(AppContext.BaseDirectory, "backups"));
+
+    builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
 builder.Services.AddCascadingAuthenticationState();
@@ -45,6 +84,8 @@ builder.Services.AddSingleton<IEmailSender<ApplicationUser>, IdentityNoOpEmailSe
 builder.Services.AddSingleton<SetupState>();
 
 var app = builder.Build();
+
+app.UseSerilogRequestLogging();
 
 var setupState = app.Services.GetRequiredService<SetupState>();
 using (var scope = app.Services.CreateScope())
@@ -115,4 +156,13 @@ app.MapPost("/api/triggers/{token}", async (string token, IDbContextFactory<AppD
     return Results.Ok(new { execution.Id, Status = execution.Status.ToString() });
 });
 
-app.Run();
+    app.Run();
+}
+catch (Exception ex)
+{
+    Log.Fatal(ex, "kernelMK s'est arrêté de façon inattendue.");
+}
+finally
+{
+    Log.CloseAndFlush();
+}

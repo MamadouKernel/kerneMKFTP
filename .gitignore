@@ -14,6 +14,7 @@ publish/
 # Runtime data (SQLite DB, Data Protection keys, backups)
 src/KernelMK.Web/App_Data/
 src/KernelMK.Web/backups/
+src/KernelMK.Web/logs/
 *.db
 *.db-shm
 *.db-wal
