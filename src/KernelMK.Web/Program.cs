@@ -158,6 +158,15 @@ app.MapPost("/api/triggers/{token}", async (string token, IDbContextFactory<AppD
 
     app.Run();
 }
+catch (IOException ex) when (ex.InnerException is Microsoft.AspNetCore.Connections.AddressInUseException)
+{
+    var urls = Environment.GetEnvironmentVariable("ASPNETCORE_URLS") ?? "http://localhost:5000 (par défaut)";
+    Log.Fatal(ex,
+        "Impossible de démarrer : le port est déjà utilisé par une autre application ({Urls}). " +
+        "Vérifie ce qui occupe ce port avec 'netstat -ano | findstr :5000' (remplace 5000 par le bon port), " +
+        "puis soit ferme cette application, soit change le port de kernelMK via la variable d'environnement " +
+        "ASPNETCORE_URLS ou la section Kestrel:Endpoints de appsettings.json.", urls);
+}
 catch (Exception ex)
 {
     Log.Fatal(ex, "kernelMK s'est arrêté de façon inattendue.");
