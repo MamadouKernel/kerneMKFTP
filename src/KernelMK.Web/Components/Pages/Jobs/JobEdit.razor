@@ -82,6 +82,10 @@ else
                 <button type="button" class="kmk-btn-primary kmk-btn-sm" @onclick="AddStep">+ Ajouter une étape</button>
             </div>
             <div class="kmk-card-body space-y-4">
+                <p class="text-xs text-slate-400 -mt-1">
+                    💡 Astuce : choisis le type d'étape puis clique sur « Modèle JSON » pour préremplir la configuration
+                    avec les champs attendus — il ne reste plus qu'à ajuster les valeurs (chemins, hôte, requête...).
+                </p>
                 @foreach (var step in _job.Steps.OrderBy(s => s.Order).ToList())
                 {
                     <div class="border border-slate-200 rounded-lg p-4">
@@ -413,9 +417,17 @@ else
                 new ScriptStepConfig { Path = @"C:\scripts\exemple.ps1", Arguments = "-Param valeur" },
             StepType.FichierCopier or StepType.FichierDeplacer or StepType.FichierRenommer or StepType.FichierSupprimer
                 or StepType.FichierCompresser or StepType.FichierDecompresser or StepType.FichierVerifier =>
-                new FileOpStepConfig { SourcePath = @"C:\source", DestinationPath = @"C:\destination", Filter = "*.csv" },
+                new FileOpStepConfig { SourcePath = @"C:\source", DestinationPath = @"C:\destination", Filter = "*.csv;*.txt;*.xml" },
             StepType.TransfertFtp or StepType.TransfertFtps or StepType.TransfertSftp or StepType.TransfertSmb =>
-                new TransferStepConfig { Host = "sftp.exemple.fr", Port = 22, RemotePath = "/upload/fichier.csv", LocalPath = @"C:\data\fichier.csv", Upload = true },
+                new TransferStepConfig
+                {
+                    Host = "sftp.exemple.fr", Port = 22, Upload = true,
+                    // Mono-fichier : RemotePath/LocalPath désignent un fichier, laisser Filter à null.
+                    RemotePath = "/upload/fichier.csv", LocalPath = @"C:\data\fichier.csv",
+                    // Multi-fichiers : renseigner Filter pour traiter RemotePath/LocalPath comme des dossiers,
+                    // ex Filter = "*.csv;*.txt;*.xml" (plusieurs formats en une seule étape).
+                    Filter = null
+                },
             StepType.BaseDeDonneesRequete or StepType.ScriptSql =>
                 new SqlStepConfig { Provider = "Sqlite", ConnectionString = "Data Source=exemple.db", CommandText = "SELECT 1;" },
             StepType.EmailSmtp =>
@@ -424,6 +436,19 @@ else
                 new WebhookStepConfig { Url = "https://exemple.fr/webhook", Method = "POST" },
             StepType.ControleAttente or StepType.ControleCondition or StepType.ControleAppelJob =>
                 new ControlStepConfig { Operation = ControlOperation.Attente, WaitSeconds = 30 },
+            StepType.EdifactMessage =>
+                new EdifactStepConfig
+                {
+                    Operation = EdifactOperation.Generer,
+                    MessageType = EdifactMessageType.Coparn,
+                    SenderId = "FRLEH", ReceiverId = "TERMINAL1", DocumentNumber = "BKG123456",
+                    LocationCode = "FRLEH", VesselName = "MSC EXEMPLE", VoyageNumber = "0042E",
+                    OutputPath = @"C:\edi\sortie\coparn_exemple.edi",
+                    Containers = new List<EdifactContainerInfo>
+                    {
+                        new() { ContainerNumber = "MSCU1234567", SizeType = "22G1", FullEmpty = EdifactFullEmptyIndicator.Plein, GrossWeightKg = 18500 }
+                    }
+                },
             _ => new { }
         };
 
@@ -451,11 +476,6 @@ else
                 .Include(j => j.NotificationRules)
                 .FirstAsync(j => j.Id == _job.Id);
 
-            db.JobSteps.RemoveRange(existing.Steps);
-            db.JobTriggers.RemoveRange(existing.Triggers);
-            db.JobDependencies.RemoveRange(existing.Dependencies);
-            db.NotificationRules.RemoveRange(existing.NotificationRules);
-
             existing.Name = _job.Name;
             existing.Description = _job.Description;
             existing.Owner = _job.Owner;
@@ -469,32 +489,48 @@ else
             existing.UpdatedAt = DateTime.UtcNow;
             existing.UpdatedBy = _currentUser;
 
-            existing.Steps = _job.Steps.Select(s => new JobStep
+            existing.Steps.Clear();
+            foreach (var s in _job.Steps)
             {
-                Order = s.Order, Name = s.Name, Type = s.Type, ConfigJson = s.ConfigJson,
-                CredentialId = s.CredentialId, TimeoutSeconds = s.TimeoutSeconds, MaxRetries = s.MaxRetries,
-                RetryDelaySeconds = s.RetryDelaySeconds, OnErrorAction = s.OnErrorAction,
-                OnSuccessGoToOrder = s.OnSuccessGoToOrder, OnFailureGoToOrder = s.OnFailureGoToOrder
-            }).ToList();
+                existing.Steps.Add(new JobStep
+                {
+                    Order = s.Order, Name = s.Name, Type = s.Type, ConfigJson = s.ConfigJson,
+                    CredentialId = s.CredentialId, TimeoutSeconds = s.TimeoutSeconds, MaxRetries = s.MaxRetries,
+                    RetryDelaySeconds = s.RetryDelaySeconds, OnErrorAction = s.OnErrorAction,
+                    OnSuccessGoToOrder = s.OnSuccessGoToOrder, OnFailureGoToOrder = s.OnFailureGoToOrder
+                });
+            }
 
-            existing.Triggers = _job.Triggers.Select(t => new JobTrigger
+            existing.Triggers.Clear();
+            foreach (var t in _job.Triggers)
             {
-                Type = t.Type, Enabled = t.Enabled, CronExpression = t.CronExpression, IntervalSeconds = t.IntervalSeconds,
-                DaysOfWeekCsv = t.DaysOfWeekCsv, ExcludeWeekends = t.ExcludeWeekends, ExcludeHolidays = t.ExcludeHolidays,
-                HolidayDatesCsv = t.HolidayDatesCsv, WindowStart = t.WindowStart, WindowEnd = t.WindowEnd,
-                FolderPath = t.FolderPath, FolderFilter = t.FolderFilter, FolderWatchEvent = t.FolderWatchEvent,
-                WebhookToken = t.WebhookToken
-            }).ToList();
+                existing.Triggers.Add(new JobTrigger
+                {
+                    Type = t.Type, Enabled = t.Enabled, CronExpression = t.CronExpression, IntervalSeconds = t.IntervalSeconds,
+                    DaysOfWeekCsv = t.DaysOfWeekCsv, ExcludeWeekends = t.ExcludeWeekends, ExcludeHolidays = t.ExcludeHolidays,
+                    HolidayDatesCsv = t.HolidayDatesCsv, WindowStart = t.WindowStart, WindowEnd = t.WindowEnd,
+                    FolderPath = t.FolderPath, FolderFilter = t.FolderFilter, FolderWatchEvent = t.FolderWatchEvent,
+                    WebhookToken = t.WebhookToken
+                });
+            }
 
-            existing.Dependencies = _job.Dependencies.Select(d => new JobDependency
+            existing.Dependencies.Clear();
+            foreach (var d in _job.Dependencies)
             {
-                DependsOnJobId = d.DependsOnJobId, Condition = d.Condition
-            }).ToList();
+                existing.Dependencies.Add(new JobDependency
+                {
+                    DependsOnJobId = d.DependsOnJobId, Condition = d.Condition
+                });
+            }
 
-            existing.NotificationRules = _job.NotificationRules.Select(n => new NotificationRule
+            existing.NotificationRules.Clear();
+            foreach (var n in _job.NotificationRules)
             {
-                Event = n.Event, Channel = n.Channel, RecipientsCsv = n.RecipientsCsv, WebhookUrl = n.WebhookUrl, Enabled = n.Enabled
-            }).ToList();
+                existing.NotificationRules.Add(new NotificationRule
+                {
+                    Event = n.Event, Channel = n.Channel, RecipientsCsv = n.RecipientsCsv, WebhookUrl = n.WebhookUrl, Enabled = n.Enabled
+                });
+            }
 
             await db.SaveChangesAsync();
             await Audit.LogAsync(AuditAction.Modification, nameof(Job), existing.Id.ToString(), existing.Name, null, _currentUser);

@@ -3,6 +3,7 @@ using KernelMK.Data;
 using KernelMK.Data.Identity;
 using KernelMK.Engine;
 using KernelMK.Engine.Execution;
+using KernelMK.Web;
 using KernelMK.Web.Components;
 using KernelMK.Web.Components.Account;
 using Microsoft.AspNetCore.Components.Authorization;
@@ -34,9 +35,11 @@ builder.Services.AddKernelMKData(builder.Configuration);
 builder.Services.AddKernelMKEngine(builder.Configuration);
 
 builder.Services.AddSingleton<IEmailSender<ApplicationUser>, IdentityNoOpEmailSender>();
+builder.Services.AddSingleton<SetupState>();
 
 var app = builder.Build();
 
+var setupState = app.Services.GetRequiredService<SetupState>();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -44,6 +47,8 @@ using (var scope = app.Services.CreateScope())
     var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
     var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
     await DbInitializer.SeedAsync(db, roleManager, userManager, logger);
+
+    setupState.AdminExists = (await userManager.GetUsersInRoleAsync(nameof(AppRole.Administrateur))).Count > 0;
 }
 
 if (app.Environment.IsDevelopment())
@@ -57,6 +62,31 @@ else
 }
 
 app.UseHttpsRedirection();
+
+// Tant qu'aucun compte Administrateur n'existe, toute requête est redirigée vers /setup
+// (premier lancement : l'utilisateur doit créer le compte admin avant d'accéder au reste de l'app).
+app.Use(async (context, next) =>
+{
+    var path = context.Request.Path;
+    var isSetupRoute = path.StartsWithSegments("/setup");
+    var isFrameworkAsset = path.StartsWithSegments("/_blazor") || path.StartsWithSegments("/_framework")
+        || path.StartsWithSegments("/css") || path.StartsWithSegments("/js") || path.StartsWithSegments("/favicon.png");
+
+    if (!setupState.AdminExists && !isSetupRoute && !isFrameworkAsset)
+    {
+        context.Response.Redirect("/setup");
+        return;
+    }
+
+    if (setupState.AdminExists && isSetupRoute)
+    {
+        context.Response.Redirect("/Account/Login");
+        return;
+    }
+
+    await next();
+});
+
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseAntiforgery();

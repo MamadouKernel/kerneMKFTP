@@ -1,0 +1,88 @@
+@page "/assistant"
+@rendermode InteractiveServer
+@attribute [Authorize]
+@using KernelMK.Engine.Assistant
+@inject AssistantService Assistant
+
+<PageTitle>Assistant · kernelMK</PageTitle>
+
+<h1>Assistant</h1>
+<p class="text-sm text-slate-500 mt-1 mb-6">
+    Pose une question sur tes jobs — l'assistant répond en interrogeant directement les données réelles
+    de la plateforme (aucune IA externe, tout reste local).
+</p>
+
+<div class="kmk-card mb-6">
+    <div class="kmk-card-body">
+        <div class="flex gap-2 mb-4">
+            <input class="kmk-input" placeholder="Ex : Pourquoi le job Sauvegarde_Logs a échoué ?"
+                   @bind="_question" @bind:event="oninput" @onkeydown="OnKeyDown" />
+            <button class="kmk-btn-primary shrink-0" @onclick="AskAsync" disabled="@_loading">Demander</button>
+        </div>
+
+        <div class="flex flex-wrap gap-2 mb-4">
+            @foreach (var suggestion in Suggestions)
+            {
+                <button type="button" class="kmk-badge-info hover:opacity-80" @onclick="() => AskSuggestionAsync(suggestion)">@suggestion</button>
+            }
+        </div>
+
+        @if (_loading)
+        {
+            <p class="text-sm text-slate-400">Recherche en cours...</p>
+        }
+
+        @if (_history.Count > 0)
+        {
+            <div class="space-y-4 mt-2">
+                @foreach (var (q, a) in Enumerable.Reverse(_history))
+                {
+                    <div class="border border-slate-100 rounded-xl p-4 bg-slate-50">
+                        <p class="text-sm font-semibold text-slate-700 mb-1">🗨️ @q</p>
+                        <p class="text-sm text-slate-600 whitespace-pre-line">🤖 @a</p>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    private string _question = "";
+    private bool _loading;
+    private readonly List<(string Question, string Answer)> _history = new();
+
+    private static readonly string[] Suggestions =
+    {
+        "Combien de jobs y a-t-il ?",
+        "Pourquoi le dernier job a-t-il échoué ?",
+        "Combien de fichiers ont été traités ?",
+        "Quels sont les types de transfert disponibles ?",
+        "Quels types d'étapes existent ?",
+        "À quoi sert un message COPARN ?"
+    };
+
+    private async Task OnKeyDown(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await AskAsync();
+    }
+
+    private async Task AskSuggestionAsync(string suggestion)
+    {
+        _question = suggestion;
+        await AskAsync();
+    }
+
+    private async Task AskAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_question)) return;
+        _loading = true;
+        var asked = _question;
+        StateHasChanged();
+
+        var answer = await Assistant.AskAsync(asked);
+        _history.Add((asked, answer));
+        _question = "";
+        _loading = false;
+    }
+}

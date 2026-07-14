@@ -24,7 +24,7 @@ public class FileOpStepConfig
     public string? DestinationPath { get; set; }
     public bool Overwrite { get; set; } = true;
     public bool Recursive { get; set; } = false;
-    /// <summary>Filtre de fichiers, ex: *.csv</summary>
+    /// <summary>Filtre de fichiers ; plusieurs motifs séparés par ';' acceptés, ex: *.csv;*.txt;*.xml</summary>
     public string? Filter { get; set; }
     /// <summary>Pour Compresser/Decompresser : format d'archive (zip).</summary>
     public string ArchiveFormat { get; set; } = "zip";
@@ -42,6 +42,14 @@ public class TransferStepConfig
     public bool ArchiveAfterTransfer { get; set; } = true;
     public string? ArchiveDirectory { get; set; }
     public string? SmbShare { get; set; }
+
+    /// <summary>
+    /// Si renseigné, active le mode multi-fichiers : LocalPath et RemotePath sont alors traités comme des
+    /// dossiers, et tous les fichiers correspondant au(x) motif(s) (plusieurs motifs séparés par ';', ex:
+    /// *.csv;*.txt;*.xml) sont transférés en une seule étape. Si vide/null, comportement mono-fichier historique
+    /// (LocalPath/RemotePath désignent directement un fichier).
+    /// </summary>
+    public string? Filter { get; set; }
 }
 
 public class SqlStepConfig

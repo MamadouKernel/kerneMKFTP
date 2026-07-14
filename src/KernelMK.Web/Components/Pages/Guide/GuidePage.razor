@@ -1,0 +1,164 @@
+@page "/guide"
+@attribute [Authorize]
+
+<PageTitle>Guide utilisateur · kernelMK</PageTitle>
+
+<h1>Guide utilisateur</h1>
+<p class="text-sm text-slate-500 mt-1 mb-6">
+    Comment utiliser kernelMK au quotidien. Pour une aide interactive, pose aussi tes questions à
+    <a href="assistant">l'Assistant</a>.
+</p>
+
+<div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
+    <nav class="lg:col-span-1 hidden lg:block">
+        <div class="kmk-card sticky top-6">
+            <div class="kmk-card-body text-sm space-y-2">
+                <a href="#dashboard" class="block text-slate-600 hover:text-brand-600">1. Tableau de bord</a>
+                <a href="#jobs" class="block text-slate-600 hover:text-brand-600">2. Créer et gérer un job</a>
+                <a href="#etapes" class="block text-slate-600 hover:text-brand-600">3. Types d'étapes</a>
+                <a href="#declencheurs" class="block text-slate-600 hover:text-brand-600">4. Déclencheurs</a>
+                <a href="#historique" class="block text-slate-600 hover:text-brand-600">5. Historique &amp; logs</a>
+                <a href="#credentials" class="block text-slate-600 hover:text-brand-600">6. Credentials</a>
+                <a href="#utilisateurs" class="block text-slate-600 hover:text-brand-600">7. Utilisateurs &amp; rôles</a>
+                <a href="#sauvegarde" class="block text-slate-600 hover:text-brand-600">8. Sauvegarde</a>
+                <a href="#audit" class="block text-slate-600 hover:text-brand-600">9. Audit</a>
+                <a href="#assistant" class="block text-slate-600 hover:text-brand-600">10. Assistant</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="lg:col-span-3 space-y-6">
+        <section id="dashboard" class="kmk-card scroll-mt-6">
+            <div class="kmk-card-header">1. Tableau de bord</div>
+            <div class="kmk-card-body text-sm text-slate-600 space-y-2">
+                <p>Première page après connexion. Affiche en un coup d'œil : nombre de jobs actifs/inactifs, jobs en cours,
+                   réussites/échecs des dernières 24h, fichiers traités, prochaines exécutions planifiées et derniers
+                   incidents avec leur cause exacte (étape en cause + message d'erreur).</p>
+                <p>Si aucun job n'existe encore, un écran d'accueil te propose de créer le premier.</p>
+            </div>
+        </section>
+
+        <section id="jobs" class="kmk-card scroll-mt-6">
+            <div class="kmk-card-header">2. Créer et gérer un job</div>
+            <div class="kmk-card-body text-sm text-slate-600 space-y-2">
+                <p>Un <strong>job</strong> est un traitement automatisé composé d'une ou plusieurs <strong>étapes</strong>
+                   exécutées dans l'ordre, avec des <strong>déclencheurs</strong> (quand il se lance) et des
+                   <strong>notifications</strong> (qui prévenir en cas de succès/échec).</p>
+                <ol class="list-decimal list-inside space-y-1">
+                    <li>Page « Jobs » → « + Nouveau job ».</li>
+                    <li>Renseigne nom, description, criticité, compte d'exécution.</li>
+                    <li>Ajoute une ou plusieurs étapes (voir section 3).</li>
+                    <li>Ajoute un déclencheur si besoin (voir section 4) — sans déclencheur, le job reste en lancement manuel uniquement.</li>
+                    <li>Configure les notifications (email/webhook) sur succès/échec si nécessaire.</li>
+                    <li>Enregistre, puis teste avec le bouton « Lancer » depuis la liste des jobs.</li>
+                </ol>
+                <p>Depuis la liste des jobs, tu peux aussi <strong>dupliquer</strong> un job existant, l'<strong>activer/désactiver</strong>
+                   (case à cocher « Actif ») sans le supprimer, ou le supprimer définitivement.</p>
+                <p class="text-slate-400">Réservé aux rôles Administrateur et Développeur pour la création/modification ;
+                   Exploitant peut lancer manuellement ; Superviseur et Auditeur consultent en lecture seule.</p>
+            </div>
+        </section>
+
+        <section id="etapes" class="kmk-card scroll-mt-6">
+            <div class="kmk-card-header">3. Types d'étapes disponibles</div>
+            <div class="kmk-card-body text-sm text-slate-600 space-y-2">
+                <p>Utilise le bouton <strong>« Modèle JSON »</strong> après avoir choisi un type : la configuration
+                   attendue est préremplie, il ne reste qu'à ajuster les valeurs.</p>
+                <ul class="list-disc list-inside space-y-1">
+                    <li><strong>Scripts</strong> (PowerShell, Python, Batch, Commande système) : exécuter un programme.</li>
+                    <li><strong>Fichiers</strong> (copier, déplacer, renommer, supprimer, compresser, décompresser, vérifier).</li>
+                    <li><strong>Transfert</strong> (FTP, FTPS, SFTP, SMB) : envoyer/récupérer des fichiers vers un serveur distant.</li>
+                    <li><strong>Base de données</strong> : exécuter une requête ou procédure SQL.</li>
+                    <li><strong>Email</strong> : envoi SMTP.</li>
+                    <li><strong>Webhook</strong> : appel d'une URL HTTP/API.</li>
+                    <li><strong>Message EDIFACT</strong> : générer ou analyser un message COPARN/CODECO/COARRI/MANIFEST (transport maritime/portuaire).</li>
+                    <li><strong>Contrôle</strong> (attente, condition, appel de job) : piloter le déroulement du workflow.</li>
+                </ul>
+                <p>Chaque étape a son propre <strong>timeout</strong>, son nombre de <strong>tentatives</strong> en cas d'échec,
+                   et une <strong>action en cas d'échec</strong> (arrêter le job, poursuivre, ou brancher vers une autre étape).</p>
+                <p><strong>Formats et fichiers multiples :</strong> toutes les opérations fichiers et de transfert sont
+                   agnostiques au format (.txt, .csv, .xml, majuscules/minuscules...) — elles copient des octets, pas du contenu.
+                   Le champ <code class="bg-slate-100 rounded px-1">Filter</code> accepte plusieurs motifs séparés par
+                   <code class="bg-slate-100 rounded px-1">;</code> (ex : <code class="bg-slate-100 rounded px-1">*.csv;*.txt;*.xml</code>)
+                   pour traiter plusieurs formats en une seule étape. Pour les étapes de transfert (FTP/FTPS/SFTP/SMB),
+                   renseigner ce filtre active le mode multi-fichiers : <code class="bg-slate-100 rounded px-1">RemotePath</code>
+                   et <code class="bg-slate-100 rounded px-1">LocalPath</code> désignent alors des dossiers, et tous les fichiers
+                   correspondants sont envoyés/récupérés en une seule étape (laisser le filtre vide pour l'ancien mode
+                   mono-fichier, où ces champs désignent un fichier précis).</p>
+            </div>
+        </section>
+
+        <section id="declencheurs" class="kmk-card scroll-mt-6">
+            <div class="kmk-card-header">4. Déclencheurs</div>
+            <div class="kmk-card-body text-sm text-slate-600 space-y-2">
+                <ul class="list-disc list-inside space-y-1">
+                    <li><strong>Horaire/Cron</strong> : intervalle régulier ou expression cron précise.</li>
+                    <li><strong>Calendrier</strong> : jours de semaine choisis, avec exclusion week-ends/jours fériés.</li>
+                    <li><strong>Événement dossier</strong> : à l'arrivée/modification/suppression d'un fichier surveillé.</li>
+                    <li><strong>Dépendance de job</strong> : après le succès/échec/fin d'un autre job (chaînage).</li>
+                    <li><strong>Démarrage serveur</strong> : au lancement de l'application.</li>
+                    <li><strong>API/Webhook</strong> : appel externe sur <code class="bg-slate-100 rounded px-1">/api/triggers/{jeton}</code>.</li>
+                </ul>
+            </div>
+        </section>
+
+        <section id="historique" class="kmk-card scroll-mt-6">
+            <div class="kmk-card-header">5. Historique &amp; logs</div>
+            <div class="kmk-card-body text-sm text-slate-600 space-y-2">
+                <p>La page « Historique d'exécution » liste toutes les exécutions passées, filtrables par job et par statut.
+                   Clique sur « Détail » pour voir, étape par étape, la sortie standard et le message d'erreur exact.</p>
+                <p>Export possible en <strong>CSV</strong> ou <strong>JSON</strong> depuis cette page.</p>
+            </div>
+        </section>
+
+        <section id="credentials" class="kmk-card scroll-mt-6">
+            <div class="kmk-card-header">6. Credentials</div>
+            <div class="kmk-card-body text-sm text-slate-600 space-y-2">
+                <p>Coffre-fort des identifiants (comptes FTP/SFTP/SMB, SMTP, base de données...) utilisés par les étapes.
+                   Le secret est chiffré dès la saisie et n'est plus jamais affiché en clair. Sélectionne le credential
+                   voulu dans le champ dédié de l'étape concernée.</p>
+                <p class="text-slate-400">Réservé aux rôles Administrateur et Développeur.</p>
+            </div>
+        </section>
+
+        <section id="utilisateurs" class="kmk-card scroll-mt-6">
+            <div class="kmk-card-header">7. Utilisateurs &amp; rôles</div>
+            <div class="kmk-card-body text-sm text-slate-600 space-y-2">
+                <p>Cinq rôles : <strong>Administrateur</strong> (accès complet), <strong>Superviseur</strong> (lecture seule
+                   dashboard/jobs/historique), <strong>Exploitant</strong> (+ lancement manuel), <strong>Développeur</strong>
+                   (création/modification des jobs et credentials), <strong>Auditeur</strong> (lecture seule + audit).
+                   Un compte peut cumuler plusieurs rôles.</p>
+                <p class="text-slate-400">Réservé à l'Administrateur.</p>
+            </div>
+        </section>
+
+        <section id="sauvegarde" class="kmk-card scroll-mt-6">
+            <div class="kmk-card-header">8. Sauvegarde &amp; restauration</div>
+            <div class="kmk-card-body text-sm text-slate-600 space-y-2">
+                <p><strong>Export config</strong> : télécharge tous les jobs en JSON (utile pour dupliquer vers un autre serveur).
+                   <strong>Import</strong> : recharge un export précédent. <strong>Sauvegarde du fichier SQLite</strong> :
+                   copie complète de la base (jobs, historique, utilisateurs) horodatée sur le serveur.</p>
+                <p class="text-slate-400">Réservé à l'Administrateur.</p>
+            </div>
+        </section>
+
+        <section id="audit" class="kmk-card scroll-mt-6">
+            <div class="kmk-card-header">9. Audit</div>
+            <div class="kmk-card-body text-sm text-slate-600 space-y-2">
+                <p>Journal de toutes les actions sensibles : création/modification/suppression de job, activation/désactivation,
+                   exécution manuelle, gestion des utilisateurs. Chaque entrée indique qui a fait quoi et quand.</p>
+                <p class="text-slate-400">Réservé à l'Administrateur et à l'Auditeur.</p>
+            </div>
+        </section>
+
+        <section id="assistant" class="kmk-card scroll-mt-6">
+            <div class="kmk-card-header">10. Assistant</div>
+            <div class="kmk-card-body text-sm text-slate-600 space-y-2">
+                <p>Pose une question en langage courant — l'Assistant interroge directement les données réelles de la
+                   plateforme (jobs, exécutions, logs) pour répondre, et peut aussi expliquer comment utiliser l'application.
+                   Aucune IA externe, aucune clé API : tout reste local.</p>
+                <a href="assistant" class="kmk-btn-primary">Ouvrir l'Assistant</a>
+            </div>
+        </section>
+    </div>
+</div>

@@ -2,6 +2,7 @@ using KernelMK.Core.Entities;
 using KernelMK.Data.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata;
 
 namespace KernelMK.Data;
 
@@ -20,10 +21,25 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<Credential> Credentials => Set<Credential>();
     public DbSet<NotificationRule> NotificationRules => Set<NotificationRule>();
     public DbSet<AuditLogEntry> AuditLogEntries => Set<AuditLogEntry>();
+    public DbSet<TrustedHostKey> TrustedHostKeys => Set<TrustedHostKey>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
+
+        // Toutes les clés Guid de ce projet sont générées côté client (Guid.NewGuid() dans les entités),
+        // jamais par la base. Sans ça, EF Core suppose par convention qu'une clé Guid déjà renseignée
+        // désigne une ligne existante : une entité neuve ajoutée via une collection de navigation
+        // (ex. existing.Steps.Add(new JobStep{...})) est alors traitée comme "Modified" au lieu de
+        // "Added", ce qui génère un UPDATE qui ne trouve aucune ligne et lève un DbUpdateConcurrencyException.
+        foreach (var entityType in builder.Model.GetEntityTypes())
+        {
+            var idProperty = entityType.FindProperty("Id");
+            if (idProperty is not null && idProperty.ClrType == typeof(Guid))
+            {
+                idProperty.ValueGenerated = ValueGenerated.Never;
+            }
+        }
 
         builder.Entity<Job>(e =>
         {
@@ -45,5 +61,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
 
         builder.Entity<JobExecution>()
             .HasMany(x => x.StepLogs).WithOne(l => l.JobExecution!).HasForeignKey(l => l.JobExecutionId).OnDelete(DeleteBehavior.Cascade);
+
+        builder.Entity<TrustedHostKey>()
+            .HasIndex(k => new { k.Host, k.Port }).IsUnique();
     }
 }

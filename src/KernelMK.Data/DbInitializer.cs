@@ -17,6 +17,10 @@ public static class DbInitializer
         nameof(AppRole.Auditeur)
     };
 
+    /// <summary>
+    /// Applique les migrations et crée les rôles applicatifs. Le compte Administrateur n'est PAS créé ici :
+    /// il est demandé à l'utilisateur lors du premier lancement via la page /setup (voir SetupState).
+    /// </summary>
     public static async Task SeedAsync(
         AppDbContext db,
         RoleManager<IdentityRole> roleManager,
@@ -30,34 +34,6 @@ public static class DbInitializer
             if (!await roleManager.RoleExistsAsync(role))
             {
                 await roleManager.CreateAsync(new IdentityRole(role));
-            }
-        }
-
-        const string adminEmail = "admin@local";
-        var admin = await userManager.FindByEmailAsync(adminEmail);
-        if (admin is null)
-        {
-            admin = new ApplicationUser
-            {
-                UserName = adminEmail,
-                Email = adminEmail,
-                DisplayName = "Administrateur",
-                EmailConfirmed = true
-            };
-
-            const string defaultPassword = "Admin#12345";
-            var result = await userManager.CreateAsync(admin, defaultPassword);
-            if (result.Succeeded)
-            {
-                await userManager.AddToRoleAsync(admin, nameof(AppRole.Administrateur));
-                logger.LogWarning(
-                    "Compte administrateur initial créé : {Email} / mot de passe par défaut {Password} — à changer immédiatement.",
-                    adminEmail, defaultPassword);
-            }
-            else
-            {
-                logger.LogError("Échec de création du compte administrateur initial : {Errors}",
-                    string.Join(", ", result.Errors.Select(e => e.Description)));
             }
         }
     }

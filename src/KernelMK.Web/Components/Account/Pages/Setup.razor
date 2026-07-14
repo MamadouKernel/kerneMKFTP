@@ -1,0 +1,127 @@
+@page "/setup"
+
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Identity
+@using KernelMK.Data.Identity
+
+@inject UserManager<ApplicationUser> UserManager
+@inject SignInManager<ApplicationUser> SignInManager
+@inject IdentityRedirectManager RedirectManager
+@inject SetupState SetupState
+
+<PageTitle>Configuration initiale · kernelMK</PageTitle>
+
+<div class="min-h-screen relative flex items-center justify-center px-4 overflow-hidden"
+     style="background-image: radial-gradient(ellipse 80% 60% at 50% -10%, rgba(99,102,241,0.12), transparent), linear-gradient(180deg, #0b1120 0%, #0f172a 45%, #f8fafc 45%);">
+
+    <div class="absolute -top-24 -left-24 h-72 w-72 rounded-full bg-brand-500/20 blur-3xl"></div>
+    <div class="absolute -top-10 right-0 h-64 w-64 rounded-full bg-violet-500/10 blur-3xl"></div>
+
+    <div class="relative w-full max-w-md">
+        <div class="flex items-center justify-center gap-3 mb-8">
+            <div class="h-11 w-11 rounded-xl flex items-center justify-center text-white font-bold shadow-lg shadow-brand-600/40"
+                 style="background-image: linear-gradient(135deg, var(--color-brand-400), var(--color-brand-700));">K</div>
+            <span class="text-white font-bold tracking-tight text-2xl">kernel<span class="text-brand-400">MK</span></span>
+        </div>
+
+        <div class="kmk-card !shadow-2xl !shadow-slate-900/20">
+            <div class="kmk-card-body">
+                <h1 class="text-lg mb-1">Bienvenue 👋</h1>
+                <p class="text-sm text-slate-500 mb-5">
+                    Première installation détectée. Crée le compte <strong>Administrateur</strong> de la plateforme
+                    — tu pourras créer les autres comptes ensuite depuis l'interface (menu « Utilisateurs &amp; rôles »).
+                </p>
+
+                <StatusMessage Message="@errorMessage" />
+
+                <EditForm Model="Input" method="post" OnValidSubmit="CreateAdminAsync" FormName="setup" class="space-y-4">
+                    <DataAnnotationsValidator />
+                    <ValidationSummary class="text-red-600 text-sm" role="alert" />
+
+                    <div>
+                        <label for="Input.DisplayName" class="kmk-label">Nom affiché</label>
+                        <InputText @bind-Value="Input.DisplayName" id="Input.DisplayName" class="kmk-input" placeholder="Ex. Mamadou Konaté" />
+                        <ValidationMessage For="() => Input.DisplayName" class="text-red-600 text-xs" />
+                    </div>
+                    <div>
+                        <label for="Input.Email" class="kmk-label">Email</label>
+                        <InputText @bind-Value="Input.Email" id="Input.Email" class="kmk-input" autocomplete="username" placeholder="admin@exemple.fr" />
+                        <ValidationMessage For="() => Input.Email" class="text-red-600 text-xs" />
+                    </div>
+                    <div>
+                        <label for="Input.Password" class="kmk-label">Mot de passe</label>
+                        <InputText type="password" @bind-Value="Input.Password" id="Input.Password" class="kmk-input" autocomplete="new-password" placeholder="10 caractères minimum" />
+                        <ValidationMessage For="() => Input.Password" class="text-red-600 text-xs" />
+                    </div>
+                    <div>
+                        <label for="Input.ConfirmPassword" class="kmk-label">Confirmer le mot de passe</label>
+                        <InputText type="password" @bind-Value="Input.ConfirmPassword" id="Input.ConfirmPassword" class="kmk-input" autocomplete="new-password" />
+                        <ValidationMessage For="() => Input.ConfirmPassword" class="text-red-600 text-xs" />
+                    </div>
+
+                    <button type="submit" class="kmk-btn-primary w-full">Créer le compte administrateur</button>
+                </EditForm>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private string? errorMessage;
+
+    [SupplyParameterFromForm]
+    private InputModel Input { get; set; } = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Un administrateur existe déjà : cette page ne doit plus être accessible.
+        if (SetupState.AdminExists || (await UserManager.GetUsersInRoleAsync(nameof(KernelMK.Core.AppRole.Administrateur))).Count > 0)
+        {
+            SetupState.AdminExists = true;
+            RedirectManager.RedirectTo("Account/Login");
+        }
+    }
+
+    public async Task CreateAdminAsync()
+    {
+        var user = new ApplicationUser
+        {
+            UserName = Input.Email,
+            Email = Input.Email,
+            DisplayName = Input.DisplayName,
+            EmailConfirmed = true
+        };
+
+        var result = await UserManager.CreateAsync(user, Input.Password);
+        if (!result.Succeeded)
+        {
+            errorMessage = "Error: " + string.Join(", ", result.Errors.Select(e => e.Description));
+            return;
+        }
+
+        await UserManager.AddToRoleAsync(user, nameof(KernelMK.Core.AppRole.Administrateur));
+        SetupState.AdminExists = true;
+
+        await SignInManager.SignInAsync(user, isPersistent: false);
+        RedirectManager.RedirectTo("/");
+    }
+
+    private sealed class InputModel
+    {
+        [Required(ErrorMessage = "Le nom affiché est requis.")]
+        public string DisplayName { get; set; } = "";
+
+        [Required]
+        [EmailAddress]
+        public string Email { get; set; } = "";
+
+        [Required]
+        [StringLength(100, ErrorMessage = "Le mot de passe doit contenir au moins {2} caractères.", MinimumLength = 10)]
+        [DataType(DataType.Password)]
+        public string Password { get; set; } = "";
+
+        [DataType(DataType.Password)]
+        [Compare("Password", ErrorMessage = "Les mots de passe ne correspondent pas.")]
+        public string ConfirmPassword { get; set; } = "";
+    }
+}

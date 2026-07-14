@@ -69,7 +69,42 @@ public enum StepType
     Webhook,
     ControleAttente,
     ControleCondition,
-    ControleAppelJob
+    ControleAppelJob,
+    EdifactMessage
+}
+
+/// <summary>Messages EDIFACT du transport maritime/portuaire pris en charge.</summary>
+public enum EdifactMessageType
+{
+    /// <summary>Container Announcement : avis/réservation de conteneur (armateur → terminal).</summary>
+    Coparn,
+    /// <summary>Container Gate-in/Gate-out : ordre de mouvement de conteneur au dépôt/terminal.</summary>
+    Codeco,
+    /// <summary>Container Discharge/Loading Report : rapport des conteneurs déchargés/chargés d'un navire.</summary>
+    Coarri,
+    /// <summary>Manifeste de cargaison (liste des marchandises à bord, à destination de la douane).</summary>
+    Manifest
+}
+
+public enum EdifactOperation
+{
+    Generer,
+    Analyser
+}
+
+public enum EdifactFullEmptyIndicator
+{
+    Plein,
+    Vide
+}
+
+/// <summary>Code de mouvement du conteneur (utilisé pour CODECO et COARRI).</summary>
+public enum EdifactMovementCode
+{
+    EntreeDepot,
+    SortieDepot,
+    Chargement,
+    Dechargement
 }
 
 public enum StepExecutionStatus

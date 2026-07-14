@@ -93,9 +93,20 @@ else
                         </td>
                     </tr>
                 }
-                @if (!FilteredJobs.Any())
+                @if (!FilteredJobs.Any() && _jobs.Count > 0)
                 {
                     <tr><td colspan="7" class="text-center text-slate-400 py-8">Aucun job ne correspond aux filtres.</td></tr>
+                }
+                @if (_jobs.Count == 0)
+                {
+                    <tr>
+                        <td colspan="7" class="text-center py-14">
+                            <p class="text-slate-500 mb-3">Aucun job créé pour le moment.</p>
+                            <AuthorizeView Roles="Administrateur,Developpeur">
+                                <a class="kmk-btn-primary" href="jobs/new">+ Créer mon premier job</a>
+                            </AuthorizeView>
+                        </td>
+                    </tr>
                 }
             </tbody>
         </table>

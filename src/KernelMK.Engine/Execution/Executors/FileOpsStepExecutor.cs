@@ -97,7 +97,8 @@ public class FileOpsStepExecutor : IStepExecutor
         if (Directory.Exists(config.SourcePath))
         {
             var searchOption = config.Recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
-            return Directory.EnumerateFiles(config.SourcePath, config.Filter ?? "*", searchOption);
+            return Directory.EnumerateFiles(config.SourcePath, "*", searchOption)
+                .Where(f => FilePatternMatcher.IsMatch(Path.GetFileName(f), config.Filter));
         }
 
         return File.Exists(config.SourcePath) ? new[] { config.SourcePath } : Enumerable.Empty<string>();

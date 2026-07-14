@@ -21,28 +21,81 @@
 {
     <p class="text-slate-500 text-sm">Chargement...</p>
 }
+else if (_totalJobs == 0)
+{
+    <div class="kmk-card">
+        <div class="kmk-card-body flex flex-col items-center text-center py-14 px-6">
+            <div class="h-14 w-14 rounded-2xl bg-brand-50 text-brand-600 flex items-center justify-center mb-4">
+                <svg class="h-7 w-7" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6"><path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 0 1 0 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 0 1 0-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" /></svg>
+            </div>
+            <h3 class="mb-1">Bienvenue sur kernelMK 👋</h3>
+            <p class="text-sm text-slate-500 max-w-md mb-6">
+                Aucun job n'a encore été créé. Un job regroupe une ou plusieurs étapes (script, transfert de fichier,
+                requête SQL...) déclenchées manuellement, sur planification, ou par un événement.
+            </p>
+            <a href="jobs/new" class="kmk-btn-primary">
+                <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+                Créer mon premier job
+            </a>
+        </div>
+    </div>
+}
 else
 {
-    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-6">
+    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
         <div class="kmk-stat-card">
-            <span class="kmk-stat-label">Jobs actifs</span>
+            <div class="flex items-center justify-between">
+                <span class="kmk-stat-label">Jobs actifs</span>
+                <span class="kmk-stat-icon bg-brand-50 text-brand-600">
+                    <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>
+                </span>
+            </div>
             <span class="kmk-stat-value">@_activeJobs</span>
         </div>
         <div class="kmk-stat-card">
-            <span class="kmk-stat-label">Jobs inactifs</span>
+            <div class="flex items-center justify-between">
+                <span class="kmk-stat-label">Jobs inactifs</span>
+                <span class="kmk-stat-icon bg-slate-100 text-slate-400">
+                    <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M18.75 12H5.25" /></svg>
+                </span>
+            </div>
             <span class="kmk-stat-value text-slate-400">@_inactiveJobs</span>
         </div>
         <div class="kmk-stat-card">
-            <span class="kmk-stat-label">En cours</span>
+            <div class="flex items-center justify-between">
+                <span class="kmk-stat-label">En cours</span>
+                <span class="kmk-stat-icon bg-amber-50 text-amber-500">
+                    <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6l4 2M3.284 9A8.25 8.25 0 1 1 3 12" /></svg>
+                </span>
+            </div>
             <span class="kmk-stat-value text-amber-500">@_runningCount</span>
         </div>
         <div class="kmk-stat-card">
-            <span class="kmk-stat-label">Réussis (24h)</span>
+            <div class="flex items-center justify-between">
+                <span class="kmk-stat-label">Réussis (24h)</span>
+                <span class="kmk-stat-icon bg-emerald-50 text-emerald-600">
+                    <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>
+                </span>
+            </div>
             <span class="kmk-stat-value text-emerald-600">@_successCount</span>
         </div>
         <div class="kmk-stat-card">
-            <span class="kmk-stat-label">Échoués (24h)</span>
+            <div class="flex items-center justify-between">
+                <span class="kmk-stat-label">Échoués (24h)</span>
+                <span class="kmk-stat-icon bg-red-50 text-red-500">
+                    <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" /></svg>
+                </span>
+            </div>
             <span class="kmk-stat-value text-red-600">@_failedCount</span>
+        </div>
+        <div class="kmk-stat-card">
+            <div class="flex items-center justify-between">
+                <span class="kmk-stat-label">Fichiers traités (24h)</span>
+                <span class="kmk-stat-icon bg-sky-50 text-sky-600">
+                    <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75M3.75 6.75h16.5M3.75 6.75v10.5A2.25 2.25 0 0 0 6 19.5h12a2.25 2.25 0 0 0 2.25-2.25V6.75m-16.5 0A2.25 2.25 0 0 1 6 4.5h12a2.25 2.25 0 0 1 2.25 2.25" /></svg>
+                </span>
+            </div>
+            <span class="kmk-stat-value text-sky-600">@_filesProcessed</span>
         </div>
     </div>
 
@@ -87,15 +140,20 @@ else
                 else
                 {
                     <table>
-                        <thead><tr><th>Job</th><th>Statut</th><th>Début</th><th>Message</th></tr></thead>
+                        <thead><tr><th>Job</th><th>Début</th><th>Étape en cause</th><th>Pourquoi</th></tr></thead>
                         <tbody>
                             @foreach (var e in _recentIncidents)
                             {
+                                var failingStep = e.StepLogs
+                                    .Where(l => l.Status is StepExecutionStatus.Echec or StepExecutionStatus.Timeout)
+                                    .OrderBy(l => l.Order).FirstOrDefault();
                                 <tr>
                                     <td><a href="@($"executions/{e.Id}")" class="font-medium">@e.Job?.Name</a></td>
-                                    <td><span class="kmk-badge-danger">@e.Status</span></td>
                                     <td class="text-slate-500">@e.StartedAt.ToLocalTime().ToString("g")</td>
-                                    <td class="text-slate-500 truncate max-w-xs">@e.Message</td>
+                                    <td class="text-slate-500">@(failingStep?.StepName ?? "-")</td>
+                                    <td class="text-slate-500 truncate max-w-xs" title="@(failingStep?.ErrorOutput ?? e.Message)">
+                                        @(failingStep?.ErrorOutput ?? e.Message)
+                                    </td>
                                 </tr>
                             }
                         </tbody>
@@ -108,7 +166,8 @@ else
 
 @code {
     private bool _loading = true;
-    private int _activeJobs, _inactiveJobs, _runningCount, _successCount, _failedCount;
+    private int _totalJobs;
+    private int _activeJobs, _inactiveJobs, _runningCount, _successCount, _failedCount, _filesProcessed;
     private double _avgDurationSeconds;
     private List<JobTrigger> _upcoming = new();
     private List<JobExecution> _recentIncidents = new();
@@ -117,6 +176,7 @@ else
     {
         await using var db = await DbFactory.CreateDbContextAsync();
 
+        _totalJobs = await db.Jobs.CountAsync();
         _activeJobs = await db.Jobs.CountAsync(j => j.Enabled);
         _inactiveJobs = await db.Jobs.CountAsync(j => !j.Enabled);
         _runningCount = await db.JobExecutions.CountAsync(e => e.Status == JobStatus.EnCours);
@@ -131,6 +191,13 @@ else
             ? timestamps.Average(t => (t.FinishedAt!.Value - t.StartedAt).TotalSeconds)
             : 0;
 
+        var fileLogs = await db.StepExecutionLogs
+            .Include(l => l.JobExecution)
+            .Where(l => l.JobExecution!.StartedAt >= since && l.FilesProcessedCsv != null && l.FilesProcessedCsv != "")
+            .Select(l => l.FilesProcessedCsv)
+            .ToListAsync();
+        _filesProcessed = fileLogs.Sum(csv => csv!.Split(';', StringSplitOptions.RemoveEmptyEntries).Length);
+
         _upcoming = await db.JobTriggers
             .Include(t => t.Job)
             .Where(t => t.Enabled && t.NextRunAt != null && t.Job!.Enabled)
@@ -140,6 +207,7 @@ else
 
         _recentIncidents = await db.JobExecutions
             .Include(e => e.Job)
+            .Include(e => e.StepLogs)
             .Where(e => e.Status == JobStatus.Echec)
             .OrderByDescending(e => e.StartedAt)
             .Take(10)

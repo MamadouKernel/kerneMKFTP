@@ -1,3 +1,4 @@
+using KernelMK.Engine.Assistant;
 using KernelMK.Engine.Audit;
 using KernelMK.Engine.Backup;
 using KernelMK.Engine.Execution;
@@ -23,12 +24,14 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IStepExecutor, EmailStepExecutor>();
         services.AddSingleton<IStepExecutor, WebhookStepExecutor>();
         services.AddSingleton<IStepExecutor, ControlStepExecutor>();
+        services.AddSingleton<IStepExecutor, EdifactStepExecutor>();
         services.AddSingleton<StepExecutorFactory>();
 
         services.AddSingleton(new ConcurrencyGate(maxParallelJobs: configuration.GetValue("Engine:MaxParallelJobs", 20)));
         services.AddScoped<NotificationDispatcher>();
         services.AddScoped<AuditService>();
         services.AddScoped<BackupService>();
+        services.AddScoped<AssistantService>();
         services.AddScoped<IJobRunner, JobRunner>();
 
         services.AddHostedService<JobSchedulerService>();

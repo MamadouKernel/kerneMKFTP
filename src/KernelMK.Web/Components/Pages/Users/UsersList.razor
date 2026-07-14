@@ -11,7 +11,19 @@
 <PageTitle>Utilisateurs &amp; rôles · kernelMK</PageTitle>
 
 <h1>Utilisateurs &amp; rôles</h1>
-<p class="text-sm text-slate-500 mt-1 mb-6">Rôles disponibles : Administrateur, Superviseur, Exploitant, Développeur, Auditeur (section 6 du cahier des charges).</p>
+<p class="text-sm text-slate-500 mt-1 mb-4">Crée un compte pour chaque nouvelle personne et attribue-lui le rôle correspondant à ses besoins.</p>
+
+<div class="kmk-card mb-6">
+    <div class="kmk-card-body grid grid-cols-1 sm:grid-cols-5 gap-4 text-xs">
+        @foreach (var (role, description) in RoleDescriptions)
+        {
+            <div>
+                <p class="font-semibold text-slate-700 mb-1">@role</p>
+                <p class="text-slate-500">@description</p>
+            </div>
+        }
+    </div>
+</div>
 
 <div class="kmk-card mb-6">
     <div class="kmk-card-header">Créer un utilisateur</div>
@@ -85,6 +97,15 @@ else
     private string _newRole = "Exploitant";
     private string? _message;
     private string? _currentUser;
+
+    private static readonly (string Role, string Description)[] RoleDescriptions =
+    {
+        ("Administrateur", "Accès complet : configuration, sécurité, sauvegardes, utilisateurs."),
+        ("Superviseur", "Consultation des tableaux de bord, statuts, historiques et alertes."),
+        ("Exploitant", "Lancement manuel des jobs, reprise, consultation des logs."),
+        ("Développeur", "Création et modification des jobs, gestion des credentials."),
+        ("Auditeur", "Lecture seule, export de rapports et consultation de l'audit.")
+    };
 
     protected override async Task OnInitializedAsync()
     {
