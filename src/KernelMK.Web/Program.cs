@@ -59,7 +59,9 @@ try
     });
 
     // Garantit l'existence du dossier de données (fichier SQLite) au premier lancement, y compris depuis l'exécutable publié.
-    Directory.CreateDirectory(Path.Combine(builder.Environment.ContentRootPath, "App_Data"));
+    // Ancré sur AppContext.BaseDirectory (et non ContentRootPath) pour toujours correspondre exactement
+    // au dossier utilisé par la chaîne de connexion SQLite (cf. ServiceCollectionExtensions.ResolveConnectionString).
+    Directory.CreateDirectory(Path.Combine(AppContext.BaseDirectory, "App_Data"));
     Directory.CreateDirectory(Path.Combine(AppContext.BaseDirectory, "backups"));
 
     builder.Services.AddRazorComponents()

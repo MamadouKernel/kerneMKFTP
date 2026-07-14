@@ -2,6 +2,7 @@ using KernelMK.Data.Identity;
 using KernelMK.Data.Security;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -12,7 +13,7 @@ public static class ServiceCollectionExtensions
 {
     public static IServiceCollection AddKernelMKData(this IServiceCollection services, IConfiguration configuration)
     {
-        var connectionString = configuration.GetConnectionString("Default") ?? "Data Source=automation-platform.db";
+        var connectionString = ResolveConnectionString(configuration.GetConnectionString("Default") ?? "Data Source=automation-platform.db");
 
         services.AddDbContextFactory<AppDbContext>(options => options.UseSqlite(connectionString));
         services.AddScoped<AppDbContext>(sp => sp.GetRequiredService<IDbContextFactory<AppDbContext>>().CreateDbContext());
@@ -36,6 +37,23 @@ public static class ServiceCollectionExtensions
             .AddSignInManager();
 
         return services;
+    }
+
+    /// <summary>
+    /// Convertit un chemin de base de données relatif en chemin absolu ancré sur le dossier de
+    /// l'exécutable (AppContext.BaseDirectory). Indispensable en Service Windows : le dossier
+    /// courant du processus (Environment.CurrentDirectory) y est C:\Windows\System32 et non le
+    /// dossier de l'application, donc un "Data Source=App_Data/xxx.db" relatif pointerait au
+    /// mauvais endroit et échouerait avec "unable to open database file".
+    /// </summary>
+    private static string ResolveConnectionString(string connectionString)
+    {
+        var builder = new SqliteConnectionStringBuilder(connectionString);
+        if (!string.IsNullOrWhiteSpace(builder.DataSource) && !Path.IsPathRooted(builder.DataSource))
+        {
+            builder.DataSource = Path.Combine(AppContext.BaseDirectory, builder.DataSource);
+        }
+        return builder.ConnectionString;
     }
 
     private static string GetKeyRingPath(IConfiguration configuration)
