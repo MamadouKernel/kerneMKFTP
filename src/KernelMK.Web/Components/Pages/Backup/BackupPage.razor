@@ -1,0 +1,78 @@
+@page "/backup"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = "Administrateur")]
+@using KernelMK.Engine.Backup
+@using KernelMK.Engine.Audit
+@inject BackupService Backup
+@inject AuditService Audit
+@inject AuthenticationStateProvider AuthState
+@inject IJSRuntime JS
+
+<PageTitle>Sauvegarde &amp; restauration · kernelMK</PageTitle>
+
+<h1>Sauvegarde &amp; restauration</h1>
+<p class="text-sm text-slate-500 mt-1 mb-6">Section 3.1 / 5.4 / 9 du cahier des charges : sauvegarde et restauration de la configuration (jobs, déclencheurs, notifications) et du fichier de base SQLite.</p>
+
+<div class="kmk-card mb-5">
+    <div class="kmk-card-header">Export de la configuration (jobs) en JSON</div>
+    <div class="kmk-card-body">
+        <button class="kmk-btn-primary" @onclick="ExportConfigAsync">Exporter la configuration</button>
+    </div>
+</div>
+
+<div class="kmk-card mb-5">
+    <div class="kmk-card-header">Import de configuration (JSON)</div>
+    <div class="kmk-card-body">
+        <InputFile OnChange="ImportConfigAsync" class="text-sm" />
+        @if (!string.IsNullOrEmpty(_importMessage))
+        {
+            <p class="text-sm text-emerald-700 mt-3">@_importMessage</p>
+        }
+    </div>
+</div>
+
+<div class="kmk-card mb-5">
+    <div class="kmk-card-header">Sauvegarde du fichier de base SQLite</div>
+    <div class="kmk-card-body">
+        <button class="kmk-btn-secondary" @onclick="BackupDatabaseAsync">Sauvegarder maintenant</button>
+        @if (!string.IsNullOrEmpty(_backupPath))
+        {
+            <p class="text-sm text-slate-600 mt-3">Sauvegarde créée : <code class="bg-slate-100 rounded px-1.5 py-0.5">@_backupPath</code></p>
+        }
+    </div>
+</div>
+
+@code {
+    private string? _importMessage;
+    private string? _backupPath;
+    private string? _currentUser;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        _currentUser = authState.User.Identity?.Name;
+    }
+
+    private async Task ExportConfigAsync()
+    {
+        var json = await Backup.ExportConfigurationAsync();
+        await Audit.LogAsync(AuditAction.ExportRapport, "Configuration", null, null, null, _currentUser, "Export de la configuration des jobs");
+        var bytes = System.Text.Encoding.UTF8.GetBytes(json);
+        await JS.InvokeVoidAsync("kernelMK.downloadFile", $"configuration_{DateTime.Now:yyyyMMdd_HHmmss}.json", "application/json", Convert.ToBase64String(bytes));
+    }
+
+    private async Task ImportConfigAsync(InputFileChangeEventArgs e)
+    {
+        using var reader = new StreamReader(e.File.OpenReadStream(maxAllowedSize: 20_000_000));
+        var json = await reader.ReadToEndAsync();
+        var count = await Backup.ImportConfigurationAsync(json, _currentUser);
+        await Audit.LogAsync(AuditAction.Restauration, "Configuration", null, null, null, _currentUser, $"{count} job(s) importé(s)");
+        _importMessage = $"{count} job(s) importé(s) avec succès.";
+    }
+
+    private async Task BackupDatabaseAsync()
+    {
+        _backupPath = Backup.BackupDatabaseFile();
+        await Audit.LogAsync(AuditAction.Sauvegarde, "Base de données", null, null, null, _currentUser, _backupPath);
+    }
+}

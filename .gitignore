@@ -1,0 +1,25 @@
+# Build artifacts
+bin/
+obj/
+publish/
+
+# Visual Studio
+.vs/
+*.user
+
+# Rider / VS Code
+.idea/
+.vscode/
+
+# Runtime data (SQLite DB, Data Protection keys, backups)
+src/KernelMK.Web/App_Data/
+src/KernelMK.Web/backups/
+*.db
+*.db-shm
+*.db-wal
+
+# Tailwind CLI standalone binary (large, downloaded separately)
+tools/tailwindcss.exe
+
+# Logs
+*.log

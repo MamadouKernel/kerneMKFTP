@@ -1,0 +1,29 @@
+﻿@if (!string.IsNullOrEmpty(DisplayMessage))
+{
+    var isError = DisplayMessage.StartsWith("Error");
+    <div class="rounded-lg px-3.5 py-2.5 text-sm mb-4 @(isError ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700")" role="alert">
+        @DisplayMessage
+    </div>
+}
+
+@code {
+    private string? messageFromCookie;
+
+    [Parameter]
+    public string? Message { get; set; }
+
+    [CascadingParameter]
+    private HttpContext HttpContext { get; set; } = default!;
+
+    private string? DisplayMessage => Message ?? messageFromCookie;
+
+    protected override void OnInitialized()
+    {
+        messageFromCookie = HttpContext.Request.Cookies[IdentityRedirectManager.StatusCookieName];
+
+        if (messageFromCookie is not null)
+        {
+            HttpContext.Response.Cookies.Delete(IdentityRedirectManager.StatusCookieName);
+        }
+    }
+}

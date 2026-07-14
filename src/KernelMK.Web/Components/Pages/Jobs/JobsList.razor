@@ -1,0 +1,239 @@
+@page "/jobs"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = "Administrateur,Superviseur,Exploitant,Developpeur,Auditeur")]
+@using Microsoft.EntityFrameworkCore
+@using KernelMK.Engine.Execution
+@using KernelMK.Engine.Audit
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject IJobRunner JobRunner
+@inject AuditService Audit
+@inject AuthenticationStateProvider AuthState
+@inject NavigationManager Nav
+
+<PageTitle>Jobs · kernelMK</PageTitle>
+
+<div class="flex items-center justify-between mb-6">
+    <div>
+        <h1>Jobs</h1>
+        <p class="text-sm text-slate-500 mt-1">Planification, exécution et supervision des traitements automatisés.</p>
+    </div>
+    <AuthorizeView Roles="Administrateur,Developpeur">
+        <a class="kmk-btn-primary" href="jobs/new">
+            <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+            Nouveau job
+        </a>
+    </AuthorizeView>
+</div>
+
+<div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
+    <input class="kmk-input" placeholder="Filtrer par nom..." @bind="_filterName" @bind:event="oninput" />
+    <select class="kmk-select" @bind="_filterStatus">
+        <option value="">Tous les statuts</option>
+        @foreach (var s in Enum.GetValues<JobStatus>())
+        {
+            <option value="@s">@s</option>
+        }
+    </select>
+    <select class="kmk-select" @bind="_filterCriticite">
+        <option value="">Toutes criticités</option>
+        @foreach (var c in Enum.GetValues<Criticite>())
+        {
+            <option value="@c">@c</option>
+        }
+    </select>
+</div>
+
+@if (_loading)
+{
+    <p class="text-sm text-slate-500">Chargement...</p>
+}
+else
+{
+    <div class="kmk-card overflow-x-auto">
+        <table>
+            <thead>
+                <tr>
+                    <th>Nom</th><th>Criticité</th><th>Actif</th><th>Statut</th><th>Dernière exécution</th><th>Prochaine</th><th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var job in FilteredJobs)
+                {
+                    <tr>
+                        <td>
+                            <a href="@($"jobs/{job.Id}")" class="font-medium">@job.Name</a>
+                            @if (!string.IsNullOrWhiteSpace(job.Description))
+                            {
+                                <div class="text-xs text-slate-400 truncate max-w-xs">@job.Description</div>
+                            }
+                        </td>
+                        <td><span class="@CriticiteBadge(job.Criticite)">@job.Criticite</span></td>
+                        <td>
+                            <AuthorizeView Roles="Administrateur,Developpeur" Context="toggleCtx">
+                                <Authorized><input type="checkbox" class="kmk-checkbox" checked="@job.Enabled" @onchange="@(e => ToggleEnabled(job, (bool)e.Value!))" /></Authorized>
+                                <NotAuthorized>@(job.Enabled ? "Oui" : "Non")</NotAuthorized>
+                            </AuthorizeView>
+                        </td>
+                        <td><span class="@StatusBadge(job.LastStatus)">@job.LastStatus</span></td>
+                        <td class="text-slate-500">@(job.LastRunAt?.ToLocalTime().ToString("g") ?? "-")</td>
+                        <td class="text-slate-500">@(job.NextRunAt?.ToLocalTime().ToString("g") ?? "-")</td>
+                        <td class="text-right whitespace-nowrap">
+                            <div class="flex items-center justify-end gap-1.5">
+                                <AuthorizeView Roles="Administrateur,Superviseur,Exploitant" Context="runCtx">
+                                    <button class="kmk-btn-success kmk-btn-sm" @onclick="() => RunNow(job)" disabled="@_running.Contains(job.Id)">Lancer</button>
+                                </AuthorizeView>
+                                <a class="kmk-btn-secondary kmk-btn-sm" href="@($"jobs/{job.Id}")">Détail</a>
+                                <AuthorizeView Roles="Administrateur,Developpeur" Context="dupCtx">
+                                    <button class="kmk-btn-secondary kmk-btn-sm" @onclick="() => DuplicateJob(job)">Dupliquer</button>
+                                </AuthorizeView>
+                                <AuthorizeView Roles="Administrateur,Developpeur" Context="delCtx">
+                                    <button class="kmk-btn-danger kmk-btn-sm" @onclick="() => DeleteJob(job)">Supprimer</button>
+                                </AuthorizeView>
+                            </div>
+                        </td>
+                    </tr>
+                }
+                @if (!FilteredJobs.Any())
+                {
+                    <tr><td colspan="7" class="text-center text-slate-400 py-8">Aucun job ne correspond aux filtres.</td></tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    private List<Job> _jobs = new();
+    private bool _loading = true;
+    private string _filterName = "";
+    private string _filterStatus = "";
+    private string _filterCriticite = "";
+    private readonly HashSet<Guid> _running = new();
+    private string? _currentUser;
+
+    private IEnumerable<Job> FilteredJobs => _jobs.Where(j =>
+        (string.IsNullOrWhiteSpace(_filterName) || j.Name.Contains(_filterName, StringComparison.OrdinalIgnoreCase)) &&
+        (string.IsNullOrWhiteSpace(_filterStatus) || j.LastStatus.ToString() == _filterStatus) &&
+        (string.IsNullOrWhiteSpace(_filterCriticite) || j.Criticite.ToString() == _filterCriticite));
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        _currentUser = authState.User.Identity?.Name;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _jobs = await db.Jobs.OrderBy(j => j.Name).ToListAsync();
+        _loading = false;
+    }
+
+    private async Task ToggleEnabled(Job job, bool value)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var entity = await db.Jobs.FindAsync(job.Id);
+        if (entity is null) return;
+        entity.Enabled = value;
+        entity.UpdatedAt = DateTime.UtcNow;
+        entity.UpdatedBy = _currentUser;
+        await db.SaveChangesAsync();
+        job.Enabled = value;
+        await Audit.LogAsync(value ? AuditAction.Activation : AuditAction.Desactivation, nameof(Job), job.Id.ToString(), job.Name, null, _currentUser);
+    }
+
+    private async Task RunNow(Job job)
+    {
+        _running.Add(job.Id);
+        StateHasChanged();
+        try
+        {
+            await Audit.LogAsync(AuditAction.ExecutionManuelle, nameof(Job), job.Id.ToString(), job.Name, null, _currentUser);
+            await JobRunner.RunAsync(job.Id, $"Manuel ({_currentUser})");
+            await LoadAsync();
+        }
+        finally
+        {
+            _running.Remove(job.Id);
+            StateHasChanged();
+        }
+    }
+
+    private async Task DuplicateJob(Job job)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var original = await db.Jobs
+            .Include(j => j.Steps)
+            .Include(j => j.Triggers)
+            .Include(j => j.NotificationRules)
+            .AsNoTracking()
+            .FirstAsync(j => j.Id == job.Id);
+
+        var copy = new Job
+        {
+            Name = original.Name + " (copie)",
+            Description = original.Description,
+            Owner = original.Owner,
+            Criticite = original.Criticite,
+            Enabled = false,
+            MaxRetries = original.MaxRetries,
+            RetryDelaySeconds = original.RetryDelaySeconds,
+            TimeoutSeconds = original.TimeoutSeconds,
+            AllowConcurrentExecution = original.AllowConcurrentExecution,
+            ExecutionAccount = original.ExecutionAccount,
+            CreatedBy = _currentUser,
+            Steps = original.Steps.Select(s => new JobStep
+            {
+                Order = s.Order, Name = s.Name, Type = s.Type, ConfigJson = s.ConfigJson,
+                TimeoutSeconds = s.TimeoutSeconds, MaxRetries = s.MaxRetries, RetryDelaySeconds = s.RetryDelaySeconds,
+                OnErrorAction = s.OnErrorAction, OnSuccessGoToOrder = s.OnSuccessGoToOrder, OnFailureGoToOrder = s.OnFailureGoToOrder
+            }).ToList(),
+            Triggers = original.Triggers.Select(t => new JobTrigger
+            {
+                Type = t.Type, Enabled = t.Enabled, CronExpression = t.CronExpression, IntervalSeconds = t.IntervalSeconds,
+                DaysOfWeekCsv = t.DaysOfWeekCsv, ExcludeWeekends = t.ExcludeWeekends, ExcludeHolidays = t.ExcludeHolidays,
+                HolidayDatesCsv = t.HolidayDatesCsv, WindowStart = t.WindowStart, WindowEnd = t.WindowEnd,
+                FolderPath = t.FolderPath, FolderFilter = t.FolderFilter, FolderWatchEvent = t.FolderWatchEvent
+            }).ToList(),
+            NotificationRules = original.NotificationRules.Select(n => new NotificationRule
+            {
+                Event = n.Event, Channel = n.Channel, RecipientsCsv = n.RecipientsCsv, WebhookUrl = n.WebhookUrl, Enabled = n.Enabled
+            }).ToList()
+        };
+
+        db.Jobs.Add(copy);
+        await db.SaveChangesAsync();
+        await Audit.LogAsync(AuditAction.Creation, nameof(Job), copy.Id.ToString(), copy.Name, null, _currentUser, $"Dupliqué depuis {original.Name}");
+        Nav.NavigateTo($"jobs/{copy.Id}");
+    }
+
+    private async Task DeleteJob(Job job)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var entity = await db.Jobs.FindAsync(job.Id);
+        if (entity is null) return;
+        db.Jobs.Remove(entity);
+        await db.SaveChangesAsync();
+        await Audit.LogAsync(AuditAction.Suppression, nameof(Job), job.Id.ToString(), job.Name, null, _currentUser);
+        await LoadAsync();
+    }
+
+    private static string StatusBadge(JobStatus status) => status switch
+    {
+        JobStatus.Succes => "kmk-badge-success",
+        JobStatus.Echec => "kmk-badge-danger",
+        JobStatus.EnCours => "kmk-badge-warning",
+        JobStatus.Annule => "kmk-badge-neutral",
+        _ => "kmk-badge-neutral"
+    };
+
+    private static string CriticiteBadge(Criticite c) => c switch
+    {
+        Criticite.Critique => "kmk-badge-danger",
+        Criticite.Haute => "kmk-badge-warning",
+        Criticite.Moyenne => "kmk-badge-info",
+        _ => "kmk-badge-neutral"
+    };
+}

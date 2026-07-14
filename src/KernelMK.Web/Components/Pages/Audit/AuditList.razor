@@ -1,0 +1,52 @@
+@page "/audit"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = "Administrateur,Auditeur")]
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<AppDbContext> DbFactory
+
+<PageTitle>Audit · kernelMK</PageTitle>
+
+<h1>Journal d'audit</h1>
+<p class="text-sm text-slate-500 mt-1 mb-6">Traces de création, modification, suppression, activation/désactivation, exécution manuelle et connexions (section 4.7 / 5.3).</p>
+
+@if (_loading)
+{
+    <p class="text-sm text-slate-500">Chargement...</p>
+}
+else
+{
+    <div class="kmk-card overflow-x-auto">
+        <table>
+            <thead><tr><th>Date</th><th>Utilisateur</th><th>Action</th><th>Entité</th><th>Nom</th><th>Détails</th></tr></thead>
+            <tbody>
+                @foreach (var entry in _entries)
+                {
+                    <tr>
+                        <td class="text-slate-500 whitespace-nowrap">@entry.Timestamp.ToLocalTime().ToString("G")</td>
+                        <td class="font-medium">@entry.UserName</td>
+                        <td><span class="kmk-badge-info">@entry.Action</span></td>
+                        <td class="text-slate-500">@entry.EntityType</td>
+                        <td class="text-slate-500">@entry.EntityName</td>
+                        <td class="text-slate-500 truncate max-w-xs">@entry.Details</td>
+                    </tr>
+                }
+                @if (_entries.Count == 0)
+                {
+                    <tr><td colspan="6" class="text-center text-slate-400 py-8">Aucune entrée d'audit.</td></tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    private List<AuditLogEntry> _entries = new();
+    private bool _loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _entries = await db.AuditLogEntries.OrderByDescending(e => e.Timestamp).Take(500).ToListAsync();
+        _loading = false;
+    }
+}

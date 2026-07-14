@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/KernelMK.Core/KernelMK.Core.csproj" />
+    <Project Path="src/KernelMK.Data/KernelMK.Data.csproj" />
+    <Project Path="src/KernelMK.Engine/KernelMK.Engine.csproj" />
+    <Project Path="src/KernelMK.Web/KernelMK.Web.csproj" />
+  </Folder>
+</Solution>

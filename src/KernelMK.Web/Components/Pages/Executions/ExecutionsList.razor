@@ -1,0 +1,112 @@
+@page "/executions"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = "Administrateur,Superviseur,Exploitant,Developpeur,Auditeur")]
+@using Microsoft.EntityFrameworkCore
+@using KernelMK.Engine.Reporting
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject IJSRuntime JS
+
+<PageTitle>Historique d'exécution · kernelMK</PageTitle>
+
+<div class="flex items-center justify-between mb-6">
+    <div>
+        <h1>Historique d'exécution</h1>
+        <p class="text-sm text-slate-500 mt-1">Journal détaillé des exécutions, logs et résultats.</p>
+    </div>
+    <div class="flex gap-2">
+        <button class="kmk-btn-secondary" @onclick="ExportCsv">Export CSV</button>
+        <button class="kmk-btn-secondary" @onclick="ExportJson">Export JSON</button>
+    </div>
+</div>
+
+<div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">
+    <select class="kmk-select" @bind="_filterJobId">
+        <option value="">Tous les jobs</option>
+        @foreach (var j in _jobs)
+        {
+            <option value="@j.Id">@j.Name</option>
+        }
+    </select>
+    <select class="kmk-select" @bind="_filterStatus">
+        <option value="">Tous les statuts</option>
+        @foreach (var s in Enum.GetValues<JobStatus>())
+        {
+            <option value="@s">@s</option>
+        }
+    </select>
+</div>
+
+@if (_loading)
+{
+    <p class="text-sm text-slate-500">Chargement...</p>
+}
+else
+{
+    <div class="kmk-card overflow-x-auto">
+        <table>
+            <thead><tr><th>Job</th><th>Statut</th><th>Déclencheur</th><th>Début</th><th>Durée</th><th>Code retour</th><th></th></tr></thead>
+            <tbody>
+                @foreach (var e in Filtered)
+                {
+                    <tr>
+                        <td class="font-medium">@e.Job?.Name</td>
+                        <td><span class="@StatusBadge(e.Status)">@e.Status</span></td>
+                        <td class="text-slate-500">@e.TriggeredBy</td>
+                        <td class="text-slate-500">@e.StartedAt.ToLocalTime().ToString("g")</td>
+                        <td class="text-slate-500">@(e.Duration?.ToString(@"hh\:mm\:ss") ?? "-")</td>
+                        <td class="text-slate-500">@e.ReturnCode</td>
+                        <td><a class="kmk-btn-secondary kmk-btn-sm" href="@($"executions/{e.Id}")">Détail</a></td>
+                    </tr>
+                }
+                @if (!Filtered.Any())
+                {
+                    <tr><td colspan="7" class="text-center text-slate-400 py-8">Aucune exécution ne correspond aux filtres.</td></tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    private List<JobExecution> _executions = new();
+    private List<Job> _jobs = new();
+    private bool _loading = true;
+    private string _filterJobId = "";
+    private string _filterStatus = "";
+
+    private IEnumerable<JobExecution> Filtered => _executions.Where(e =>
+        (string.IsNullOrWhiteSpace(_filterJobId) || e.JobId.ToString() == _filterJobId) &&
+        (string.IsNullOrWhiteSpace(_filterStatus) || e.Status.ToString() == _filterStatus));
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _jobs = await db.Jobs.OrderBy(j => j.Name).ToListAsync();
+        _executions = await db.JobExecutions
+            .Include(e => e.Job)
+            .OrderByDescending(e => e.StartedAt)
+            .Take(500)
+            .ToListAsync();
+        _loading = false;
+    }
+
+    private Task ExportCsv() => ExportAsync("csv");
+    private Task ExportJson() => ExportAsync("json");
+
+    private async Task ExportAsync(string format)
+    {
+        var content = format == "csv" ? ExportService.ToCsv(Filtered) : ExportService.ToJson(Filtered);
+        var mime = format == "csv" ? "text/csv" : "application/json";
+        var bytes = System.Text.Encoding.UTF8.GetBytes(content);
+        await JS.InvokeVoidAsync("kernelMK.downloadFile", $"executions.{format}", mime, Convert.ToBase64String(bytes));
+    }
+
+    private static string StatusBadge(JobStatus status) => status switch
+    {
+        JobStatus.Succes => "kmk-badge-success",
+        JobStatus.Echec => "kmk-badge-danger",
+        JobStatus.EnCours => "kmk-badge-warning",
+        JobStatus.Annule => "kmk-badge-neutral",
+        _ => "kmk-badge-neutral"
+    };
+}

@@ -1,0 +1,148 @@
+@page "/users"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = "Administrateur")]
+@using Microsoft.AspNetCore.Identity
+@using KernelMK.Engine.Audit
+@inject UserManager<ApplicationUser> UserManager
+@inject RoleManager<IdentityRole> RoleManager
+@inject AuditService Audit
+@inject AuthenticationStateProvider AuthState
+
+<PageTitle>Utilisateurs &amp; rôles · kernelMK</PageTitle>
+
+<h1>Utilisateurs &amp; rôles</h1>
+<p class="text-sm text-slate-500 mt-1 mb-6">Rôles disponibles : Administrateur, Superviseur, Exploitant, Développeur, Auditeur (section 6 du cahier des charges).</p>
+
+<div class="kmk-card mb-6">
+    <div class="kmk-card-header">Créer un utilisateur</div>
+    <div class="kmk-card-body">
+        <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 items-end">
+            <div><label class="kmk-label">Email</label><input class="kmk-input" @bind="_newEmail" /></div>
+            <div><label class="kmk-label">Nom affiché</label><input class="kmk-input" @bind="_newDisplayName" /></div>
+            <div><label class="kmk-label">Mot de passe</label><input type="password" class="kmk-input" @bind="_newPassword" /></div>
+            <div>
+                <label class="kmk-label">Rôle</label>
+                <select class="kmk-select" @bind="_newRole">
+                    @foreach (var r in DbInitializer.AllRoles)
+                    {
+                        <option value="@r">@r</option>
+                    }
+                </select>
+            </div>
+            <div><button class="kmk-btn-primary w-full" @onclick="CreateUserAsync">Créer</button></div>
+        </div>
+        @if (!string.IsNullOrEmpty(_message))
+        {
+            <p class="text-sm text-red-600 mt-3">@_message</p>
+        }
+    </div>
+</div>
+
+@if (_loading)
+{
+    <p class="text-sm text-slate-500">Chargement...</p>
+}
+else
+{
+    <div class="kmk-card overflow-x-auto">
+        <table>
+            <thead><tr><th>Email</th><th>Nom</th><th>Actif</th><th>Rôles</th></tr></thead>
+            <tbody>
+                @foreach (var u in _users)
+                {
+                    <tr>
+                        <td class="font-medium">@u.Email</td>
+                        <td class="text-slate-500">@u.DisplayName</td>
+                        <td>
+                            <input type="checkbox" class="kmk-checkbox" checked="@u.Active" @onchange="e => ToggleActiveAsync(u, (bool)e.Value!)" />
+                        </td>
+                        <td>
+                            <div class="flex flex-wrap gap-3">
+                                @foreach (var r in DbInitializer.AllRoles)
+                                {
+                                    var hasRole = _userRoles.TryGetValue(u.Id, out var roles) && roles.Contains(r);
+                                    <label class="flex items-center gap-1.5 text-xs text-slate-600">
+                                        <input type="checkbox" class="kmk-checkbox" checked="@hasRole" @onchange="e => ToggleRoleAsync(u, r, (bool)e.Value!)" />
+                                        @r
+                                    </label>
+                                }
+                            </div>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    private List<ApplicationUser> _users = new();
+    private Dictionary<string, List<string>> _userRoles = new();
+    private bool _loading = true;
+    private string _newEmail = "";
+    private string _newDisplayName = "";
+    private string _newPassword = "";
+    private string _newRole = "Exploitant";
+    private string? _message;
+    private string? _currentUser;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        _currentUser = authState.User.Identity?.Name;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _users = UserManager.Users.ToList();
+        _userRoles = new Dictionary<string, List<string>>();
+        foreach (var u in _users)
+        {
+            _userRoles[u.Id] = (await UserManager.GetRolesAsync(u)).ToList();
+        }
+        _loading = false;
+    }
+
+    private async Task CreateUserAsync()
+    {
+        _message = null;
+        if (string.IsNullOrWhiteSpace(_newEmail) || string.IsNullOrWhiteSpace(_newPassword))
+        {
+            _message = "Email et mot de passe requis.";
+            return;
+        }
+
+        var user = new ApplicationUser { UserName = _newEmail, Email = _newEmail, DisplayName = _newDisplayName, EmailConfirmed = true };
+        var result = await UserManager.CreateAsync(user, _newPassword);
+        if (!result.Succeeded)
+        {
+            _message = string.Join(", ", result.Errors.Select(e => e.Description));
+            return;
+        }
+
+        await UserManager.AddToRoleAsync(user, _newRole);
+        await Audit.LogAsync(AuditAction.Creation, nameof(ApplicationUser), user.Id, user.Email, null, _currentUser, $"Rôle initial : {_newRole}");
+
+        _newEmail = _newDisplayName = _newPassword = "";
+        await LoadAsync();
+    }
+
+    private async Task ToggleActiveAsync(ApplicationUser user, bool active)
+    {
+        user.Active = active;
+        await UserManager.UpdateAsync(user);
+        await Audit.LogAsync(active ? AuditAction.Activation : AuditAction.Desactivation, nameof(ApplicationUser), user.Id, user.Email, null, _currentUser);
+    }
+
+    private async Task ToggleRoleAsync(ApplicationUser user, string role, bool assign)
+    {
+        if (assign) await UserManager.AddToRoleAsync(user, role);
+        else await UserManager.RemoveFromRoleAsync(user, role);
+
+        await Audit.LogAsync(AuditAction.Modification, nameof(ApplicationUser), user.Id, user.Email, null, _currentUser,
+            $"Rôle {role} {(assign ? "attribué" : "retiré")}");
+        await LoadAsync();
+    }
+}

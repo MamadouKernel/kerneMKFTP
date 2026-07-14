@@ -1,0 +1,506 @@
+@page "/jobs/new"
+@rendermode InteractiveServer
+@page "/jobs/{JobId:guid}"
+@attribute [Authorize(Roles = "Administrateur,Developpeur,Superviseur,Exploitant,Auditeur")]
+@using System.Text.Json
+@using Microsoft.EntityFrameworkCore
+@using KernelMK.Engine.Audit
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject AuditService Audit
+@inject AuthenticationStateProvider AuthState
+@inject NavigationManager Nav
+
+<PageTitle>@(IsNew ? "Nouveau job" : "Modifier le job") · kernelMK</PageTitle>
+
+@if (_loading)
+{
+    <p class="text-sm text-slate-500">Chargement...</p>
+}
+else
+{
+    <h1 class="mb-6">@(IsNew ? "Nouveau job" : $"Job : {_job.Name}")</h1>
+
+    <EditForm Model="_job" OnValidSubmit="SaveAsync">
+        <div class="kmk-card mb-5">
+            <div class="kmk-card-header">Informations générales</div>
+            <div class="kmk-card-body grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label class="kmk-label">Nom</label>
+                    <InputText class="kmk-input" @bind-Value="_job.Name" />
+                </div>
+                <div>
+                    <label class="kmk-label">Propriétaire</label>
+                    <InputText class="kmk-input" @bind-Value="_job.Owner" />
+                </div>
+                <div class="md:col-span-2">
+                    <label class="kmk-label">Description / objectif</label>
+                    <InputTextArea class="kmk-input" @bind-Value="_job.Description" />
+                </div>
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4 md:col-span-2">
+                    <div>
+                        <label class="kmk-label">Criticité</label>
+                        <InputSelect class="kmk-select" @bind-Value="_job.Criticite">
+                            @foreach (var c in Enum.GetValues<Criticite>())
+                            {
+                                <option value="@c">@c</option>
+                            }
+                        </InputSelect>
+                    </div>
+                    <div>
+                        <label class="kmk-label">Compte d'exécution</label>
+                        <InputText class="kmk-input" @bind-Value="_job.ExecutionAccount" />
+                    </div>
+                    <div>
+                        <label class="kmk-label">Timeout job (s)</label>
+                        <InputNumber class="kmk-input" @bind-Value="_job.TimeoutSeconds" />
+                    </div>
+                    <div>
+                        <label class="kmk-label">Tentatives max</label>
+                        <InputNumber class="kmk-input" @bind-Value="_job.MaxRetries" />
+                    </div>
+                </div>
+                <div>
+                    <label class="kmk-label">Délai reprise (s)</label>
+                    <InputNumber class="kmk-input" @bind-Value="_job.RetryDelaySeconds" />
+                </div>
+                <div class="flex items-end gap-6">
+                    <label class="flex items-center gap-2 text-sm text-slate-700">
+                        <InputCheckbox class="kmk-checkbox" @bind-Value="_job.AllowConcurrentExecution" />
+                        Exécution concurrente autorisée
+                    </label>
+                    <label class="flex items-center gap-2 text-sm text-slate-700">
+                        <InputCheckbox class="kmk-checkbox" @bind-Value="_job.Enabled" />
+                        Job actif
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <div class="kmk-card mb-5">
+            <div class="kmk-card-header">
+                <span>Étapes (tâches)</span>
+                <button type="button" class="kmk-btn-primary kmk-btn-sm" @onclick="AddStep">+ Ajouter une étape</button>
+            </div>
+            <div class="kmk-card-body space-y-4">
+                @foreach (var step in _job.Steps.OrderBy(s => s.Order).ToList())
+                {
+                    <div class="border border-slate-200 rounded-lg p-4">
+                        <div class="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-3">
+                            <div>
+                                <label class="kmk-label">Ordre</label>
+                                <input type="number" class="kmk-input" @bind="step.Order" />
+                            </div>
+                            <div class="col-span-2">
+                                <label class="kmk-label">Nom</label>
+                                <input class="kmk-input" @bind="step.Name" />
+                            </div>
+                            <div class="col-span-2">
+                                <label class="kmk-label">Type</label>
+                                <select class="kmk-select" @bind="step.Type">
+                                    @foreach (var t in Enum.GetValues<StepType>())
+                                    {
+                                        <option value="@t">@t</option>
+                                    }
+                                </select>
+                            </div>
+                            <div>
+                                <label class="kmk-label">Timeout (s)</label>
+                                <input type="number" class="kmk-input" @bind="step.TimeoutSeconds" />
+                            </div>
+                            <div>
+                                <label class="kmk-label">Reprises</label>
+                                <input type="number" class="kmk-input" @bind="step.MaxRetries" />
+                            </div>
+                            <div>
+                                <label class="kmk-label">Délai reprise (s)</label>
+                                <input type="number" class="kmk-input" @bind="step.RetryDelaySeconds" />
+                            </div>
+                            <div class="col-span-2">
+                                <label class="kmk-label">Action en cas d'échec</label>
+                                <select class="kmk-select" @bind="step.OnErrorAction">
+                                    @foreach (var a in Enum.GetValues<OnErrorAction>())
+                                    {
+                                        <option value="@a">@a</option>
+                                    }
+                                </select>
+                            </div>
+                            <div>
+                                <label class="kmk-label">Succès → ordre</label>
+                                <input type="number" class="kmk-input" @bind="step.OnSuccessGoToOrder" />
+                            </div>
+                            <div>
+                                <label class="kmk-label">Échec → ordre</label>
+                                <input type="number" class="kmk-input" @bind="step.OnFailureGoToOrder" />
+                            </div>
+                            <div class="col-span-2">
+                                <label class="kmk-label">Credential</label>
+                                <select class="kmk-select" @bind="step.CredentialId">
+                                    <option value="">(aucun)</option>
+                                    @foreach (var c in _credentials)
+                                    {
+                                        <option value="@c.Id">@c.Name</option>
+                                    }
+                                </select>
+                            </div>
+                            <div class="flex items-end">
+                                <button type="button" class="kmk-btn-secondary w-full" @onclick="() => LoadTemplate(step)">Modèle JSON</button>
+                            </div>
+
+                            <div class="col-span-2 sm:col-span-4 md:col-span-6">
+                                <label class="kmk-label">Configuration (JSON)</label>
+                                <textarea class="kmk-input font-mono text-xs" rows="4" @bind="step.ConfigJson"></textarea>
+                            </div>
+                            <div class="col-span-2 sm:col-span-4 md:col-span-6 text-right">
+                                <button type="button" class="kmk-btn-danger kmk-btn-sm" @onclick="() => _job.Steps.Remove(step)">Supprimer l'étape</button>
+                            </div>
+                        </div>
+                    </div>
+                }
+                @if (_job.Steps.Count == 0)
+                {
+                    <p class="text-sm text-slate-400">Aucune étape définie.</p>
+                }
+            </div>
+        </div>
+
+        <div class="kmk-card mb-5">
+            <div class="kmk-card-header">
+                <span>Déclencheurs</span>
+                <button type="button" class="kmk-btn-primary kmk-btn-sm" @onclick="AddTrigger">+ Ajouter un déclencheur</button>
+            </div>
+            <div class="kmk-card-body space-y-4">
+                @foreach (var trigger in _job.Triggers)
+                {
+                    <div class="border border-slate-200 rounded-lg p-4">
+                        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                            <div>
+                                <label class="kmk-label">Type</label>
+                                <select class="kmk-select" @bind="trigger.Type">
+                                    @foreach (var t in TriggerTypeChoices)
+                                    {
+                                        <option value="@t">@t</option>
+                                    }
+                                </select>
+                            </div>
+                            <div class="flex items-end pb-2">
+                                <label class="flex items-center gap-2 text-sm text-slate-700">
+                                    <input type="checkbox" class="kmk-checkbox" @bind="trigger.Enabled" />
+                                    Actif
+                                </label>
+                            </div>
+
+                            @if (trigger.Type is TriggerType.Horaire or TriggerType.Cron)
+                            {
+                                <div class="col-span-2">
+                                    <label class="kmk-label">Expression Cron (avec secondes)</label>
+                                    <input class="kmk-input" placeholder="0 0 22 * * *" @bind="trigger.CronExpression" />
+                                </div>
+                                <div>
+                                    <label class="kmk-label">Ou intervalle (s)</label>
+                                    <input type="number" class="kmk-input" @bind="trigger.IntervalSeconds" />
+                                </div>
+                            }
+                            else if (trigger.Type == TriggerType.Calendrier)
+                            {
+                                <div>
+                                    <label class="kmk-label">Jours (Mon,Tue,...)</label>
+                                    <input class="kmk-input" @bind="trigger.DaysOfWeekCsv" />
+                                </div>
+                                <div>
+                                    <label class="kmk-label">Heure d'exécution</label>
+                                    <input type="time" class="kmk-input" value="@WindowStartString(trigger)" @onchange="e => SetWindowStart(trigger, e.Value?.ToString())" />
+                                </div>
+                                <div class="flex items-end pb-2">
+                                    <label class="flex items-center gap-2 text-sm text-slate-700">
+                                        <input type="checkbox" class="kmk-checkbox" @bind="trigger.ExcludeWeekends" />
+                                        Exclure week-ends
+                                    </label>
+                                </div>
+                                <div class="flex items-end pb-2">
+                                    <label class="flex items-center gap-2 text-sm text-slate-700">
+                                        <input type="checkbox" class="kmk-checkbox" @bind="trigger.ExcludeHolidays" />
+                                        Exclure jours fériés
+                                    </label>
+                                </div>
+                                <div class="col-span-2">
+                                    <label class="kmk-label">Jours fériés (yyyy-MM-dd,...)</label>
+                                    <input class="kmk-input" @bind="trigger.HolidayDatesCsv" />
+                                </div>
+                            }
+                            else if (trigger.Type == TriggerType.EvenementDossier)
+                            {
+                                <div class="col-span-2">
+                                    <label class="kmk-label">Dossier surveillé</label>
+                                    <input class="kmk-input" @bind="trigger.FolderPath" />
+                                </div>
+                                <div>
+                                    <label class="kmk-label">Filtre (ex: *.csv)</label>
+                                    <input class="kmk-input" @bind="trigger.FolderFilter" />
+                                </div>
+                                <div>
+                                    <label class="kmk-label">Événement</label>
+                                    <select class="kmk-select" @bind="trigger.FolderWatchEvent">
+                                        @foreach (var ev in Enum.GetValues<FolderWatchEventType>())
+                                        {
+                                            <option value="@ev">@ev</option>
+                                        }
+                                    </select>
+                                </div>
+                            }
+                            else if (trigger.Type == TriggerType.Api)
+                            {
+                                <div class="col-span-3">
+                                    <label class="kmk-label">Jeton webhook (URL : /api/triggers/{jeton})</label>
+                                    <input class="kmk-input" @bind="trigger.WebhookToken" />
+                                </div>
+                            }
+
+                            <div class="col-span-2 sm:col-span-4 text-right">
+                                <button type="button" class="kmk-btn-danger kmk-btn-sm" @onclick="() => _job.Triggers.Remove(trigger)">Supprimer le déclencheur</button>
+                            </div>
+                        </div>
+                    </div>
+                }
+                @if (_job.Triggers.Count == 0)
+                {
+                    <p class="text-sm text-slate-400">Aucun déclencheur défini (exécution manuelle uniquement).</p>
+                }
+            </div>
+        </div>
+
+        <div class="kmk-card mb-5">
+            <div class="kmk-card-header">
+                <span>Dépendances (chaînage de jobs)</span>
+                <button type="button" class="kmk-btn-primary kmk-btn-sm" @onclick="AddDependency">+ Ajouter une dépendance</button>
+            </div>
+            <div class="kmk-card-body space-y-2">
+                @foreach (var dep in _job.Dependencies)
+                {
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        <select class="kmk-select sm:col-span-1" @bind="dep.DependsOnJobId">
+                            @foreach (var j in _otherJobs)
+                            {
+                                <option value="@j.Id">@j.Name</option>
+                            }
+                        </select>
+                        <select class="kmk-select" @bind="dep.Condition">
+                            @foreach (var c in Enum.GetValues<JobDependencyCondition>())
+                            {
+                                <option value="@c">@c</option>
+                            }
+                        </select>
+                        <button type="button" class="kmk-btn-danger kmk-btn-sm justify-self-start" @onclick="() => _job.Dependencies.Remove(dep)">Supprimer</button>
+                    </div>
+                }
+                @if (_job.Dependencies.Count == 0)
+                {
+                    <p class="text-sm text-slate-400">Ce job ne dépend d'aucun autre job.</p>
+                }
+            </div>
+        </div>
+
+        <div class="kmk-card mb-5">
+            <div class="kmk-card-header">
+                <span>Notifications</span>
+                <button type="button" class="kmk-btn-primary kmk-btn-sm" @onclick="AddNotificationRule">+ Ajouter une règle</button>
+            </div>
+            <div class="kmk-card-body space-y-2">
+                @foreach (var rule in _job.NotificationRules)
+                {
+                    <div class="grid grid-cols-2 sm:grid-cols-5 gap-2 items-center">
+                        <select class="kmk-select" @bind="rule.Event">
+                            @foreach (var ev in Enum.GetValues<NotificationEvent>())
+                            {
+                                <option value="@ev">@ev</option>
+                            }
+                        </select>
+                        <select class="kmk-select" @bind="rule.Channel">
+                            @foreach (var ch in Enum.GetValues<NotificationChannel>())
+                            {
+                                <option value="@ch">@ch</option>
+                            }
+                        </select>
+                        <input class="kmk-input" placeholder="destinataires (,)" @bind="rule.RecipientsCsv" />
+                        <input class="kmk-input" placeholder="URL webhook" @bind="rule.WebhookUrl" />
+                        <button type="button" class="kmk-btn-danger kmk-btn-sm justify-self-start" @onclick="() => _job.NotificationRules.Remove(rule)">✕</button>
+                    </div>
+                }
+                @if (_job.NotificationRules.Count == 0)
+                {
+                    <p class="text-sm text-slate-400">Aucune notification configurée.</p>
+                }
+            </div>
+        </div>
+
+        <div class="flex gap-3 mb-8">
+            <button type="submit" class="kmk-btn-primary">Enregistrer</button>
+            <a class="kmk-btn-secondary" href="jobs">Annuler</a>
+        </div>
+    </EditForm>
+}
+
+@code {
+    [Parameter] public Guid? JobId { get; set; }
+
+    private bool IsNew => JobId is null;
+    private Job _job = new();
+    private bool _loading = true;
+    private List<Credential> _credentials = new();
+    private List<Job> _otherJobs = new();
+    private string? _currentUser;
+
+    private static readonly TriggerType[] TriggerTypeChoices =
+    {
+        TriggerType.Horaire, TriggerType.Calendrier, TriggerType.EvenementDossier,
+        TriggerType.Demarrage, TriggerType.Api, TriggerType.Manuel
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthState.GetAuthenticationStateAsync();
+        _currentUser = authState.User.Identity?.Name;
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _credentials = await db.Credentials.OrderBy(c => c.Name).ToListAsync();
+
+        if (JobId is { } id)
+        {
+            _job = await db.Jobs
+                .Include(j => j.Steps)
+                .Include(j => j.Triggers)
+                .Include(j => j.Dependencies)
+                .Include(j => j.NotificationRules)
+                .FirstAsync(j => j.Id == id);
+            _otherJobs = await db.Jobs.Where(j => j.Id != id).OrderBy(j => j.Name).ToListAsync();
+        }
+        else
+        {
+            _job = new Job { CreatedBy = _currentUser };
+            _otherJobs = await db.Jobs.OrderBy(j => j.Name).ToListAsync();
+        }
+
+        _loading = false;
+    }
+
+    private void AddStep()
+    {
+        var nextOrder = _job.Steps.Count == 0 ? 1 : _job.Steps.Max(s => s.Order) + 1;
+        _job.Steps.Add(new JobStep { Order = nextOrder, Name = $"Étape {nextOrder}", Type = StepType.ScriptPowerShell, ConfigJson = "{}" });
+    }
+
+    private void AddTrigger() => _job.Triggers.Add(new JobTrigger { Type = TriggerType.Horaire, Enabled = true });
+
+    private void AddDependency()
+    {
+        if (_otherJobs.Count == 0) return;
+        _job.Dependencies.Add(new JobDependency { DependsOnJobId = _otherJobs.First().Id, Condition = JobDependencyCondition.Succes });
+    }
+
+    private void AddNotificationRule() => _job.NotificationRules.Add(new NotificationRule { Event = NotificationEvent.Echec, Channel = NotificationChannel.Email, Enabled = true });
+
+    private string WindowStartString(JobTrigger trigger) => trigger.WindowStart?.ToString(@"hh\:mm") ?? "22:00";
+
+    private void SetWindowStart(JobTrigger trigger, string? value)
+    {
+        if (TimeSpan.TryParse(value, out var ts)) trigger.WindowStart = ts;
+    }
+
+    private void LoadTemplate(JobStep step)
+    {
+        object template = step.Type switch
+        {
+            StepType.CommandeSysteme or StepType.ScriptPowerShell or StepType.ScriptPython or StepType.ScriptBatch =>
+                new ScriptStepConfig { Path = @"C:\scripts\exemple.ps1", Arguments = "-Param valeur" },
+            StepType.FichierCopier or StepType.FichierDeplacer or StepType.FichierRenommer or StepType.FichierSupprimer
+                or StepType.FichierCompresser or StepType.FichierDecompresser or StepType.FichierVerifier =>
+                new FileOpStepConfig { SourcePath = @"C:\source", DestinationPath = @"C:\destination", Filter = "*.csv" },
+            StepType.TransfertFtp or StepType.TransfertFtps or StepType.TransfertSftp or StepType.TransfertSmb =>
+                new TransferStepConfig { Host = "sftp.exemple.fr", Port = 22, RemotePath = "/upload/fichier.csv", LocalPath = @"C:\data\fichier.csv", Upload = true },
+            StepType.BaseDeDonneesRequete or StepType.ScriptSql =>
+                new SqlStepConfig { Provider = "Sqlite", ConnectionString = "Data Source=exemple.db", CommandText = "SELECT 1;" },
+            StepType.EmailSmtp =>
+                new EmailStepConfig { SmtpHost = "smtp.exemple.fr", SmtpPort = 587, From = "jobs@exemple.fr", ToCsv = "support@exemple.fr", Subject = "Notification", Body = "Traitement terminé." },
+            StepType.Webhook or StepType.TransfertHttp =>
+                new WebhookStepConfig { Url = "https://exemple.fr/webhook", Method = "POST" },
+            StepType.ControleAttente or StepType.ControleCondition or StepType.ControleAppelJob =>
+                new ControlStepConfig { Operation = ControlOperation.Attente, WaitSeconds = 30 },
+            _ => new { }
+        };
+
+        step.ConfigJson = JsonSerializer.Serialize(template, new JsonSerializerOptions { WriteIndented = true });
+    }
+
+    private async Task SaveAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        if (IsNew)
+        {
+            _job.CreatedAt = DateTime.UtcNow;
+            _job.CreatedBy = _currentUser;
+            db.Jobs.Add(_job);
+            await db.SaveChangesAsync();
+            await Audit.LogAsync(AuditAction.Creation, nameof(Job), _job.Id.ToString(), _job.Name, null, _currentUser);
+        }
+        else
+        {
+            var existing = await db.Jobs
+                .Include(j => j.Steps)
+                .Include(j => j.Triggers)
+                .Include(j => j.Dependencies)
+                .Include(j => j.NotificationRules)
+                .FirstAsync(j => j.Id == _job.Id);
+
+            db.JobSteps.RemoveRange(existing.Steps);
+            db.JobTriggers.RemoveRange(existing.Triggers);
+            db.JobDependencies.RemoveRange(existing.Dependencies);
+            db.NotificationRules.RemoveRange(existing.NotificationRules);
+
+            existing.Name = _job.Name;
+            existing.Description = _job.Description;
+            existing.Owner = _job.Owner;
+            existing.Criticite = _job.Criticite;
+            existing.Enabled = _job.Enabled;
+            existing.MaxRetries = _job.MaxRetries;
+            existing.RetryDelaySeconds = _job.RetryDelaySeconds;
+            existing.TimeoutSeconds = _job.TimeoutSeconds;
+            existing.AllowConcurrentExecution = _job.AllowConcurrentExecution;
+            existing.ExecutionAccount = _job.ExecutionAccount;
+            existing.UpdatedAt = DateTime.UtcNow;
+            existing.UpdatedBy = _currentUser;
+
+            existing.Steps = _job.Steps.Select(s => new JobStep
+            {
+                Order = s.Order, Name = s.Name, Type = s.Type, ConfigJson = s.ConfigJson,
+                CredentialId = s.CredentialId, TimeoutSeconds = s.TimeoutSeconds, MaxRetries = s.MaxRetries,
+                RetryDelaySeconds = s.RetryDelaySeconds, OnErrorAction = s.OnErrorAction,
+                OnSuccessGoToOrder = s.OnSuccessGoToOrder, OnFailureGoToOrder = s.OnFailureGoToOrder
+            }).ToList();
+
+            existing.Triggers = _job.Triggers.Select(t => new JobTrigger
+            {
+                Type = t.Type, Enabled = t.Enabled, CronExpression = t.CronExpression, IntervalSeconds = t.IntervalSeconds,
+                DaysOfWeekCsv = t.DaysOfWeekCsv, ExcludeWeekends = t.ExcludeWeekends, ExcludeHolidays = t.ExcludeHolidays,
+                HolidayDatesCsv = t.HolidayDatesCsv, WindowStart = t.WindowStart, WindowEnd = t.WindowEnd,
+                FolderPath = t.FolderPath, FolderFilter = t.FolderFilter, FolderWatchEvent = t.FolderWatchEvent,
+                WebhookToken = t.WebhookToken
+            }).ToList();
+
+            existing.Dependencies = _job.Dependencies.Select(d => new JobDependency
+            {
+                DependsOnJobId = d.DependsOnJobId, Condition = d.Condition
+            }).ToList();
+
+            existing.NotificationRules = _job.NotificationRules.Select(n => new NotificationRule
+            {
+                Event = n.Event, Channel = n.Channel, RecipientsCsv = n.RecipientsCsv, WebhookUrl = n.WebhookUrl, Enabled = n.Enabled
+            }).ToList();
+
+            await db.SaveChangesAsync();
+            await Audit.LogAsync(AuditAction.Modification, nameof(Job), existing.Id.ToString(), existing.Name, null, _currentUser);
+            _job = existing;
+        }
+
+        Nav.NavigateTo("jobs");
+    }
+}

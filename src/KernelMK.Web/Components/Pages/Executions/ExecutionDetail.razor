@@ -1,0 +1,91 @@
+@page "/executions/{ExecutionId:guid}"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = "Administrateur,Superviseur,Exploitant,Developpeur,Auditeur")]
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<AppDbContext> DbFactory
+
+<PageTitle>Détail d'exécution · kernelMK</PageTitle>
+
+@if (_loading)
+{
+    <p class="text-sm text-slate-500">Chargement...</p>
+}
+else if (_execution is null)
+{
+    <p class="text-sm text-slate-500">Exécution introuvable.</p>
+}
+else
+{
+    <h1 class="mb-6">Exécution : @_execution.Job?.Name</h1>
+
+    <div class="kmk-card mb-6">
+        <div class="kmk-card-body grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3 text-sm">
+            <div class="flex justify-between border-b border-slate-100 pb-2"><span class="text-slate-500">Statut</span><span class="@StatusBadge(_execution.Status)">@_execution.Status</span></div>
+            <div class="flex justify-between border-b border-slate-100 pb-2"><span class="text-slate-500">Déclenché par</span><span class="font-medium">@_execution.TriggeredBy</span></div>
+            <div class="flex justify-between border-b border-slate-100 pb-2"><span class="text-slate-500">Serveur</span><span class="font-medium">@_execution.ServerName</span></div>
+            <div class="flex justify-between border-b border-slate-100 pb-2"><span class="text-slate-500">Compte</span><span class="font-medium">@_execution.ExecutionAccount</span></div>
+            <div class="flex justify-between border-b border-slate-100 pb-2"><span class="text-slate-500">Début</span><span class="font-medium">@_execution.StartedAt.ToLocalTime().ToString("G")</span></div>
+            <div class="flex justify-between border-b border-slate-100 pb-2"><span class="text-slate-500">Fin</span><span class="font-medium">@(_execution.FinishedAt?.ToLocalTime().ToString("G") ?? "-")</span></div>
+            <div class="flex justify-between border-b border-slate-100 pb-2"><span class="text-slate-500">Durée</span><span class="font-medium">@(_execution.Duration?.ToString(@"hh\:mm\:ss") ?? "-")</span></div>
+            <div class="flex justify-between border-b border-slate-100 pb-2"><span class="text-slate-500">Code retour</span><span class="font-medium">@_execution.ReturnCode</span></div>
+            <div class="sm:col-span-2 flex justify-between"><span class="text-slate-500">Message</span><span class="font-medium text-right">@_execution.Message</span></div>
+        </div>
+    </div>
+
+    <h3 class="mb-3">Étapes exécutées</h3>
+    <div class="kmk-card overflow-x-auto mb-6">
+        <table>
+            <thead><tr><th>Ordre</th><th>Étape</th><th>Tentative</th><th>Statut</th><th>Durée</th><th>Sortie</th><th>Erreur</th></tr></thead>
+            <tbody>
+                @foreach (var log in _execution.StepLogs.OrderBy(l => l.Order).ThenBy(l => l.AttemptNumber))
+                {
+                    <tr>
+                        <td class="text-slate-500">@log.Order</td>
+                        <td class="font-medium">@log.StepName</td>
+                        <td class="text-slate-500">@log.AttemptNumber</td>
+                        <td><span class="@StepStatusBadge(log.Status)">@log.Status</span></td>
+                        <td class="text-slate-500">@(log.Duration?.ToString(@"hh\:mm\:ss") ?? "-")</td>
+                        <td><pre class="text-xs whitespace-pre-wrap text-slate-600 max-w-xs">@log.Output</pre></td>
+                        <td><pre class="text-xs whitespace-pre-wrap text-red-600 max-w-xs">@log.ErrorOutput</pre></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    <a class="kmk-btn-secondary" href="executions">← Retour</a>
+}
+
+@code {
+    [Parameter] public Guid ExecutionId { get; set; }
+    private JobExecution? _execution;
+    private bool _loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _execution = await db.JobExecutions
+            .Include(e => e.Job)
+            .Include(e => e.StepLogs)
+            .FirstOrDefaultAsync(e => e.Id == ExecutionId);
+        _loading = false;
+    }
+
+    private static string StatusBadge(JobStatus status) => status switch
+    {
+        JobStatus.Succes => "kmk-badge-success",
+        JobStatus.Echec => "kmk-badge-danger",
+        JobStatus.EnCours => "kmk-badge-warning",
+        JobStatus.Annule => "kmk-badge-neutral",
+        _ => "kmk-badge-neutral"
+    };
+
+    private static string StepStatusBadge(StepExecutionStatus status) => status switch
+    {
+        StepExecutionStatus.Succes => "kmk-badge-success",
+        StepExecutionStatus.Echec => "kmk-badge-danger",
+        StepExecutionStatus.Timeout => "kmk-badge-warning",
+        StepExecutionStatus.Annule or StepExecutionStatus.Ignore => "kmk-badge-neutral",
+        _ => "kmk-badge-neutral"
+    };
+}
