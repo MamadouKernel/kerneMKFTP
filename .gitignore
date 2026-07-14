@@ -2,6 +2,8 @@
 bin/
 obj/
 publish/
+release/
+release.zip
 
 # Visual Studio
 .vs/
