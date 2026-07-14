@@ -1,8 +1,11 @@
 ﻿@if (!string.IsNullOrEmpty(DisplayMessage))
 {
-    var isError = DisplayMessage.StartsWith("Error");
+    var isError = IsError ?? DisplayMessage.StartsWith("Error", StringComparison.Ordinal);
+    var text = DisplayMessage.StartsWith("Error:", StringComparison.Ordinal)
+        ? DisplayMessage["Error:".Length..].Trim()
+        : DisplayMessage;
     <div class="rounded-lg px-3.5 py-2.5 text-sm mb-4 @(isError ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700")" role="alert">
-        @DisplayMessage
+        @text
     </div>
 }
 
@@ -11,6 +14,14 @@
 
     [Parameter]
     public string? Message { get; set; }
+
+    /// <summary>
+    /// Force explicitement le style erreur/succès. Si non renseigné, retombe sur la détection historique
+    /// du préfixe "Error" (convention des messages générés par Identity), pour ne pas casser les pages
+    /// existantes — mais les messages en français doivent le renseigner explicitement.
+    /// </summary>
+    [Parameter]
+    public bool? IsError { get; set; }
 
     [CascadingParameter]
     private HttpContext HttpContext { get; set; } = default!;

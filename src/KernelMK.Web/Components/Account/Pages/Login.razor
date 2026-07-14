@@ -30,7 +30,7 @@
                 <h1 class="text-lg mb-1">Connexion</h1>
                 <p class="text-sm text-slate-500 mb-5">Accédez à la plateforme d'automatisation.</p>
 
-                <StatusMessage Message="@errorMessage" />
+                <StatusMessage Message="@errorMessage" IsError="true" />
 
                 <EditForm Model="Input" method="post" OnValidSubmit="LoginUser" FormName="login" class="space-y-4">
                     <DataAnnotationsValidator />
