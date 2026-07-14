@@ -24,5 +24,8 @@ src/KernelMK.Web/logs/
 # Tailwind CLI standalone binary (large, downloaded separately)
 tools/tailwindcss.exe
 
+# Certificat de signature de code (clé privée, jamais dans le dépôt)
+certs/
+
 # Logs
 *.log

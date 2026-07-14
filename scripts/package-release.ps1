@@ -18,16 +18,26 @@
 .PARAMETER Zip
     Compresse aussi le résultat en un fichier .zip à côté du dossier de sortie.
 
+.PARAMETER SignPfxPath
+    Chemin vers un certificat de signature de code (.pfx). Si fourni, KernelMK.exe est signé
+    après packaging (voir scripts\create-signing-cert.ps1 pour générer un certificat interne).
+
+.PARAMETER SignPfxPassword
+    Mot de passe du .pfx (SecureString). Ignoré si -SignPfxPath n'est pas fourni.
+
 .EXAMPLE
     .\scripts\package-release.ps1
     .\scripts\package-release.ps1 -Zip
     .\scripts\package-release.ps1 -OutputDir C:\Partage\kernelMK -Zip
+    .\scripts\package-release.ps1 -SignPfxPath certs\KernelMK-CodeSigning.pfx -Zip
 #>
 
 param(
     [string]$OutputDir = (Join-Path $PSScriptRoot "..\release"),
     [switch]$SkipPublish,
-    [switch]$Zip
+    [switch]$Zip,
+    [string]$SignPfxPath,
+    [System.Security.SecureString]$SignPfxPassword
 )
 
 $ErrorActionPreference = "Stop"
@@ -75,6 +85,38 @@ Get-ChildItem -Path $publishDir -Force | ForEach-Object {
             return
         }
         Copy-Item $_.FullName -Destination $OutputDir -Force
+    }
+}
+
+if ($SignPfxPath) {
+    if (-not (Test-Path $SignPfxPath)) {
+        throw "Certificat introuvable : $SignPfxPath"
+    }
+    if (-not $SignPfxPassword) {
+        $SignPfxPassword = Read-Host -AsSecureString -Prompt "Mot de passe du certificat ($SignPfxPath)"
+    }
+
+    $exePath = Join-Path $OutputDir "KernelMK.exe"
+    Write-Host "Signature de $exePath..." -ForegroundColor Cyan
+
+    $cert = Get-PfxCertificate -FilePath $SignPfxPath -Password $SignPfxPassword
+    $signature = Set-AuthenticodeSignature -FilePath $exePath -Certificate $cert `
+        -TimestampServer "http://timestamp.digicert.com" -HashAlgorithm SHA256
+
+    # "UnknownError" avec un certificat auto-signé signifie presque toujours que la signature a bien
+    # été apposée, mais que le certificat racine n'est pas (encore) installé dans les magasins de
+    # confiance de CETTE machine — normal tant que create-signing-cert.ps1 n'a pas été suivi de
+    # l'installation du .cer. On ne fait échouer le script que sur un vrai échec de signature.
+    if ($signature.Status -eq "Valid") {
+        Write-Host "Signature apposée et vérifiée comme fiable sur cette machine (certificat : $($cert.Subject))." -ForegroundColor Green
+    }
+    elseif ($signature.Status -eq "UnknownError" -and $signature.SignerCertificate) {
+        Write-Host "Signature apposée (certificat : $($cert.Subject))." -ForegroundColor Green
+        Write-Host "  Non reconnue comme fiable sur cette machine : $($signature.StatusMessage)" -ForegroundColor Yellow
+        Write-Host "  Normal pour un certificat auto-signé tant que son .cer n'est pas installé (voir create-signing-cert.ps1)." -ForegroundColor Yellow
+    }
+    else {
+        throw "Échec de la signature (statut : $($signature.Status) — $($signature.StatusMessage))."
     }
 }
 
