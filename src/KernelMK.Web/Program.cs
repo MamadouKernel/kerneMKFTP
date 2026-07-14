@@ -12,6 +12,13 @@ using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Permet d'exécuter l'application comme Service Windows (installation via sc.exe/New-Service) ;
+// sans effet quand elle est lancée normalement (console, IIS Express, dotnet run).
+builder.Host.UseWindowsService(options =>
+{
+    options.ServiceName = "KernelMK";
+});
+
 // Garantit l'existence du dossier de données (fichier SQLite) au premier lancement, y compris depuis l'exécutable publié.
 Directory.CreateDirectory(Path.Combine(builder.Environment.ContentRootPath, "App_Data"));
 Directory.CreateDirectory(Path.Combine(AppContext.BaseDirectory, "backups"));
