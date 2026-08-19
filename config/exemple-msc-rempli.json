@@ -1,0 +1,57 @@
+{
+  "code": "MSC",
+  "name": "Mediterranean Shipping Company",
+  "enabled": true,
+  "connection": {
+    "protocol": "sftp",
+    "host": "A_REMPLACER_host_msc.com",
+    "port": 22,
+    "username": "A_REMPLACER",
+    "passwordSecretFile": "MSC.enc",
+    "certificate": ""
+  },
+  "ediEnvoyes": [
+    {
+      "type": "CODECO",
+      "watchFolders": [
+        {
+          "sourceDir": "\\\\A_REMPLACER\\GUCE_CIT\\CODECO\\MSC\\OUT",
+          "archiveDir": "\\\\A_REMPLACER\\GUCE_CIT\\CODECO\\MSC\\OUT\\archive"
+        }
+      ],
+      "stagingDir": "C:\\CIT\\NAVIS\\serviceEDI\\data\\MSC\\CODECO\\out",
+      "localArchiveDir": "C:\\CIT\\NAVIS\\serviceEDI\\archives\\MSC\\CODECO\\out",
+      "remotePath": "/in/codeco",
+      "remoteArchivePath": "/in/codeco/archive"
+    },
+    {
+      "type": "COARRI",
+      "watchFolders": [
+        {
+          "sourceDir": "\\\\A_REMPLACER\\GUCE_CIT\\COARRI\\MSC\\OUT",
+          "archiveDir": "\\\\A_REMPLACER\\GUCE_CIT\\COARRI\\MSC\\OUT\\archive"
+        }
+      ],
+      "stagingDir": "C:\\CIT\\NAVIS\\serviceEDI\\data\\MSC\\COARRI\\out",
+      "localArchiveDir": "C:\\CIT\\NAVIS\\serviceEDI\\archives\\MSC\\COARRI\\out",
+      "remotePath": "/in/coarri",
+      "remoteArchivePath": "/in/coarri/archive"
+    }
+  ],
+  "ediRecus": [
+    {
+      "type": "COPARN",
+      "remotePath": "/out/coparn",
+      "remoteProcessedPath": "/out/coparn/processed",
+      "localDestinationDir": "C:\\CIT\\NAVIS\\serviceEDI\\data\\MSC\\COPARN\\in",
+      "localArchiveDir": "C:\\CIT\\NAVIS\\serviceEDI\\archives\\MSC\\COPARN\\in"
+    },
+    {
+      "type": "COREOR",
+      "remotePath": "/out/coreor",
+      "remoteProcessedPath": "/out/coreor/processed",
+      "localDestinationDir": "C:\\CIT\\NAVIS\\serviceEDI\\data\\MSC\\COREOR\\in",
+      "localArchiveDir": "C:\\CIT\\NAVIS\\serviceEDI\\archives\\MSC\\COREOR\\in"
+    }
+  ]
+}

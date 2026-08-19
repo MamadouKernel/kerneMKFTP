@@ -1,0 +1,199 @@
+{
+  "armateurs": [
+    {
+      "code": "GUCE",
+      "name": "Guichet Unique du Commerce Exterieur (hub actuel)",
+      "enabled": true,
+      "connection": {
+        "protocol": "ftpes",
+        "host": "files01.guce.gouv.ci",
+        "port": 990,
+        "username": "HDL-CIT",
+        "passwordSecretFile": "GUCE.enc",
+        "certificate": "ea:c7:66:2c:8c:79:9d:ea:89:e5:a4:8f:26:cd:d7:23:38:d7:b7:a4:f1:9a:ba:0c:26:a3:a5:ad:66:e2:aa:76"
+      },
+      "ediEnvoyes": [
+        {
+          "type": "COARRI",
+          "watchFolders": [
+            {
+              "sourceDir": "\\\\A_REMPLACER\\GUCE_CIT\\COARRI\\LOAD",
+              "archiveDir": "\\\\A_REMPLACER\\GUCE_CIT\\COARRI\\LOAD\\archive"
+            },
+            {
+              "sourceDir": "\\\\A_REMPLACER\\GUCE_CIT\\COARRI\\DISCH",
+              "archiveDir": "\\\\A_REMPLACER\\GUCE_CIT\\COARRI\\DISCH\\archive"
+            }
+          ],
+          "stagingDir": "C:\\CIT\\NAVIS\\serviceEDI\\data\\GUCE\\COARRI\\out",
+          "localArchiveDir": "C:\\CIT\\NAVIS\\serviceEDI\\archives\\GUCE\\COARRI\\out",
+          "remotePath": "/actor-to-guce",
+          "remoteArchivePath": "/actor-to-guce/archive"
+        }
+      ],
+      "ediRecus": [
+        {
+          "type": "COARRI",
+          "remotePath": "/guce-to-actor",
+          "remoteProcessedPath": "/guce-to-actor/processed",
+          "localDestinationDir": "C:\\CIT\\NAVIS\\serviceEDI\\data\\GUCE\\COARRI\\in",
+          "localArchiveDir": "C:\\CIT\\NAVIS\\serviceEDI\\archives\\GUCE\\COARRI\\in"
+        }
+      ]
+    },
+    {
+      "code": "MSC",
+      "name": "Mediterranean Shipping Company",
+      "enabled": false,
+      "_note": "A_REMPLIR : voir fiche-collecte-armateurs.md puis passer enabled a true. Exemple ci-dessous avec surcharges de reglages (logRetentionDays) et sources multiples en reception (remoteSources) - a adapter ou supprimer selon le besoin reel.",
+      "logRetentionDays": 60,
+      "connection": {
+        "protocol": "A_REMPLACER_sftp_ou_ftpes",
+        "host": "A_REMPLACER",
+        "port": 0,
+        "username": "A_REMPLACER",
+        "passwordSecretFile": "MSC.enc",
+        "certificate": ""
+      },
+      "ediEnvoyes": [
+        {
+          "type": "A_REMPLACER_ex_CODECO",
+          "watchFolders": [
+            {
+              "sourceDir": "A_REMPLACER",
+              "archiveDir": "A_REMPLACER"
+            }
+          ],
+          "stagingDir": "C:\\CIT\\NAVIS\\serviceEDI\\data\\MSC\\A_REMPLACER\\out",
+          "localArchiveDir": "C:\\CIT\\NAVIS\\serviceEDI\\archives\\MSC\\A_REMPLACER\\out",
+          "remotePath": "A_REMPLACER",
+          "remoteArchivePath": "A_REMPLACER"
+        }
+      ],
+      "ediRecus": [
+        {
+          "type": "A_REMPLACER_ex_COPARN",
+          "_note": "Deux facons de configurer la reception, au choix : (a) champs simples remotePath/localDestinationDir ci-dessous pour UNE seule source, ou (b) 'remoteSources' (liste) pour PLUSIEURS dossiers distants vers plusieurs dossiers locaux - voir exemple en commentaire.",
+          "minMinutesBetweenSameAlert": 15,
+          "remotePath": "A_REMPLACER",
+          "remoteProcessedPath": "A_REMPLACER",
+          "localDestinationDir": "C:\\CIT\\NAVIS\\serviceEDI\\data\\MSC\\A_REMPLACER\\in",
+          "localArchiveDir": "C:\\CIT\\NAVIS\\serviceEDI\\archives\\MSC\\A_REMPLACER\\in"
+        },
+        {
+          "type": "A_REMPLACER_exemple_avec_remoteSources",
+          "_note": "Exemple : surveiller 2 dossiers distants differents pour le meme type EDI, chacun vers son propre dossier local. Si 'remoteSources' est present, les champs simples remotePath/localDestinationDir/remoteProcessedPath ci-dessus sont ignores.",
+          "remoteSources": [
+            {
+              "remotePath": "A_REMPLACER_dossier_distant_1",
+              "localDestinationDir": "C:\\CIT\\NAVIS\\serviceEDI\\data\\MSC\\A_REMPLACER\\in1",
+              "remoteProcessedPath": "A_REMPLACER_dossier_distant_1/processed"
+            },
+            {
+              "remotePath": "A_REMPLACER_dossier_distant_2",
+              "localDestinationDir": "C:\\CIT\\NAVIS\\serviceEDI\\data\\MSC\\A_REMPLACER\\in2",
+              "removeRemoteAfterDownload": true
+            }
+          ],
+          "localArchiveDir": "C:\\CIT\\NAVIS\\serviceEDI\\archives\\MSC\\A_REMPLACER\\in"
+        }
+      ]
+    },
+    {
+      "code": "MAERSK",
+      "name": "Maersk",
+      "enabled": false,
+      "_note": "A_REMPLIR",
+      "connection": {
+        "protocol": "A_REMPLACER",
+        "host": "A_REMPLACER",
+        "port": 0,
+        "username": "A_REMPLACER",
+        "passwordSecretFile": "MAERSK.enc",
+        "certificate": ""
+      },
+      "ediEnvoyes": [],
+      "ediRecus": []
+    },
+    {
+      "code": "CMA-CGM",
+      "name": "CMA CGM",
+      "enabled": false,
+      "_note": "A_REMPLIR",
+      "connection": {
+        "protocol": "A_REMPLACER",
+        "host": "A_REMPLACER",
+        "port": 0,
+        "username": "A_REMPLACER",
+        "passwordSecretFile": "CMA-CGM.enc",
+        "certificate": ""
+      },
+      "ediEnvoyes": [],
+      "ediRecus": []
+    },
+    {
+      "code": "OOCL",
+      "name": "OOCL",
+      "enabled": false,
+      "_note": "A_REMPLIR",
+      "connection": {
+        "protocol": "A_REMPLACER",
+        "host": "A_REMPLACER",
+        "port": 0,
+        "username": "A_REMPLACER",
+        "passwordSecretFile": "OOCL.enc",
+        "certificate": ""
+      },
+      "ediEnvoyes": [],
+      "ediRecus": []
+    },
+    {
+      "code": "ONE",
+      "name": "Ocean Network Express",
+      "enabled": false,
+      "_note": "A_REMPLIR",
+      "connection": {
+        "protocol": "A_REMPLACER",
+        "host": "A_REMPLACER",
+        "port": 0,
+        "username": "A_REMPLACER",
+        "passwordSecretFile": "ONE.enc",
+        "certificate": ""
+      },
+      "ediEnvoyes": [],
+      "ediRecus": []
+    },
+    {
+      "code": "MEDLOG",
+      "name": "MEDLOG",
+      "enabled": false,
+      "_note": "A_REMPLIR",
+      "connection": {
+        "protocol": "A_REMPLACER",
+        "host": "A_REMPLACER",
+        "port": 0,
+        "username": "A_REMPLACER",
+        "passwordSecretFile": "MEDLOG.enc",
+        "certificate": ""
+      },
+      "ediEnvoyes": [],
+      "ediRecus": []
+    },
+    {
+      "code": "DOUANE",
+      "name": "Douane",
+      "enabled": false,
+      "_note": "A_REMPLIR",
+      "connection": {
+        "protocol": "A_REMPLACER",
+        "host": "A_REMPLACER",
+        "port": 0,
+        "username": "A_REMPLACER",
+        "passwordSecretFile": "DOUANE.enc",
+        "certificate": ""
+      },
+      "ediEnvoyes": [],
+      "ediRecus": []
+    }
+  ]
+}

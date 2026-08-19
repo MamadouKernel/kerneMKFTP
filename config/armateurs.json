@@ -1,0 +1,89 @@
+{
+  "_note": "Reglages surchargeables par armateur ou par type EDI (sinon valeur de global-config.json utilisee) : logRetentionDays, archiveCompressAfterDays, minMinutesBetweenSameAlert. Cote reception (ediRecus), un type EDI peut aussi definir 'remoteSources' (liste de {remotePath, localDestinationDir, remoteProcessedPath, removeRemoteAfterDownload}) au lieu des champs simples, pour surveiller plusieurs dossiers distants a la fois (symetrique a 'watchFolders' cote envoi). Voir armateurs-squelette-8.json pour un exemple complet.",
+  "armateurs": [
+    {
+      "code": "GUCE",
+      "name": "Guichet Unique du Commerce Exterieur",
+      "enabled": true,
+      "connection": {
+        "protocol": "ftpes",
+        "host": "files01.guce.gouv.ci",
+        "port": 990,
+        "username": "HDL-CIT",
+        "passwordSecretFile": "GUCE.enc",
+        "certificate": "ea:c7:66:2c:8c:79:9d:ea:89:e5:a4:8f:26:cd:d7:23:38:d7:b7:a4:f1:9a:ba:0c:26:a3:a5:ad:66:e2:aa:76",
+        "password": "8VkGupo3wem6yx"
+      },
+      "ediEnvoyes": [
+        {
+          "type": "COARRI",
+          "_note": "Aucun deplacement distant apres envoi (remoteArchivePath omis) - les fichiers restent dans /actor-to-guce-receipt. L'archive locale (K:\\...\\archive) est deja geree normalement.",
+          "watchFolders": [
+            {
+              "sourceDir": "\\\\10.88.180.179\\edi\\GUCE_CIT\\COARRI\\LOAD",
+              "archiveDir": "\\\\10.88.180.179\\edi\\GUCE_CIT\\COARRI\\LOAD\\archive"
+            },
+            {
+              "sourceDir": "\\\\10.88.180.179\\edi\\GUCE_CIT\\COARRI\\DISCH",
+              "archiveDir": "\\\\10.88.180.179\\edi\\GUCE_CIT\\COARRI\\DISCH\\archive"
+            }
+          ],
+          "stagingDir": "C:\\CIT\\NAVIS\\serviceEDI\\data\\GUCE\\COARRI\\out",
+          "localArchiveDir": "C:\\CIT\\NAVIS\\serviceEDI\\archives\\GUCE\\COARRI\\out",
+          "remotePath": "/actor-to-guce-receipt",
+          "remoteArchivePath": "",
+          "filePatterns": [
+            "*.xml",
+			"*.edi",
+			"*.EDI",
+			"*.txt",
+			"*.TXT"
+          ]
+        },
+        {
+          "type": "CODECO",
+          "_note": "Aucun deplacement distant apres envoi (remoteArchivePath omis) - les fichiers restent dans /actor-to-guce-receipt.",
+          "watchFolders": [
+            {
+              "sourceDir": "\\\\10.88.180.179\\edi\\GUCE_CIT\\CODECO\\GATE_IN",
+              "archiveDir": "\\\\10.88.180.179\\edi\\GUCE_CIT\\CODECO\\GATE_IN\\archive"
+            },
+            {
+              "sourceDir": "\\\\10.88.180.179\\edi\\GUCE_CIT\\CODECO\\GATE_OUT",
+              "archiveDir": "\\\\10.88.180.179\\edi\\GUCE_CIT\\CODECO\\GATE_OUT\\archive"
+            }
+          ],
+          "stagingDir": "C:\\CIT\\NAVIS\\serviceEDI\\data\\GUCE\\CODECO\\out",
+          "localArchiveDir": "C:\\CIT\\NAVIS\\serviceEDI\\archives\\GUCE\\CODECO\\out",
+          "remotePath": "/actor-to-guce-receipt",
+          "remoteArchivePath": "",
+          "filePatterns": [
+            "*.xml",
+			"*.edi",
+			"*.EDI",
+			"*.txt",
+			"*.TXT"
+          ]
+        }
+      ],
+      "ediRecus": [
+        {
+          "type": "MANIFESTE",
+          "_note": "Suppression (rm) des fichiers distants apres reception reussie - pas de sous-dossier processed cote GUCE pour ce type.",
+          "remotePath": "/guce-to-actor",
+          "remoteProcessedPath": "",
+          "removeRemoteAfterDownload": true,
+          "localDestinationDir": "\\\\10.88.180.179\\edi\\GUCE_CIT\\MANIFESTE",
+          "localArchiveDir": "C:\\CIT\\NAVIS\\serviceEDI\\archives\\GUCE\\MANIFESTE\\in",
+          "filePatterns": [
+            "*.xml",
+			"*.edi",
+			"*.EDI",
+			"*.txt",
+			"*.TXT"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+option batch continue
+option confirm off
+option batch on
+
+{{OPEN_LINE}}
+
+cd "{{REMOTE_PATH}}"
+lcd "{{LOCAL_DIR}}"
+
+{{GET_LINES}}
+
+{{CLEANUP_BLOCK}}
+
+exit

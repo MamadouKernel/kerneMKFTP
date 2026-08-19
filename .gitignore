@@ -1,0 +1,5 @@
+# Donnees d'execution / runtime - pas des livrables du projet
+logs/
+data/
+archives/
+config/secrets/

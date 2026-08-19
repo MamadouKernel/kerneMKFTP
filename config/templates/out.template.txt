@@ -1,0 +1,14 @@
+option batch continue
+option confirm off
+option batch on
+
+{{OPEN_LINE}}
+
+lcd "{{LOCAL_DIR}}"
+cd "{{REMOTE_PATH}}"
+
+mput *. -nopreservetime -nopermissions -resume
+
+{{ARCHIVE_BLOCK}}
+
+exit

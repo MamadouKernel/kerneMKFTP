@@ -1,0 +1,19 @@
+{
+  "winScpExe": "C:\\Program Files (x86)\\WinSCP\\WinSCP.com",
+  "logRoot": "C:\\CIT\\NAVIS\\serviceEDI\\logs",
+  "alertsLogDir": "C:\\CIT\\NAVIS\\serviceEDI\\logs\\_alertes",
+  "ledgerFile": "C:\\CIT\\NAVIS\\serviceEDI\\logs\\ledger_global.csv",
+  "secretsDir": "C:\\CIT\\NAVIS\\serviceEDI\\config\\secrets",
+  "templatesDir": "C:\\CIT\\NAVIS\\serviceEDI\\config\\templates",
+  "waitSecondsIfNothingToDo": 300,
+  "waitSecondsBetweenFullPasses": 10,
+  "logRetentionDays": 30,
+  "minMinutesBetweenSameAlert": 30,
+  "archiveCompressAfterDays": 30,
+
+  "networkShare": {
+    "path": "\\\\10.88.180.179\\edi",
+    "username": "aglports-003.net\\adm-MKonate",
+    "password": "aKwaBa2026*+**"
+  }
+}
