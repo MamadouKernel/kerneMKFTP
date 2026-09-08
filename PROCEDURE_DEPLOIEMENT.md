@@ -173,3 +173,20 @@ Tous les éléments d'état de l'application sont stockés dans le sous-dossier 
 - `keys\` : Clés de protection des données et des cookies d'authentification.
 
 > 💡 **Procédure de sauvegarde recommandée** : Sauvegarder régulièrement le dossier `App_Data\` et le dossier `keys\`.
+
+---
+
+## 10. Mises à Jour et Application de Patchs Légers (Correctifs)
+
+Après la première installation complète, **il n'est plus nécessaire de republier ni de retransférer le bundle complet de 60 Mo pour chaque correctif**.
+
+Un système de **patchs légers (~20 Mo)** est disponible :
+- **Fichier du patch** : `KernelMK-Patch.zip`
+- **Garantie** : Ne touche **jamais** à `App_Data\` (base de données) ni à `keys\` (chiffrement). Vos jobs, credentials et historiques sont 100% préservés.
+- **Application** : Extraire l'archive sur le serveur et exécuter en PowerShell Administrateur :
+  ```powershell
+  .\apply-patch.ps1
+  ```
+  Le script arrête le service Windows, effectue une sauvegarde de repli dans `backups\patches\`, remplace l'exécutable et redémarre le service en moins de 5 secondes.
+- **Rollback** : En cas de besoin, exécuter `.\rollback-patch.ps1` pour revenir instantanément à la version précédente.
+- Pour plus de détails, consulter [PROCEDURE_PATCH.md](file:///c:/Users/KERNELMK/Documents/cit/sftp/kerneMKFTP/PROCEDURE_PATCH.md).
