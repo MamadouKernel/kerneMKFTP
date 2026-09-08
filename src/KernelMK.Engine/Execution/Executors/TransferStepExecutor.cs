@@ -56,7 +56,11 @@ public class TransferStepExecutor : IStepExecutor
             switch (context.Step.Type)
             {
                 case StepType.TransfertSftp:
-                    return await ExecuteSftpAsync(config, host, port, username, secret, context.CancellationToken);
+                    return await ExecuteSftpAsync(
+                        config, host, port, username, secret,
+                        context.ResolvedCredential?.AuthType ?? CredentialAuthType.MotDePasse,
+                        context.ResolvedCredential?.Passphrase,
+                        context.CancellationToken);
 
                 case StepType.TransfertFtp:
                 case StepType.TransfertFtps:
@@ -75,9 +79,9 @@ public class TransferStepExecutor : IStepExecutor
         }
     }
 
-    private async Task<StepExecutionResult> ExecuteSftpAsync(TransferStepConfig config, string host, int port, string username, string secret, CancellationToken ct)
+    private async Task<StepExecutionResult> ExecuteSftpAsync(TransferStepConfig config, string host, int port, string username, string secret, CredentialAuthType authType, string? passphrase, CancellationToken ct)
     {
-        using var client = new SftpClient(host, port, username, secret);
+        using var client = SftpClientFactory.Create(host, port, username, secret, authType, passphrase);
 
         // Vérification de la clé d'hôte (confiance à la première connexion, protection anti-usurpation).
         string? hostKeyError = null;
@@ -370,7 +374,7 @@ public class TransferStepExecutor : IStepExecutor
     /// pas un compte de service. Sans credential (ou pour un lecteur déjà mappé), l'identité du
     /// processus est utilisée directement, comme un lecteur réseau déjà connecté.
     /// </summary>
-    private static StepExecutionResult ExecuteSmbCopy(TransferStepConfig config, (string? Username, string? Secret, string? Host, int? Port)? credential)
+    private static StepExecutionResult ExecuteSmbCopy(TransferStepConfig config, (string? Username, string? Secret, string? Host, int? Port, CredentialAuthType AuthType, string? Passphrase)? credential)
     {
         var shareOrPath = config.SmbShare ?? config.RemotePath;
 

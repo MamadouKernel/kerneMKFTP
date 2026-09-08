@@ -791,6 +791,8 @@ else
         var config = GetOrCreateTransferConfig(step);
         string? username = null;
         string? secret = null;
+        var authType = CredentialAuthType.MotDePasse;
+        string? passphrase = null;
 
         if (step.CredentialId is not null)
         {
@@ -798,9 +800,11 @@ else
             if (cred is not null)
             {
                 username = cred.Username;
+                authType = cred.AuthType;
                 try
                 {
                     secret = Protector.Unprotect(cred.EncryptedSecret);
+                    passphrase = string.IsNullOrEmpty(cred.EncryptedPassphrase) ? null : Protector.Unprotect(cred.EncryptedPassphrase);
                 }
                 catch
                 {
@@ -853,7 +857,9 @@ else
             username,
             secret,
             config.RemotePath,
-            useTls: isTls);
+            useTls: isTls,
+            authType: authType,
+            passphrase: passphrase);
 
         _isTesting[step] = false;
         StateHasChanged();

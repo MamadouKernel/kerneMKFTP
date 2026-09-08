@@ -323,7 +323,7 @@ public class JobRunner : IJobRunner
         }
     }
 
-    private async Task<(string? Username, string? Secret, string? Host, int? Port)?> ResolveCredentialAsync(JobStep step, AppDbContext db, CancellationToken ct)
+    private async Task<(string? Username, string? Secret, string? Host, int? Port, CredentialAuthType AuthType, string? Passphrase)?> ResolveCredentialAsync(JobStep step, AppDbContext db, CancellationToken ct)
     {
         if (step.CredentialId is null) return null;
 
@@ -331,6 +331,7 @@ public class JobRunner : IJobRunner
         if (credential is null) return null;
 
         var secret = _credentialProtector.Unprotect(credential.EncryptedSecret);
-        return (credential.Username, secret, credential.Host, credential.Port);
+        var passphrase = string.IsNullOrEmpty(credential.EncryptedPassphrase) ? null : _credentialProtector.Unprotect(credential.EncryptedPassphrase);
+        return (credential.Username, secret, credential.Host, credential.Port, credential.AuthType, passphrase);
     }
 }

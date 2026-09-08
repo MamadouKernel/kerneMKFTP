@@ -464,9 +464,10 @@ else
         try
         {
             var secret = Protector.Unprotect(cred.EncryptedSecret);
+            var passphrase = string.IsNullOrEmpty(cred.EncryptedPassphrase) ? null : Protector.Unprotect(cred.EncryptedPassphrase);
             var port = cred.Port is > 0 ? cred.Port.Value : (_protocol == StepType.TransfertSftp ? 22 : 21);
 
-            _items = await BrowserService.ListItemsAsync(_protocol, cred.Host, port, cred.Username ?? "anonymous", secret, _currentPath);
+            _items = await BrowserService.ListItemsAsync(_protocol, cred.Host, port, cred.Username ?? "anonymous", secret, _currentPath, cred.AuthType, passphrase);
             _isConnected = true;
         }
         catch (Exception ex)
@@ -522,8 +523,9 @@ else
             }
 
             var secret = Protector.Unprotect(cred.EncryptedSecret);
+            var passphrase = string.IsNullOrEmpty(cred.EncryptedPassphrase) ? null : Protector.Unprotect(cred.EncryptedPassphrase);
             var port = cred.Port is > 0 ? cred.Port.Value : (_protocol == StepType.TransfertSftp ? 22 : 21);
-            _items = await BrowserService.ListItemsAsync(_protocol, host, port, cred.Username ?? "anonymous", secret, _currentPath);
+            _items = await BrowserService.ListItemsAsync(_protocol, host, port, cred.Username ?? "anonymous", secret, _currentPath, cred.AuthType, passphrase);
         }
         catch (Exception ex)
         {
@@ -546,8 +548,9 @@ else
         try
         {
             var secret = Protector.Unprotect(cred.EncryptedSecret);
+            var passphrase = string.IsNullOrEmpty(cred.EncryptedPassphrase) ? null : Protector.Unprotect(cred.EncryptedPassphrase);
             var port = cred.Port is > 0 ? cred.Port.Value : (_protocol == StepType.TransfertSftp ? 22 : 21);
-            var bytes = await BrowserService.DownloadFileBytesAsync(_protocol, host, port, cred.Username ?? "anonymous", secret, item.FullPath);
+            var bytes = await BrowserService.DownloadFileBytesAsync(_protocol, host, port, cred.Username ?? "anonymous", secret, item.FullPath, cred.AuthType, passphrase);
 
             await JS.InvokeVoidAsync("kernelMK.downloadFile", item.Name, "application/octet-stream", Convert.ToBase64String(bytes));
         }
@@ -573,8 +576,9 @@ else
         try
         {
             var secret = Protector.Unprotect(cred.EncryptedSecret);
+            var passphrase = string.IsNullOrEmpty(cred.EncryptedPassphrase) ? null : Protector.Unprotect(cred.EncryptedPassphrase);
             var port = cred.Port is > 0 ? cred.Port.Value : (_protocol == StepType.TransfertSftp ? 22 : 21);
-            _previewContent = await BrowserService.GetFilePreviewAsync(_protocol, host, port, cred.Username ?? "anonymous", secret, item.FullPath);
+            _previewContent = await BrowserService.GetFilePreviewAsync(_protocol, host, port, cred.Username ?? "anonymous", secret, item.FullPath, authType: cred.AuthType, passphrase: passphrase);
         }
         catch (Exception ex)
         {
@@ -601,13 +605,14 @@ else
         try
         {
             var secret = Protector.Unprotect(cred.EncryptedSecret);
+            var passphrase = string.IsNullOrEmpty(cred.EncryptedPassphrase) ? null : Protector.Unprotect(cred.EncryptedPassphrase);
             var port = cred.Port is > 0 ? cred.Port.Value : (_protocol == StepType.TransfertSftp ? 22 : 21);
 
             var files = e.GetMultipleFiles(maximumFileCount: 30);
             foreach (var file in files)
             {
                 await using var stream = file.OpenReadStream(maxAllowedSize: 100 * 1024 * 1024); // 100 Mo max
-                await BrowserService.UploadFileStreamAsync(_protocol, host, port, cred.Username ?? "anonymous", secret, _currentPath, file.Name, stream);
+                await BrowserService.UploadFileStreamAsync(_protocol, host, port, cred.Username ?? "anonymous", secret, _currentPath, file.Name, stream, cred.AuthType, passphrase);
             }
 
             await RefreshAsync();
@@ -669,8 +674,9 @@ else
         try
         {
             var secret = Protector.Unprotect(cred.EncryptedSecret);
+            var passphrase = string.IsNullOrEmpty(cred.EncryptedPassphrase) ? null : Protector.Unprotect(cred.EncryptedPassphrase);
             var port = cred.Port is > 0 ? cred.Port.Value : (_protocol == StepType.TransfertSftp ? 22 : 21);
-            await BrowserService.DeleteItemAsync(_protocol, host, port, cred.Username ?? "anonymous", secret, _itemToDelete.FullPath, _itemToDelete.IsDirectory);
+            await BrowserService.DeleteItemAsync(_protocol, host, port, cred.Username ?? "anonymous", secret, _itemToDelete.FullPath, _itemToDelete.IsDirectory, cred.AuthType, passphrase);
 
             _itemToDelete = null;
             await RefreshAsync();
@@ -692,9 +698,10 @@ else
         try
         {
             var secret = Protector.Unprotect(cred.EncryptedSecret);
+            var passphrase = string.IsNullOrEmpty(cred.EncryptedPassphrase) ? null : Protector.Unprotect(cred.EncryptedPassphrase);
             var port = cred.Port is > 0 ? cred.Port.Value : (_protocol == StepType.TransfertSftp ? 22 : 21);
             var newPath = _currentPath.TrimEnd('/') + "/" + _newFolderName.Trim();
-            await BrowserService.CreateDirectoryAsync(_protocol, host, port, cred.Username ?? "anonymous", secret, newPath);
+            await BrowserService.CreateDirectoryAsync(_protocol, host, port, cred.Username ?? "anonymous", secret, newPath, cred.AuthType, passphrase);
 
             _showNewFolderModal = false;
             _newFolderName = "";

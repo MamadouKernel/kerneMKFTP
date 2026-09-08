@@ -40,6 +40,8 @@ public class ConnectionTestService
         string? secret,
         string? remotePath = null,
         bool? useTls = null,
+        CredentialAuthType authType = CredentialAuthType.MotDePasse,
+        string? passphrase = null,
         CancellationToken ct = default)
     {
         if (type != StepType.TransfertSmb && string.IsNullOrWhiteSpace(host))
@@ -59,7 +61,7 @@ public class ConnectionTestService
         {
             return type switch
             {
-                StepType.TransfertSftp => await TestSftpAsync(host, port <= 0 ? 22 : port, user, pwd, remotePath, cts.Token),
+                StepType.TransfertSftp => await TestSftpAsync(host, port <= 0 ? 22 : port, user, pwd, remotePath, authType, passphrase, cts.Token),
                 StepType.TransfertFtp or StepType.TransfertFtps => await TestFtpAsync(host, port <= 0 ? 21 : port, user, pwd, isTls, remotePath, cts.Token),
                 StepType.TransfertSmb => TestSmb(host, remotePath, user, pwd),
                 _ => ConnectionTestResult.Fail($"Le protocole {type} ne supporte pas le test de connexion.")
@@ -76,9 +78,9 @@ public class ConnectionTestService
         }
     }
 
-    private async Task<ConnectionTestResult> TestSftpAsync(string host, int port, string username, string secret, string? remotePath, CancellationToken ct)
+    private async Task<ConnectionTestResult> TestSftpAsync(string host, int port, string username, string secret, string? remotePath, CredentialAuthType authType, string? passphrase, CancellationToken ct)
     {
-        using var client = new SftpClient(host, port, username, secret);
+        using var client = SftpClientFactory.Create(host, port, username, secret, authType, passphrase);
         client.ConnectionInfo.Timeout = TimeSpan.FromSeconds(8);
 
         string? hostKeyWarning = null;
@@ -96,7 +98,9 @@ public class ConnectionTestService
         }
         catch (SshAuthenticationException)
         {
-            return ConnectionTestResult.Fail("Échec d'authentification SFTP : nom d'utilisateur ou mot de passe refusé par le serveur.");
+            return ConnectionTestResult.Fail(authType == CredentialAuthType.ClePriveeSsh
+                ? "Échec d'authentification SFTP : clé privée refusée par le serveur (vérifiez la clé publique associée côté serveur, ou la passphrase)."
+                : "Échec d'authentification SFTP : nom d'utilisateur ou mot de passe refusé par le serveur.");
         }
         catch (SshConnectionException ex)
         {

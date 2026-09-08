@@ -49,13 +49,15 @@ public class RemoteFileBrowserService
         string username,
         string secret,
         string remotePath,
+        CredentialAuthType authType = CredentialAuthType.MotDePasse,
+        string? passphrase = null,
         CancellationToken ct = default)
     {
         var normalizedPath = string.IsNullOrWhiteSpace(remotePath) ? "/" : remotePath;
 
         return protocol switch
         {
-            StepType.TransfertSftp => await ListSftpItemsAsync(host, port <= 0 ? 22 : port, username, secret, normalizedPath, ct),
+            StepType.TransfertSftp => await ListSftpItemsAsync(host, port <= 0 ? 22 : port, username, secret, normalizedPath, authType, passphrase, ct),
             StepType.TransfertFtp => await ListFtpItemsAsync(host, port <= 0 ? 21 : port, username, secret, false, normalizedPath, ct),
             StepType.TransfertFtps => await ListFtpItemsAsync(host, port <= 0 ? 21 : port, username, secret, true, normalizedPath, ct),
             StepType.TransfertSmb => ListSmbItems(host, normalizedPath, username, secret),
@@ -64,9 +66,9 @@ public class RemoteFileBrowserService
     }
 
     private async Task<List<RemoteItemInfo>> ListSftpItemsAsync(
-        string host, int port, string username, string secret, string remotePath, CancellationToken ct)
+        string host, int port, string username, string secret, string remotePath, CredentialAuthType authType, string? passphrase, CancellationToken ct)
     {
-        using var client = new SftpClient(host, port, username, secret);
+        using var client = SftpClientFactory.Create(host, port, username, secret, authType, passphrase);
         client.ConnectionInfo.Timeout = TimeSpan.FromSeconds(10);
         client.HostKeyReceived += (_, e) => e.CanTrust = true;
 
@@ -165,11 +167,12 @@ public class RemoteFileBrowserService
     }
 
     public async Task<byte[]> DownloadFileBytesAsync(
-        StepType protocol, string host, int port, string username, string secret, string remoteFilePath, CancellationToken ct = default)
+        StepType protocol, string host, int port, string username, string secret, string remoteFilePath,
+        CredentialAuthType authType = CredentialAuthType.MotDePasse, string? passphrase = null, CancellationToken ct = default)
     {
         if (protocol == StepType.TransfertSftp)
         {
-            using var client = new SftpClient(host, port <= 0 ? 22 : port, username, secret);
+            using var client = SftpClientFactory.Create(host, port <= 0 ? 22 : port, username, secret, authType, passphrase);
             client.HostKeyReceived += (_, e) => e.CanTrust = true;
             await Task.Run(client.Connect, ct);
             try
@@ -207,13 +210,14 @@ public class RemoteFileBrowserService
     }
 
     public async Task UploadFileStreamAsync(
-        StepType protocol, string host, int port, string username, string secret, string remoteDirectory, string fileName, Stream contentStream, CancellationToken ct = default)
+        StepType protocol, string host, int port, string username, string secret, string remoteDirectory, string fileName, Stream contentStream,
+        CredentialAuthType authType = CredentialAuthType.MotDePasse, string? passphrase = null, CancellationToken ct = default)
     {
         var remotePath = remoteDirectory.TrimEnd('/') + "/" + fileName;
 
         if (protocol == StepType.TransfertSftp)
         {
-            using var client = new SftpClient(host, port <= 0 ? 22 : port, username, secret);
+            using var client = SftpClientFactory.Create(host, port <= 0 ? 22 : port, username, secret, authType, passphrase);
             client.HostKeyReceived += (_, e) => e.CanTrust = true;
             await Task.Run(client.Connect, ct);
             try
@@ -249,11 +253,12 @@ public class RemoteFileBrowserService
     }
 
     public async Task DeleteItemAsync(
-        StepType protocol, string host, int port, string username, string secret, string remotePath, bool isDirectory, CancellationToken ct = default)
+        StepType protocol, string host, int port, string username, string secret, string remotePath, bool isDirectory,
+        CredentialAuthType authType = CredentialAuthType.MotDePasse, string? passphrase = null, CancellationToken ct = default)
     {
         if (protocol == StepType.TransfertSftp)
         {
-            using var client = new SftpClient(host, port <= 0 ? 22 : port, username, secret);
+            using var client = SftpClientFactory.Create(host, port <= 0 ? 22 : port, username, secret, authType, passphrase);
             client.HostKeyReceived += (_, e) => e.CanTrust = true;
             await Task.Run(client.Connect, ct);
             try
@@ -289,11 +294,12 @@ public class RemoteFileBrowserService
     }
 
     public async Task CreateDirectoryAsync(
-        StepType protocol, string host, int port, string username, string secret, string remotePath, CancellationToken ct = default)
+        StepType protocol, string host, int port, string username, string secret, string remotePath,
+        CredentialAuthType authType = CredentialAuthType.MotDePasse, string? passphrase = null, CancellationToken ct = default)
     {
         if (protocol == StepType.TransfertSftp)
         {
-            using var client = new SftpClient(host, port <= 0 ? 22 : port, username, secret);
+            using var client = SftpClientFactory.Create(host, port <= 0 ? 22 : port, username, secret, authType, passphrase);
             client.HostKeyReceived += (_, e) => e.CanTrust = true;
             await Task.Run(client.Connect, ct);
             try
@@ -326,9 +332,10 @@ public class RemoteFileBrowserService
     }
 
     public async Task<string> GetFilePreviewAsync(
-        StepType protocol, string host, int port, string username, string secret, string remoteFilePath, int maxBytes = 32768, CancellationToken ct = default)
+        StepType protocol, string host, int port, string username, string secret, string remoteFilePath, int maxBytes = 32768,
+        CredentialAuthType authType = CredentialAuthType.MotDePasse, string? passphrase = null, CancellationToken ct = default)
     {
-        var bytes = await DownloadFileBytesAsync(protocol, host, port, username, secret, remoteFilePath, ct);
+        var bytes = await DownloadFileBytesAsync(protocol, host, port, username, secret, remoteFilePath, authType, passphrase, ct);
         if (bytes.Length == 0) return "(Fichier vide)";
 
         var slice = bytes.Length > maxBytes ? bytes.AsSpan(0, maxBytes).ToArray() : bytes;

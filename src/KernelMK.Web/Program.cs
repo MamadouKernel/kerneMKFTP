@@ -104,6 +104,23 @@ using (var scope = app.Services.CreateScope())
 if (app.Environment.IsDevelopment())
 {
     app.UseMigrationsEndPoint();
+
+    // TEMP (vérification UX locale, à retirer) : connexion instantanée avec un compte disposant de tous les rôles.
+    app.MapGet("/dev/login-as-admin", async (UserManager<ApplicationUser> um, SignInManager<ApplicationUser> sm, string? returnUrl) =>
+    {
+        var user = await um.FindByEmailAsync("dev-preview@local.test");
+        if (user is null)
+        {
+            user = new ApplicationUser { UserName = "dev-preview@local.test", Email = "dev-preview@local.test", DisplayName = "Aya Koné", EmailConfirmed = true, TwoFactorEnabled = true };
+            await um.CreateAsync(user, "DevPreview#2026!");
+        }
+        foreach (var role in DbInitializer.AllRoles)
+        {
+            if (!await um.IsInRoleAsync(user, role)) await um.AddToRoleAsync(user, role);
+        }
+        await sm.SignInAsync(user, isPersistent: false);
+        return Results.Redirect(returnUrl ?? "/");
+    });
 }
 else
 {
