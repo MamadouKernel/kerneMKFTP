@@ -1,6 +1,8 @@
 @page "/jobs/new"
 @rendermode InteractiveServer
 @page "/jobs/{JobId:guid}"
+@page "/jobs/{JobId:guid}/edit"
+@page "/jobs/edit/{JobId:guid}"
 @attribute [Authorize(Roles = "Administrateur,Developpeur")]
 @using System.Text.Json
 @using Microsoft.EntityFrameworkCore
