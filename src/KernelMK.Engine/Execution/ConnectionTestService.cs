@@ -150,6 +150,12 @@ public class ConnectionTestService
 
     private static async Task<ConnectionTestResult> TestFtpAsync(string host, int port, string username, string secret, bool useTls, string? remotePath, CancellationToken ct)
     {
+        var proto = useTls ? "FTPS" : "FTP";
+        if (port == 22 && useTls)
+        {
+            return ConnectionTestResult.Fail($"Erreur de port ({host}:22) : Le port 22 est réservé au protocole SFTP (SSH), pas pour FTPS. Si vous cherchez à vous connecter en SFTP, sélectionnez 'TransfertSftp'. Si ce serveur utilise bien FTPS, renseignez le bon port (généralement 21 ou 990).");
+        }
+
         try
         {
             return await TryConnectFtpAsync(host, port, username, secret, useTls, remotePath, ct);
@@ -172,36 +178,46 @@ public class ConnectionTestService
                 // Si l'essai FTPS échoue aussi, on retourne le message explicite
             }
 
-            return ConnectionTestResult.Fail($"Erreur FTP (Code 530) : Le serveur distant exige impérativement une session chiffrée FTPS (TLS). Veuillez cocher 'Chiffrement TLS explicite (FTPS)' ou choisir le type 'TransfertFtps'. ({ex.Message})");
+            return ConnectionTestResult.Fail($"Erreur FTP (Code 530) vers {host}:{port} : Le serveur distant exige impérativement une session chiffrée FTPS (TLS). Veuillez cocher 'Chiffrement TLS explicite (FTPS)' ou choisir le type 'TransfertFtps'. ({ex.Message})");
+        }
+        catch (TimeoutException)
+        {
+            return ConnectionTestResult.Fail($"Délai d'attente dépassé (Timeout) vers {host}:{port} ({proto}). Vérifiez que l'adresse '{host}' et le port {port} sont bien joignables depuis cette machine et autorisés par votre réseau / pare-feu.");
+        }
+        catch (FtpException ex) when (ex.Message.Contains("timeout", StringComparison.OrdinalIgnoreCase))
+        {
+            return ConnectionTestResult.Fail($"Délai d'attente dépassé (Timeout) vers {host}:{port} ({proto}). Vérifiez que l'adresse '{host}' et le port {port} sont bien joignables depuis cette machine et autorisés par votre réseau / pare-feu ({ex.Message}).");
         }
         catch (FtpException ex)
         {
-            return ConnectionTestResult.Fail($"Erreur FTP : {ex.Message}");
+            return ConnectionTestResult.Fail($"Erreur {proto} vers {host}:{port} : {ex.Message}");
         }
         catch (SocketException ex)
         {
-            return ConnectionTestResult.Fail($"Serveur FTP introuvable ({host}:{port}) : {ex.Message}");
+            return ConnectionTestResult.Fail($"Serveur {proto} introuvable ({host}:{port}) : {ex.Message}");
         }
     }
 
     private static async Task<ConnectionTestResult> TryConnectFtpAsync(string host, int port, string username, string secret, bool useTls, string? remotePath, CancellationToken ct)
     {
         using var client = new AsyncFtpClient(host, username, secret, port);
-        client.Config.ConnectTimeout = 8000;
-        client.Config.DataConnectionConnectTimeout = 8000;
+        client.Config.ConnectTimeout = 10000;
+        client.Config.DataConnectionConnectTimeout = 10000;
+        client.Config.ReadTimeout = 10000;
 
         if (useTls)
         {
-            client.Config.EncryptionMode = FtpEncryptionMode.Explicit;
+            client.Config.EncryptionMode = port == 990 ? FtpEncryptionMode.Implicit : FtpEncryptionMode.Explicit;
             client.Config.ValidateAnyCertificate = true;
             client.Config.DataConnectionEncryption = true;
+            client.Config.SslProtocols = System.Security.Authentication.SslProtocols.Tls12 | System.Security.Authentication.SslProtocols.Tls13;
         }
 
         await client.Connect(ct);
         try
         {
             var pwd = await client.GetWorkingDirectory(ct);
-            var proto = useTls ? "FTPS (TLS explicite)" : "FTP";
+            var proto = useTls ? (port == 990 ? "FTPS (implicite)" : "FTPS (TLS explicite)") : "FTP";
             var details = $"Répertoire de démarrage : {pwd}";
 
             if (!string.IsNullOrWhiteSpace(remotePath))

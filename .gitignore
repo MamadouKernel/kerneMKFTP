@@ -9,9 +9,10 @@ release.zip
 .vs/
 *.user
 
-# Rider / VS Code
+# Rider / VS Code / Claude
 .idea/
 .vscode/
+.claude/
 
 # Runtime data (SQLite DB, Data Protection keys, backups)
 src/KernelMK.Web/App_Data/

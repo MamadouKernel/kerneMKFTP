@@ -66,6 +66,15 @@ Get-ChildItem -Path $publishDir -Force | ForEach-Object {
     }
 }
 
+$docFiles = @("PROCEDURE_DEPLOIEMENT.md", "GUIDE_UTILISATEUR.pdf")
+foreach ($doc in $docFiles) {
+    $docSource = Join-Path $repoRoot $doc
+    if (Test-Path $docSource) {
+        Copy-Item $docSource -Destination $OutputDir -Force
+        Write-Host "  Inclus doc : $doc" -ForegroundColor Cyan
+    }
+}
+
 if ($SignPfxPath) {
     if (-not (Test-Path $SignPfxPath)) {
         throw "Certificat introuvable : $SignPfxPath"

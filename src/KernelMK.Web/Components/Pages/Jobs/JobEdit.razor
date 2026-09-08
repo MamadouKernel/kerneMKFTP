@@ -809,6 +809,22 @@ else
             ? StepType.TransfertFtps
             : step.Type;
 
+        if (string.IsNullOrWhiteSpace(host))
+        {
+            _testResults[step] = ConnectionTestResult.Fail("L'adresse de l'hôte distant (nom ou IP) est obligatoire. Renseignez le champ 'Hôte / Serveur distant' ou sélectionnez un Credential.");
+            _isTesting[step] = false;
+            StateHasChanged();
+            return;
+        }
+
+        if (isTls && port == 22)
+        {
+            _testResults[step] = ConnectionTestResult.Fail($"Erreur de port ({host}:22) : Le port 22 est réservé au protocole SFTP (SSH). Pour tester en FTPS, veuillez renseigner le port 21 (ou 990 pour FTPS implicite) dans le champ 'Port'.");
+            _isTesting[step] = false;
+            StateHasChanged();
+            return;
+        }
+
         _testResults[step] = await TestService.TestConnectionAsync(
             effectiveType,
             host,
