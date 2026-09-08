@@ -39,6 +39,7 @@ public class ConnectionTestService
         string? username,
         string? secret,
         string? remotePath = null,
+        bool? useTls = null,
         CancellationToken ct = default)
     {
         if (type != StepType.TransfertSmb && string.IsNullOrWhiteSpace(host))
@@ -52,13 +53,14 @@ public class ConnectionTestService
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(TimeSpan.FromSeconds(10));
 
+        var isTls = useTls ?? (type == StepType.TransfertFtps);
+
         try
         {
             return type switch
             {
                 StepType.TransfertSftp => await TestSftpAsync(host, port <= 0 ? 22 : port, user, pwd, remotePath, cts.Token),
-                StepType.TransfertFtp => await TestFtpAsync(host, port <= 0 ? 21 : port, user, pwd, false, remotePath, cts.Token),
-                StepType.TransfertFtps => await TestFtpAsync(host, port <= 0 ? 21 : port, user, pwd, true, remotePath, cts.Token),
+                StepType.TransfertFtp or StepType.TransfertFtps => await TestFtpAsync(host, port <= 0 ? 21 : port, user, pwd, isTls, remotePath, cts.Token),
                 StepType.TransfertSmb => TestSmb(host, remotePath, user, pwd),
                 _ => ConnectionTestResult.Fail($"Le protocole {type} ne supporte pas le test de connexion.")
             };
@@ -148,6 +150,42 @@ public class ConnectionTestService
 
     private static async Task<ConnectionTestResult> TestFtpAsync(string host, int port, string username, string secret, bool useTls, string? remotePath, CancellationToken ct)
     {
+        try
+        {
+            return await TryConnectFtpAsync(host, port, username, secret, useTls, remotePath, ct);
+        }
+        catch (FtpException ex) when (!useTls && (ex.Message.Contains("encryption", StringComparison.OrdinalIgnoreCase) || ex.Message.Contains("530")))
+        {
+            // Tentative automatique avec chiffrement TLS explicite (FTPS)
+            try
+            {
+                var tlsResult = await TryConnectFtpAsync(host, port, username, secret, true, remotePath, ct);
+                if (tlsResult.Success)
+                {
+                    return ConnectionTestResult.Ok(
+                        $"Connexion FTPS (TLS explicite) réussie vers {host}:{port}.",
+                        (tlsResult.WorkingDirectory ?? "") + " · 💡 Le serveur distant exige le chiffrement TLS explicite (FTPS). La connexion a été validée avec succès.");
+                }
+            }
+            catch
+            {
+                // Si l'essai FTPS échoue aussi, on retourne le message explicite
+            }
+
+            return ConnectionTestResult.Fail($"Erreur FTP (Code 530) : Le serveur distant exige impérativement une session chiffrée FTPS (TLS). Veuillez cocher 'Chiffrement TLS explicite (FTPS)' ou choisir le type 'TransfertFtps'. ({ex.Message})");
+        }
+        catch (FtpException ex)
+        {
+            return ConnectionTestResult.Fail($"Erreur FTP : {ex.Message}");
+        }
+        catch (SocketException ex)
+        {
+            return ConnectionTestResult.Fail($"Serveur FTP introuvable ({host}:{port}) : {ex.Message}");
+        }
+    }
+
+    private static async Task<ConnectionTestResult> TryConnectFtpAsync(string host, int port, string username, string secret, bool useTls, string? remotePath, CancellationToken ct)
+    {
         using var client = new AsyncFtpClient(host, username, secret, port);
         client.Config.ConnectTimeout = 8000;
         client.Config.DataConnectionConnectTimeout = 8000;
@@ -156,11 +194,12 @@ public class ConnectionTestService
         {
             client.Config.EncryptionMode = FtpEncryptionMode.Explicit;
             client.Config.ValidateAnyCertificate = true;
+            client.Config.DataConnectionEncryption = true;
         }
 
+        await client.Connect(ct);
         try
         {
-            await client.Connect(ct);
             var pwd = await client.GetWorkingDirectory(ct);
             var proto = useTls ? "FTPS (TLS explicite)" : "FTP";
             var details = $"Répertoire de démarrage : {pwd}";
@@ -172,14 +211,6 @@ public class ConnectionTestService
             }
 
             return ConnectionTestResult.Ok($"Connexion {proto} réussie vers {host}:{port}.", details);
-        }
-        catch (FtpException ex)
-        {
-            return ConnectionTestResult.Fail($"Erreur FTP : {ex.Message}");
-        }
-        catch (SocketException ex)
-        {
-            return ConnectionTestResult.Fail($"Serveur FTP introuvable ({host}:{port}) : {ex.Message}");
         }
         finally
         {

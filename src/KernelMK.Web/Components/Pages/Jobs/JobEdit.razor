@@ -276,8 +276,12 @@ else
                                                 {
                                                     <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
                                                         <input type="checkbox" class="kmk-checkbox" checked="@tConfig.UseTls"
-                                                               @onchange="(e) => { tConfig.UseTls = (bool)(e.Value ?? false); SyncTransferConfig(step); }" />
-                                                        Chiffrement TLS explicite (FTPS)
+                                                               @onchange="(e) => { 
+                                                                   tConfig.UseTls = (bool)(e.Value ?? false); 
+                                                                   step.Type = tConfig.UseTls ? StepType.TransfertFtps : StepType.TransfertFtp;
+                                                                   SyncTransferConfig(step); 
+                                                               }" />
+                                                        <span class="font-medium">Chiffrement TLS explicite (FTPS)</span>
                                                     </label>
                                                 }
                                                 @if (tConfig.Upload)
@@ -748,6 +752,8 @@ else
                 var config = GetOrCreateTransferConfig(step);
                 if (newType == StepType.TransfertSftp && (config.Port <= 0 || config.Port == 21)) config.Port = 22;
                 if ((newType == StepType.TransfertFtp || newType == StepType.TransfertFtps) && (config.Port <= 0 || config.Port == 22)) config.Port = 21;
+                if (newType == StepType.TransfertFtps) config.UseTls = true;
+                if (newType == StepType.TransfertFtp) config.UseTls = false;
                 SyncTransferConfig(step);
             }
         }
@@ -796,13 +802,19 @@ else
         var defaultPort = step.Type == StepType.TransfertSftp ? 22 : 21;
         var port = config.Port > 0 ? config.Port : defaultPort;
 
+        var isTls = config.UseTls || step.Type == StepType.TransfertFtps;
+        var effectiveType = (step.Type == StepType.TransfertFtp && isTls)
+            ? StepType.TransfertFtps
+            : step.Type;
+
         _testResults[step] = await TestService.TestConnectionAsync(
-            step.Type,
+            effectiveType,
             host,
             port,
             username,
             secret,
-            config.RemotePath);
+            config.RemotePath,
+            useTls: isTls);
 
         _isTesting[step] = false;
         StateHasChanged();
