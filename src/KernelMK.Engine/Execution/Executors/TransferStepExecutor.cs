@@ -116,6 +116,15 @@ public class TransferStepExecutor : IStepExecutor
 
                 if (config.Upload)
                 {
+                    if (!Directory.Exists(config.LocalPath))
+                    {
+                        var isMappedDrive = config.LocalPath.Length >= 2 && config.LocalPath[1] == ':' && char.ToUpperInvariant(config.LocalPath[0]) != 'C';
+                        var hint = isMappedDrive
+                            ? " Remarque : Si l'application tourne en tant que Service Windows, les lecteurs réseau mappés (ex: K:\\) ne sont pas accessibles par le service. Utilisez le chemin réseau UNC direct (ex: \\\\Serveur\\Partage\\COPARN\\MSC\\)."
+                            : " Vérifiez que le disque et le dossier existent bien sur cette machine.";
+                        return StepExecutionResult.Fail($"Le dossier local source '{config.LocalPath}' est introuvable ou inaccessible.{hint}");
+                    }
+
                     foreach (var file in Directory.EnumerateFiles(config.LocalPath)
                                  .Where(f => FilePatternMatcher.IsMatch(Path.GetFileName(f), config.Filter)))
                     {
@@ -161,6 +170,11 @@ public class TransferStepExecutor : IStepExecutor
 
             if (config.Upload)
             {
+                if (!File.Exists(config.LocalPath))
+                {
+                    return StepExecutionResult.Fail($"Le fichier local source '{config.LocalPath}' est introuvable.");
+                }
+
                 await using (var stream = File.OpenRead(config.LocalPath))
                 {
                     await Task.Run(() => client.UploadFile(stream, config.RemotePath, true), ct);
@@ -248,6 +262,15 @@ public class TransferStepExecutor : IStepExecutor
 
                 if (config.Upload)
                 {
+                    if (!Directory.Exists(config.LocalPath))
+                    {
+                        var isMappedDrive = config.LocalPath.Length >= 2 && config.LocalPath[1] == ':' && char.ToUpperInvariant(config.LocalPath[0]) != 'C';
+                        var hint = isMappedDrive
+                            ? " Remarque : Si l'application tourne en tant que Service Windows, les lecteurs réseau mappés (ex: K:\\) ne sont pas accessibles par le service. Utilisez le chemin réseau UNC direct (ex: \\\\Serveur\\Partage\\COPARN\\MSC\\)."
+                            : " Vérifiez que le disque et le dossier existent bien sur cette machine.";
+                        return StepExecutionResult.Fail($"Le dossier local source '{config.LocalPath}' est introuvable ou inaccessible.{hint}");
+                    }
+
                     foreach (var file in Directory.EnumerateFiles(config.LocalPath)
                                  .Where(f => FilePatternMatcher.IsMatch(Path.GetFileName(f), config.Filter)))
                     {
@@ -295,6 +318,11 @@ public class TransferStepExecutor : IStepExecutor
 
             if (config.Upload)
             {
+                if (!File.Exists(config.LocalPath))
+                {
+                    return StepExecutionResult.Fail($"Le fichier local source '{config.LocalPath}' est introuvable.");
+                }
+
                 var status = await client.UploadFile(config.LocalPath, config.RemotePath, FtpRemoteExists.Overwrite, true, token: ct);
                 if (status != FtpStatus.Success)
                 {
