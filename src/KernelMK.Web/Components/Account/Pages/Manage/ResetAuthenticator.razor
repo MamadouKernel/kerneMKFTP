@@ -1,4 +1,4 @@
-﻿@page "/Account/Manage/ResetAuthenticator"
+@page "/Account/Manage/ResetAuthenticator"
 
 @using Microsoft.AspNetCore.Identity
 @using KernelMK.Data.Identity
@@ -9,25 +9,33 @@
 @inject IdentityRedirectManager RedirectManager
 @inject ILogger<ResetAuthenticator> Logger
 
-<PageTitle>Reset authenticator key</PageTitle>
+<PageTitle>Réinitialiser l'application 2FA · Côte d'Ivoire Terminal</PageTitle>
 
-<StatusMessage />
-<h3>Reset authenticator key</h3>
-<div class="alert alert-warning" role="alert">
-    <p>
-        <span class="glyphicon glyphicon-warning-sign"></span>
-        <strong>If you reset your authenticator key your authenticator app will not work until you reconfigure it.</strong>
-    </p>
-    <p>
-        This process disables 2FA until you verify your authenticator app.
-        If you do not complete your authenticator app configuration you may lose access to your account.
-    </p>
-</div>
-<div>
-    <form @formname="reset-authenticator" @onsubmit="OnSubmitAsync" method="post">
-        <AntiforgeryToken />
-        <button class="btn btn-danger" type="submit">Reset authenticator key</button>
-    </form>
+<div class="space-y-6 max-w-xl">
+    <div>
+        <h3 class="text-base font-semibold text-slate-900">Réinitialiser la clé d'authentification (2FA)</h3>
+        <p class="text-xs text-slate-500 mt-0.5">Utilisez cette option si vous avez changé de smartphone ou souhaitez reconfigurer votre application d'authentification.</p>
+    </div>
+
+    <StatusMessage />
+
+    <div class="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-sm space-y-1">
+        <div class="font-bold flex items-center gap-1.5 text-amber-800">
+            <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" /></svg>
+            <span>Attention : re-configuration immédiate requise</span>
+        </div>
+        <p class="text-xs text-amber-700 leading-relaxed">
+            Votre clé actuelle sera révoquée. Vous serez immédiatement redirigé vers l'écran d'affichage d'un <strong>nouveau QR Code</strong> à scanner impérativement pour conserver vos accès à la plateforme.
+        </p>
+    </div>
+
+    <div class="flex items-center gap-3 pt-2">
+        <form @formname="reset-authenticator" @onsubmit="OnSubmitAsync" method="post">
+            <AntiforgeryToken />
+            <button class="kmk-btn-danger text-sm" type="submit">Réinitialiser et générer un nouveau QR Code</button>
+        </form>
+        <a href="Account/Manage/TwoFactorAuthentication" class="kmk-btn-secondary text-sm">Annuler</a>
+    </div>
 </div>
 
 @code {

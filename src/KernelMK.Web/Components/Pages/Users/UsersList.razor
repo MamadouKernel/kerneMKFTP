@@ -78,6 +78,7 @@ else
                     <th class="min-w-[200px]">Email</th>
                     <th class="min-w-[150px]">Nom affiché</th>
                     <th class="min-w-[120px]">Statut du compte</th>
+                    <th class="min-w-[140px]">Sécurité 2FA</th>
                     <th>Rôles attribués</th>
                 </tr>
             </thead>
@@ -93,6 +94,23 @@ else
                                 <span class="h-1.5 w-1.5 rounded-full @(u.Active ? "bg-emerald-500" : "bg-slate-400")"></span>
                                 @(u.Active ? "Actif" : "Désactivé")
                             </button>
+                        </td>
+                        <td>
+                            @if (u.TwoFactorEnabled)
+                            {
+                                <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-2xs">
+                                    <span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+                                    <span>2FA Actif</span>
+                                </span>
+                            }
+                            else
+                            {
+                                <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200 shadow-2xs"
+                                      title="L'utilisateur sera forcé d'activer le 2FA dès sa première connexion.">
+                                    <span class="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+                                    <span>En attente (1er accès)</span>
+                                </span>
+                            }
                         </td>
                         <td>
                             <div class="flex flex-wrap gap-2.5">

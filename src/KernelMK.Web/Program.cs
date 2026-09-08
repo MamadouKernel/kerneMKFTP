@@ -139,6 +139,51 @@ app.Use(async (context, next) =>
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+// Politique de Sécurité CIT : L'authentification 2FA est STRICTEMENT OBLIGATOIRE pour tous les utilisateurs.
+// Tout utilisateur connecté dont le 2FA n'est pas encore configuré est automatiquement bloqué
+// et redirigé vers /Account/Manage/EnableAuthenticator.
+app.Use(async (context, next) =>
+{
+    var path = context.Request.Path;
+
+    // Laisser passer les ressources statiques et endpoints techniques
+    var isAsset = path.StartsWithSegments("/_blazor")
+               || path.StartsWithSegments("/_framework")
+               || path.StartsWithSegments("/css")
+               || path.StartsWithSegments("/js")
+               || path.StartsWithSegments("/images")
+               || path.StartsWithSegments("/favicon.png")
+               || path.StartsWithSegments("/favicon.ico")
+               || path.StartsWithSegments("/api");
+
+    if (isAsset)
+    {
+        await next();
+        return;
+    }
+
+    if (context.User.Identity?.IsAuthenticated == true)
+    {
+        var is2faClaim = context.User.FindFirst("TwoFactorEnabled")?.Value;
+        if (is2faClaim != "true")
+        {
+            var isAllowed2faRoute = path.StartsWithSegments("/Account/Manage/EnableAuthenticator")
+                                 || path.StartsWithSegments("/Account/Manage/ShowRecoveryCodes")
+                                 || path.StartsWithSegments("/Account/Logout")
+                                 || path.StartsWithSegments("/Account/AccessDenied");
+
+            if (!isAllowed2faRoute)
+            {
+                context.Response.Redirect("/Account/Manage/EnableAuthenticator");
+                return;
+            }
+        }
+    }
+
+    await next();
+});
+
 app.UseAntiforgery();
 
 app.MapStaticAssets();

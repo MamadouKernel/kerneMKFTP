@@ -1,4 +1,4 @@
-﻿@page "/Account/Manage/EnableAuthenticator"
+@page "/Account/Manage/EnableAuthenticator"
 
 @using System.ComponentModel.DataAnnotations
 @using System.Globalization
@@ -6,14 +6,16 @@
 @using System.Text.Encodings.Web
 @using Microsoft.AspNetCore.Identity
 @using KernelMK.Data.Identity
+@using QRCoder
 
 @inject UserManager<ApplicationUser> UserManager
+@inject SignInManager<ApplicationUser> SignInManager
 @inject IdentityUserAccessor UserAccessor
 @inject UrlEncoder UrlEncoder
 @inject IdentityRedirectManager RedirectManager
 @inject ILogger<EnableAuthenticator> Logger
 
-<PageTitle>Configure authenticator app</PageTitle>
+<PageTitle>Configuration 2FA · Côte d'Ivoire Terminal</PageTitle>
 
 @if (recoveryCodes is not null)
 {
@@ -21,48 +23,143 @@
 }
 else
 {
-    <StatusMessage Message="@message" />
-    <h3>Configure authenticator app</h3>
-    <div>
-        <p>To use an authenticator app go through the following steps:</p>
-        <ol class="list">
-            <li>
-                <p>
-                    Download a two-factor authenticator app like Microsoft Authenticator for
-                    <a href="https://go.microsoft.com/fwlink/?Linkid=825072">Android</a> and
-                    <a href="https://go.microsoft.com/fwlink/?Linkid=825073">iOS</a> or
-                    Google Authenticator for
-                    <a href="https://play.google.com/store/apps/details?id=com.google.android.apps.authenticator2&amp;hl=en">Android</a> and
-                    <a href="https://itunes.apple.com/us/app/google-authenticator/id388497605?mt=8">iOS</a>.
+    <div class="space-y-6 max-w-2xl">
+        <!-- En-tête -->
+        <div class="flex items-center gap-3">
+            <div class="h-10 w-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0 border border-indigo-100 shadow-xs">
+                <svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z" />
+                </svg>
+            </div>
+            <div>
+                <h2 class="text-lg font-bold text-slate-900">Configuration de l'Authentification 2FA</h2>
+                <p class="text-xs text-slate-500">Sécurisez votre compte avec une application TOTP (Google Authenticator, Microsoft Authenticator).</p>
+            </div>
+        </div>
+
+        @if (isFirstTimeSetup)
+        {
+            <!-- Alerte Politique CIT Obligatoire -->
+            <div class="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-start gap-3 text-amber-900 shadow-xs">
+                <svg class="h-5 w-5 text-amber-600 shrink-0 mt-0.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+                </svg>
+                <div class="text-xs space-y-1">
+                    <strong class="font-bold text-amber-800 text-sm block">Authentification 2FA Obligatoire pour Tous les Utilisateurs</strong>
+                    <p class="leading-relaxed">
+                        Conformément à la politique de sécurité des systèmes d'information de <strong>Côte d'Ivoire Terminal (CIT)</strong>, l'activation du 2FA est indispensable dès la première connexion. Vous devez finaliser cette étape pour accéder à la plateforme maritime.
+                    </p>
+                </div>
+            </div>
+        }
+
+        <StatusMessage Message="@message" IsError="true" />
+
+        <div class="space-y-6">
+            <!-- Étape 1 : Application -->
+            <div class="p-4 rounded-xl bg-slate-50 border border-slate-200/80">
+                <div class="flex items-center gap-2 mb-2 font-bold text-slate-800 text-sm">
+                    <span class="h-6 w-6 rounded-full bg-brand-600 text-white text-xs flex items-center justify-center shrink-0">1</span>
+                    <span>Installez une application d'authentification sur votre smartphone</span>
+                </div>
+                <p class="text-xs text-slate-500 ml-8 mb-3">
+                    Téléchargez l'une des applications certifiées suivantes depuis Google Play ou Apple App Store :
                 </p>
-            </li>
-            <li>
-                <p>Scan the QR Code or enter this key <kbd>@sharedKey</kbd> into your two factor authenticator app. Spaces and casing do not matter.</p>
-                <div class="alert alert-info">Learn how to <a href="https://go.microsoft.com/fwlink/?Linkid=852423">enable QR code generation</a>.</div>
-                <div></div>
-                <div data-url="@authenticatorUri"></div>
-            </li>
-            <li>
-                <p>
-                    Once you have scanned the QR code or input the key above, your two factor authentication app will provide you
-                    with a unique code. Enter the code in the confirmation box below.
-                </p>
-                <div class="row">
-                    <div class="col-xl-6">
-                        <EditForm Model="Input" FormName="send-code" OnValidSubmit="OnValidSubmitAsync" method="post">
-                            <DataAnnotationsValidator />
-                            <div class="form-floating mb-3">
-                                <InputText @bind-Value="Input.Code" id="Input.Code" class="form-control" autocomplete="off" placeholder="Enter the code" />
-                                <label for="Input.Code" class="control-label form-label">Verification Code</label>
-                                <ValidationMessage For="() => Input.Code" class="text-danger" />
+                <div class="flex flex-wrap gap-2 ml-8">
+                    <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-xs font-semibold text-slate-700 shadow-2xs">
+                        📱 Google Authenticator
+                    </span>
+                    <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-xs font-semibold text-slate-700 shadow-2xs">
+                        🛡️ Microsoft Authenticator
+                    </span>
+                    <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-xs font-semibold text-slate-700 shadow-2xs">
+                        🍏 Apple Trousseau / Passwords
+                    </span>
+                </div>
+            </div>
+
+            <!-- Étape 2 : Scan QR Code ou Clé -->
+            <div class="p-4 rounded-xl bg-slate-50 border border-slate-200/80">
+                <div class="flex items-center gap-2 mb-3 font-bold text-slate-800 text-sm">
+                    <span class="h-6 w-6 rounded-full bg-brand-600 text-white text-xs flex items-center justify-center shrink-0">2</span>
+                    <span>Scannez ce QR Code avec votre application</span>
+                </div>
+
+                <div class="ml-8 flex flex-col sm:flex-row items-center sm:items-start gap-5">
+                    <!-- QR Code Card -->
+                    @if (!string.IsNullOrEmpty(qrCodeBase64))
+                    {
+                        <div class="bg-white p-3 rounded-2xl border border-slate-300 shadow-sm flex flex-col items-center shrink-0">
+                            <img src="@qrCodeBase64" alt="QR Code 2FA CIT" class="w-44 h-44 sm:w-48 sm:h-48 object-contain display-block" />
+                            <span class="text-[10px] text-slate-400 font-semibold mt-1">kernelMK · CIT</span>
+                        </div>
+                    }
+
+                    <!-- Clé Manuelle -->
+                    <div class="flex-1 space-y-3">
+                        <p class="text-xs text-slate-500 leading-relaxed">
+                            Si vous ne pouvez pas scanner le QR code avec votre appareil photo, saisissez manuellement cette clé secrète dans votre application :
+                        </p>
+                        <div>
+                            <span class="text-[11px] font-bold uppercase tracking-wider text-slate-400 block mb-1">Clé de configuration secrète</span>
+                            <div class="flex items-center gap-2">
+                                <div class="bg-white border border-slate-200 px-3 py-2 rounded-xl font-mono text-xs font-bold text-slate-800 select-all tracking-wider break-all shadow-2xs">
+                                    @sharedKey
+                                </div>
+                                <button type="button" class="kmk-btn-secondary text-xs shrink-0 py-2 px-3"
+                                        onclick="navigator.clipboard.writeText('@sharedKey?.Replace(" ", "")').then(() => alert('Clé secrète copiée !'))">
+                                    Copier
+                                </button>
                             </div>
-                            <button type="submit" class="w-100 btn btn-lg btn-primary">Verify</button>
-                            <ValidationSummary class="text-danger" role="alert" />
-                        </EditForm>
+                        </div>
+                        <p class="text-[11px] text-slate-400 italic">
+                            (Les majuscules et les espaces n'ont pas d'importance lors de la saisie).
+                        </p>
                     </div>
                 </div>
-            </li>
-        </ol>
+            </div>
+
+            <!-- Étape 3 : Validation Code -->
+            <div class="p-4 rounded-xl bg-slate-50 border border-slate-200/80">
+                <div class="flex items-center gap-2 mb-3 font-bold text-slate-800 text-sm">
+                    <span class="h-6 w-6 rounded-full bg-brand-600 text-white text-xs flex items-center justify-center shrink-0">3</span>
+                    <span>Saisissez le code à 6 chiffres affiché sur votre application</span>
+                </div>
+
+                <div class="ml-8 max-w-sm">
+                    <EditForm Model="Input" FormName="send-code" OnValidSubmit="OnValidSubmitAsync" method="post" class="space-y-3">
+                        <DataAnnotationsValidator />
+                        <ValidationSummary class="text-red-600 text-xs" role="alert" />
+
+                        <div>
+                            <label for="Input.Code" class="kmk-label">Code de vérification (6 chiffres)</label>
+                            <InputText @bind-Value="Input.Code" id="Input.Code"
+                                       class="kmk-input text-center text-xl font-mono font-bold tracking-[0.3em] py-2.5"
+                                       autocomplete="one-time-code" inputmode="numeric" placeholder="••••••" autofocus="true" />
+                            <ValidationMessage For="() => Input.Code" class="text-red-600 text-xs mt-1" />
+                        </div>
+
+                        <button type="submit" class="kmk-btn-primary w-full py-2.5 font-semibold flex items-center justify-center gap-2 shadow-sm">
+                            <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                            </svg>
+                            <span>Valider et Activer la 2FA</span>
+                        </button>
+                    </EditForm>
+                </div>
+            </div>
+        </div>
+
+        <!-- Déconnexion de secours -->
+        <div class="pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+            <span>Besoin de vous connecter avec un autre compte ?</span>
+            <form action="Account/Logout" method="post" class="inline">
+                <AntiforgeryToken />
+                <button type="submit" class="text-rose-600 hover:text-rose-800 font-semibold cursor-pointer underline">
+                    Se déconnecter
+                </button>
+            </form>
+        </div>
     </div>
 }
 
@@ -73,6 +170,8 @@ else
     private ApplicationUser user = default!;
     private string? sharedKey;
     private string? authenticatorUri;
+    private string? qrCodeBase64;
+    private bool isFirstTimeSetup = false;
     private IEnumerable<string>? recoveryCodes;
 
     [CascadingParameter]
@@ -84,13 +183,13 @@ else
     protected override async Task OnInitializedAsync()
     {
         user = await UserAccessor.GetRequiredUserAsync(HttpContext);
+        isFirstTimeSetup = !await UserManager.GetTwoFactorEnabledAsync(user);
 
         await LoadSharedKeyAndQrCodeUriAsync(user);
     }
 
     private async Task OnValidSubmitAsync()
     {
-        // Strip spaces and hyphens
         var verificationCode = Input.Code.Replace(" ", string.Empty).Replace("-", string.Empty);
 
         var is2faTokenValid = await UserManager.VerifyTwoFactorTokenAsync(
@@ -98,15 +197,18 @@ else
 
         if (!is2faTokenValid)
         {
-            message = "Error: Verification code is invalid.";
+            message = "Code de validation incorrect ou expiré. Veuillez vérifier l'heure de votre téléphone et saisir le code affiché.";
             return;
         }
 
         await UserManager.SetTwoFactorEnabledAsync(user, true);
         var userId = await UserManager.GetUserIdAsync(user);
-        Logger.LogInformation("User with ID '{UserId}' has enabled 2FA with an authenticator app.", userId);
+        Logger.LogInformation("Utilisateur ID '{UserId}' a activé le 2FA avec succès.", userId);
 
-        message = "Your authenticator app has been verified.";
+        // Rafraîchit le cookie d'authentification pour propager immédiatement le claim TwoFactorEnabled = true
+        await SignInManager.RefreshSignInAsync(user);
+
+        message = "Votre application d'authentification a été validée avec succès.";
 
         if (await UserManager.CountRecoveryCodesAsync(user) == 0)
         {
@@ -120,7 +222,6 @@ else
 
     private async ValueTask LoadSharedKeyAndQrCodeUriAsync(ApplicationUser user)
     {
-        // Load the authenticator key & QR code URI to display on the form
         var unformattedKey = await UserManager.GetAuthenticatorKeyAsync(user);
         if (string.IsNullOrEmpty(unformattedKey))
         {
@@ -132,6 +233,23 @@ else
 
         var email = await UserManager.GetEmailAsync(user);
         authenticatorUri = GenerateQrCodeUri(email!, unformattedKey!);
+        GenerateQrCodeImage(authenticatorUri);
+    }
+
+    private void GenerateQrCodeImage(string uri)
+    {
+        try
+        {
+            using var qrGenerator = new QRCodeGenerator();
+            using var qrCodeData = qrGenerator.CreateQrCode(uri, QRCodeGenerator.ECCLevel.Q);
+            var qrCode = new PngByteQRCode(qrCodeData);
+            byte[] qrCodeBytes = qrCode.GetGraphic(20);
+            qrCodeBase64 = $"data:image/png;base64,{Convert.ToBase64String(qrCodeBytes)}";
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Erreur lors de la génération du QR Code 2FA.");
+        }
     }
 
     private string FormatKey(string unformattedKey)
@@ -148,7 +266,7 @@ else
             result.Append(unformattedKey.AsSpan(currentPosition));
         }
 
-        return result.ToString().ToLowerInvariant();
+        return result.ToString().ToUpperInvariant();
     }
 
     private string GenerateQrCodeUri(string email, string unformattedKey)
@@ -156,17 +274,17 @@ else
         return string.Format(
             CultureInfo.InvariantCulture,
             AuthenticatorUriFormat,
-            UrlEncoder.Encode("Microsoft.AspNetCore.Identity.UI"),
+            UrlEncoder.Encode("kernelMK - CIT"),
             UrlEncoder.Encode(email),
             unformattedKey);
     }
 
     private sealed class InputModel
     {
-        [Required]
-        [StringLength(7, ErrorMessage = "The {0} must be at least {2} and at max {1} characters long.", MinimumLength = 6)]
+        [Required(ErrorMessage = "Le code à 6 chiffres est requis.")]
+        [StringLength(7, ErrorMessage = "Le code doit comporter 6 chiffres.", MinimumLength = 6)]
         [DataType(DataType.Text)]
-        [Display(Name = "Verification Code")]
+        [Display(Name = "Code de vérification")]
         public string Code { get; set; } = "";
     }
 }

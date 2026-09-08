@@ -22,6 +22,7 @@ public class AppUserClaimsPrincipalFactory : UserClaimsPrincipalFactory<Applicat
             identity.AddClaim(new Claim("DisplayName", user.DisplayName));
             identity.AddClaim(new Claim(ClaimTypes.GivenName, user.DisplayName));
         }
+        identity.AddClaim(new Claim("TwoFactorEnabled", user.TwoFactorEnabled ? "true" : "false"));
         return identity;
     }
 }

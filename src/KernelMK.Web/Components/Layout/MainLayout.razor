@@ -5,6 +5,7 @@
 @using KernelMK.Core.Entities
 @inject UserManager<ApplicationUser> UserManager
 @inject IDbContextFactory<AppDbContext> DbFactory
+@inject NavigationManager NavigationManager
 
 <div class="min-h-screen flex bg-slate-50">
     <NavMenu />
@@ -303,6 +304,19 @@
             var principal = state.User;
             if (principal.Identity?.IsAuthenticated == true)
             {
+                var is2faClaim = principal.FindFirst("TwoFactorEnabled")?.Value;
+                if (is2faClaim != "true")
+                {
+                    var path = NavigationManager.ToBaseRelativePath(NavigationManager.Uri);
+                    if (!path.StartsWith("Account/Manage/EnableAuthenticator", StringComparison.OrdinalIgnoreCase)
+                        && !path.StartsWith("Account/Manage/ShowRecoveryCodes", StringComparison.OrdinalIgnoreCase)
+                        && !path.StartsWith("Account/Logout", StringComparison.OrdinalIgnoreCase))
+                    {
+                        NavigationManager.NavigateTo("Account/Manage/EnableAuthenticator", forceLoad: true);
+                        return;
+                    }
+                }
+
                 var claimName = principal.FindFirst("DisplayName")?.Value;
                 if (!string.IsNullOrWhiteSpace(claimName))
                 {

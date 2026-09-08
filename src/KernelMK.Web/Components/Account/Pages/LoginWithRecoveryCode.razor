@@ -1,4 +1,5 @@
-﻿@page "/Account/LoginWithRecoveryCode"
+@page "/Account/LoginWithRecoveryCode"
+@layout KernelMK.Web.Components.Layout.EmptyLayout
 
 @using System.ComponentModel.DataAnnotations
 @using Microsoft.AspNetCore.Identity
@@ -9,27 +10,72 @@
 @inject IdentityRedirectManager RedirectManager
 @inject ILogger<LoginWithRecoveryCode> Logger
 
-<PageTitle>Recovery code verification</PageTitle>
+<PageTitle>Code de Récupération 2FA · Côte d'Ivoire Terminal</PageTitle>
 
-<h1>Recovery code verification</h1>
-<hr />
-<StatusMessage Message="@message" />
-<p>
-    You have requested to log in with a recovery code. This login will not be remembered until you provide
-    an authenticator app code at log in or disable 2FA and log in again.
-</p>
-<div class="row">
-    <div class="col-md-4">
-        <EditForm Model="Input" FormName="login-with-recovery-code" OnValidSubmit="OnValidSubmitAsync" method="post">
-            <DataAnnotationsValidator />
-            <ValidationSummary class="text-danger" role="alert" />
-            <div class="form-floating mb-3">
-                <InputText @bind-Value="Input.RecoveryCode" id="Input.RecoveryCode" class="form-control" autocomplete="off" placeholder="RecoveryCode" />
-                <label for="Input.RecoveryCode" class="form-label">Recovery Code</label>
-                <ValidationMessage For="() => Input.RecoveryCode" class="text-danger" />
+<div class="min-h-screen relative flex items-center justify-center px-4 overflow-hidden"
+     style="background-image: radial-gradient(ellipse 80% 60% at 50% -10%, rgba(99,102,241,0.12), transparent), linear-gradient(180deg, #0b1120 0%, #0f172a 45%, #f8fafc 45%);">
+
+    <div class="absolute -top-24 -left-24 h-72 w-72 rounded-full bg-brand-500/20 blur-3xl"></div>
+    <div class="absolute -top-10 right-0 h-64 w-64 rounded-full bg-violet-500/10 blur-3xl"></div>
+
+    <div class="relative w-full max-w-sm">
+        <div class="flex flex-col items-center justify-center gap-3 mb-6">
+            <div class="bg-white rounded-2xl px-3 py-2 shadow-xl border border-white/20 flex items-center justify-center shrink-0" style="height: 52px; max-width: 180px;">
+                <img src="images/logo_cit.jpeg" alt="Côte d'Ivoire Terminal" class="kmk-logo-cit-lg" style="height: 38px; max-height: 38px; width: auto; max-width: 160px; object-fit: contain; display: block;" />
             </div>
-            <button type="submit" class="w-100 btn btn-lg btn-primary">Log in</button>
-        </EditForm>
+            <div class="text-center">
+                <span class="text-white font-bold tracking-tight text-xl block">kernel<span class="text-brand-400">MK</span></span>
+                <span class="text-xs text-slate-400 font-medium">Plateforme Sécurisée de Transferts &amp; EDI · Port d'Abidjan</span>
+            </div>
+        </div>
+
+        <div class="kmk-card !shadow-2xl !shadow-slate-900/20">
+            <div class="kmk-card-body">
+                <div class="flex items-center gap-2.5 mb-2">
+                    <div class="h-9 w-9 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0 shadow-xs border border-amber-100">
+                        <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 5.25a3 3 0 0 1 3 3m3 0a6 6 0 0 1-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1 1 21.75 8.25Z" />
+                        </svg>
+                    </div>
+                    <div>
+                        <h1 class="text-base font-bold text-slate-900">Code de Secours</h1>
+                        <span class="text-[10px] font-semibold text-amber-700 uppercase tracking-wide">Accès d'Urgence 2FA</span>
+                    </div>
+                </div>
+
+                <p class="text-xs text-slate-500 mb-5 leading-relaxed">
+                    Saisissez l'un de vos 10 codes de récupération d'urgence générés lors de la configuration de votre compte.
+                </p>
+
+                <StatusMessage Message="@message" IsError="true" />
+
+                <EditForm Model="Input" FormName="login-with-recovery-code" OnValidSubmit="OnValidSubmitAsync" method="post" class="space-y-4">
+                    <DataAnnotationsValidator />
+                    <ValidationSummary class="text-red-600 text-xs" role="alert" />
+
+                    <div>
+                        <label for="Input.RecoveryCode" class="kmk-label text-center block">Code de secours</label>
+                        <InputText @bind-Value="Input.RecoveryCode" id="Input.RecoveryCode"
+                                   class="kmk-input text-center text-lg tracking-wider font-mono font-bold py-2.5"
+                                   autocomplete="off" placeholder="XXXXX-XXXXX" autofocus="true" />
+                        <ValidationMessage For="() => Input.RecoveryCode" class="text-red-600 text-xs text-center mt-1" />
+                    </div>
+
+                    <button type="submit" class="kmk-btn-primary w-full py-2.5 text-sm font-semibold flex items-center justify-center gap-2">
+                        <span>Valider et déverrouiller</span>
+                    </button>
+
+                    <div class="pt-3 border-t border-slate-100 flex flex-col items-center gap-2 text-center text-xs">
+                        <a href="Account/LoginWith2fa?ReturnUrl=@ReturnUrl" class="text-brand-600 hover:text-brand-800 font-medium">
+                            ← Revenir à la saisie du code Authenticator
+                        </a>
+                        <a href="Account/Login" class="text-slate-400 hover:text-slate-600">
+                            Revenir à la connexion principale
+                        </a>
+                    </div>
+                </EditForm>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -45,41 +91,39 @@
 
     protected override async Task OnInitializedAsync()
     {
-        // Ensure the user has gone through the username & password screen first
         user = await SignInManager.GetTwoFactorAuthenticationUserAsync() ??
-            throw new InvalidOperationException("Unable to load two-factor authentication user.");
+            throw new InvalidOperationException("Session d'authentification introuvable ou expirée. Veuillez vous reconnecter.");
     }
 
     private async Task OnValidSubmitAsync()
     {
-        var recoveryCode = Input.RecoveryCode.Replace(" ", string.Empty);
+        var recoveryCode = Input.RecoveryCode.Replace(" ", string.Empty).Replace("-", string.Empty);
 
         var result = await SignInManager.TwoFactorRecoveryCodeSignInAsync(recoveryCode);
-
         var userId = await UserManager.GetUserIdAsync(user);
 
         if (result.Succeeded)
         {
-            Logger.LogInformation("User with ID '{UserId}' logged in with a recovery code.", userId);
+            Logger.LogInformation("Utilisateur ID '{UserId}' connecté avec un code de secours.", userId);
             RedirectManager.RedirectTo(ReturnUrl);
         }
         else if (result.IsLockedOut)
         {
-            Logger.LogWarning("User account locked out.");
+            Logger.LogWarning("Compte utilisateur ID '{UserId}' verrouillé.", userId);
             RedirectManager.RedirectTo("Account/Lockout");
         }
         else
         {
-            Logger.LogWarning("Invalid recovery code entered for user with ID '{UserId}' ", userId);
-            message = "Error: Invalid recovery code entered.";
+            Logger.LogWarning("Code de récupération invalide pour l'utilisateur '{UserId}'.", userId);
+            message = "Code de récupération d'urgence invalide ou déjà utilisé.";
         }
     }
 
     private sealed class InputModel
     {
-        [Required]
+        [Required(ErrorMessage = "Le code de secours est requis.")]
         [DataType(DataType.Text)]
-        [Display(Name = "Recovery Code")]
+        [Display(Name = "Code de secours")]
         public string RecoveryCode { get; set; } = "";
     }
 }

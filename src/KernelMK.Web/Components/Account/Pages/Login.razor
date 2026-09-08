@@ -7,6 +7,7 @@
 @using KernelMK.Data.Identity
 
 @inject SignInManager<ApplicationUser> SignInManager
+@inject UserManager<ApplicationUser> UserManager
 @inject ILogger<Login> Logger
 @inject NavigationManager NavigationManager
 @inject IdentityRedirectManager RedirectManager
@@ -100,6 +101,14 @@
         var result = await SignInManager.PasswordSignInAsync(Input.Email, Input.Password, Input.RememberMe, lockoutOnFailure: false);
         if (result.Succeeded)
         {
+            var user = await UserManager.FindByEmailAsync(Input.Email);
+            if (user != null && !await UserManager.GetTwoFactorEnabledAsync(user))
+            {
+                Logger.LogInformation("Utilisateur {Email} sans 2FA. Redirection obligatoire vers la configuration 2FA.", Input.Email);
+                RedirectManager.RedirectTo("Account/Manage/EnableAuthenticator");
+                return;
+            }
+
             Logger.LogInformation("User logged in.");
             RedirectManager.RedirectTo(ReturnUrl);
         }

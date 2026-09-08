@@ -1,4 +1,4 @@
-﻿@page "/Account/Manage/GenerateRecoveryCodes"
+@page "/Account/Manage/GenerateRecoveryCodes"
 
 @using Microsoft.AspNetCore.Identity
 @using KernelMK.Data.Identity
@@ -8,7 +8,7 @@
 @inject IdentityRedirectManager RedirectManager
 @inject ILogger<GenerateRecoveryCodes> Logger
 
-<PageTitle>Generate two-factor authentication (2FA) recovery codes</PageTitle>
+<PageTitle>Codes de Secours 2FA · Côte d'Ivoire Terminal</PageTitle>
 
 @if (recoveryCodes is not null)
 {
@@ -16,25 +16,29 @@
 }
 else
 {
-    <h3>Generate two-factor authentication (2FA) recovery codes</h3>
-    <div class="alert alert-warning" role="alert">
-        <p>
-            <span class="glyphicon glyphicon-warning-sign"></span>
-            <strong>Put these codes in a safe place.</strong>
-        </p>
-        <p>
-            If you lose your device and don't have the recovery codes you will lose access to your account.
-        </p>
-        <p>
-            Generating new recovery codes does not change the keys used in authenticator apps. If you wish to change the key
-            used in an authenticator app you should <a href="Account/Manage/ResetAuthenticator">reset your authenticator keys.</a>
-        </p>
-    </div>
-    <div>
-        <form @formname="generate-recovery-codes" @onsubmit="OnSubmitAsync" method="post">
-            <AntiforgeryToken />
-            <button class="btn btn-danger" type="submit">Generate Recovery Codes</button>
-        </form>
+    <div class="space-y-6 max-w-xl">
+        <div>
+            <h3 class="text-base font-semibold text-slate-900">Générer de nouveaux codes de secours 2FA</h3>
+            <p class="text-xs text-slate-500 mt-0.5">Renouvelez votre liste de codes d'urgence à usage unique en cas de perte de votre application d'authentification.</p>
+        </div>
+
+        <div class="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-sm space-y-1">
+            <div class="font-bold flex items-center gap-1.5 text-amber-800">
+                <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" /></svg>
+                <span>Remplacement des anciens codes</span>
+            </div>
+            <p class="text-xs text-amber-700 leading-relaxed">
+                La génération de nouveaux codes invalide immédiatement tous vos anciens codes de secours. Vos clés d'application configurées dans Google ou Microsoft Authenticator restent inchangées.
+            </p>
+        </div>
+
+        <div class="flex items-center gap-3 pt-2">
+            <form @formname="generate-recovery-codes" @onsubmit="OnSubmitAsync" method="post">
+                <AntiforgeryToken />
+                <button class="kmk-btn-primary text-sm" type="submit">Générer 10 nouveaux codes de secours</button>
+            </form>
+            <a href="Account/Manage/TwoFactorAuthentication" class="kmk-btn-secondary text-sm">Annuler</a>
+        </div>
     </div>
 }
 

@@ -113,7 +113,7 @@
         SetupState.AdminExists = true;
 
         await SignInManager.SignInAsync(user, isPersistent: false);
-        RedirectManager.RedirectTo("/");
+        RedirectManager.RedirectTo("Account/Manage/EnableAuthenticator");
     }
 
     private sealed class InputModel
