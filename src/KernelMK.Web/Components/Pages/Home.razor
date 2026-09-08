@@ -27,11 +27,25 @@
                     @_failedCount incident(s) détecté(s) (24h)
                 </span>
             }
+            else if (_totalJobs == 0)
+            {
+                <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200 shadow-sm">
+                    <span class="h-2 w-2 rounded-full bg-slate-400"></span>
+                    Prêt pour premier job
+                </span>
+            }
+            else if (_successCount + _failedCount == 0)
+            {
+                <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-sm">
+                    <span class="h-2 w-2 rounded-full bg-indigo-500"></span>
+                    En attente de flux (aucun run 24h)
+                </span>
+            }
             else
             {
                 <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-sm">
                     <span class="h-2 w-2 rounded-full bg-emerald-500"></span>
-                    Plateforme 100% opérationnelle
+                    Plateforme opérationnelle (@_successRate% succès)
                 </span>
             }
 
@@ -121,16 +135,42 @@
     <div class="kmk-stat-card">
         <div class="flex items-center justify-between">
             <span class="kmk-stat-label">Taux Réussite</span>
-            <span class="kmk-stat-icon bg-emerald-50 text-emerald-600">
+            <span class="kmk-stat-icon @(_successRate.HasValue ? (_successRate.Value >= 95 ? "bg-emerald-50 text-emerald-600" : _successRate.Value >= 75 ? "bg-amber-50 text-amber-600" : "bg-rose-50 text-rose-600") : "bg-slate-100 text-slate-400")">
                 <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
             </span>
         </div>
         <div class="flex items-baseline gap-1.5">
-            <span class="kmk-stat-value text-emerald-600">@_successRate%</span>
+            @if (_successRate.HasValue)
+            {
+                <span class="kmk-stat-value @(_successRate.Value >= 95 ? "text-emerald-600" : _successRate.Value >= 75 ? "text-amber-600" : "text-rose-600")">
+                    @_successRate.Value%
+                </span>
+            }
+            else
+            {
+                <span class="kmk-stat-value text-slate-400">—</span>
+            }
         </div>
         <div class="w-full bg-slate-100 rounded-full h-1.5 mt-1 overflow-hidden">
-            <div class="bg-emerald-500 h-1.5 rounded-full transition-all duration-500" style="width: @_successRate%"></div>
+            @if (_successRate.HasValue)
+            {
+                <div class="@(_successRate.Value >= 95 ? "bg-emerald-500" : _successRate.Value >= 75 ? "bg-amber-500" : "bg-rose-500") h-1.5 rounded-full transition-all duration-500" style="width: @_successRate.Value%"></div>
+            }
+            else
+            {
+                <div class="bg-slate-200 h-1.5 rounded-full" style="width: 0%"></div>
+            }
         </div>
+        <span class="text-xs text-slate-400 mt-1 block">
+            @if (_successRate.HasValue)
+            {
+                <span>@_successCount / @(_successCount + _failedCount) succès (24h)</span>
+            }
+            else
+            {
+                <span>En attente de flux (24h)</span>
+            }
+        </span>
     </div>
 
     <!-- Fichiers Traités (24h) -->
@@ -717,7 +757,7 @@
     private string? _loadError = null;
     private int _totalJobs;
     private int _activeJobs, _inactiveJobs, _runningCount, _successCount, _failedCount, _filesProcessed;
-    private int _successRate = 100;
+    private int? _successRate = null;
     private double _avgDurationSeconds;
     private List<JobTrigger> _upcoming = new();
     private List<JobExecution> _recentIncidents = new();
@@ -798,7 +838,7 @@
             _failedCount = await recent.CountAsync(e => e.Status == JobStatus.Echec);
 
             var totalRuns = _successCount + _failedCount;
-            _successRate = totalRuns > 0 ? (_successCount * 100 / totalRuns) : 100;
+            _successRate = totalRuns > 0 ? (_successCount * 100 / totalRuns) : null;
 
             var timestamps = await recent.Select(e => new { e.StartedAt, e.FinishedAt }).ToListAsync();
             _avgDurationSeconds = timestamps.Count > 0
