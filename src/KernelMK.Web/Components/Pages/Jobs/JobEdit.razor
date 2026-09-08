@@ -257,6 +257,8 @@ else
                                                             value="@(string.IsNullOrEmpty(tConfig.Armateur) ? "" : tConfig.Armateur)"
                                                             @onchange="(e) => { var val = e.Value?.ToString(); if (!string.IsNullOrEmpty(val)) { tConfig.Armateur = val; SyncTransferConfig(step); } }">
                                                         <option value="">(Sélection...)</option>
+                                                        <option value="GUCE">GUCE (Guichet Unique)</option>
+                                                        <option value="DOUANE">Douane CI</option>
                                                         <option value="MSC">MSC</option>
                                                         <option value="CMA CGM">CMA CGM</option>
                                                         <option value="MAERSK">MAERSK</option>
@@ -267,7 +269,7 @@ else
                                                         <option value="PIL">PIL</option>
                                                         <option value="ARKAS">ARKAS</option>
                                                     </select>
-                                                    <input class="kmk-input text-xs flex-1" placeholder="Nom de l'armateur (ex: MSC, CMA CGM, MAERSK...)"
+                                                    <input class="kmk-input text-xs flex-1" placeholder="Nom du partenaire ou armateur (ex: GUCE, MSC, CMA CGM...)"
                                                            value="@tConfig.Armateur"
                                                            @oninput="(e) => { tConfig.Armateur = e.Value?.ToString(); SyncTransferConfig(step); }" />
                                                 </div>
@@ -283,7 +285,8 @@ else
                                                                    step.Type = tConfig.UseTls ? StepType.TransfertFtps : StepType.TransfertFtp;
                                                                    SyncTransferConfig(step); 
                                                                }" />
-                                                        <span class="font-medium">Chiffrement TLS explicite (FTPS)</span>
+                                                        <span class="font-semibold text-slate-800">Chiffrement TLS / SSL explicite (FTPS)</span>
+                                                        <span class="text-brand-600 text-[11px] font-medium bg-brand-50 px-1.5 py-0.5 rounded border border-brand-200">Requis pour GUCE</span>
                                                     </label>
                                                 }
                                                 @if (tConfig.Upload)
@@ -726,14 +729,32 @@ else
                 if (cred is not null)
                 {
                     var config = GetOrCreateTransferConfig(step);
-                    if (!string.IsNullOrWhiteSpace(cred.Host) && (string.IsNullOrWhiteSpace(config.Host) || config.Host == "sftp.exemple.fr"))
+                    if (!string.IsNullOrWhiteSpace(cred.Host))
                     {
                         config.Host = cred.Host;
                     }
-                    if (cred.Port is > 0 && (config.Port <= 0 || config.Port == 22 || config.Port == 21))
+                    if (cred.Port is > 0)
                     {
                         config.Port = cred.Port.Value;
                     }
+
+                    // Détection intelligente GUCE / FTPS
+                    if (cred.Name.Contains("guce", StringComparison.OrdinalIgnoreCase) ||
+                        (cred.Host?.Contains("guce", StringComparison.OrdinalIgnoreCase) ?? false))
+                    {
+                        config.UseTls = true;
+                        step.Type = StepType.TransfertFtps;
+                        if (string.IsNullOrWhiteSpace(config.Armateur))
+                        {
+                            config.Armateur = "GUCE";
+                        }
+                    }
+                    else if (cred.Port == 22)
+                    {
+                        config.UseTls = false;
+                        step.Type = StepType.TransfertSftp;
+                    }
+
                     SyncTransferConfig(step);
                 }
             }
@@ -819,7 +840,7 @@ else
 
         if (isTls && port == 22)
         {
-            _testResults[step] = ConnectionTestResult.Fail($"Erreur de port ({host}:22) : Le port 22 est réservé au protocole SFTP (SSH). Pour tester en FTPS, veuillez renseigner le port 21 (ou 990 pour FTPS implicite) dans le champ 'Port'.");
+            _testResults[step] = ConnectionTestResult.Fail($"Erreur de port ({host}:22) : Le port 22 est réservé au protocole SFTP (SSH). Pour tester en FTPS (TLS/SSL explicite comme GUCE), veuillez renseigner le port du serveur (21 ou 990) dans le champ 'Port'.");
             _isTesting[step] = false;
             StateHasChanged();
             return;

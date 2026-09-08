@@ -97,18 +97,33 @@ public class RemoteFileBrowserService
         }
     }
 
+    private static async Task ConnectFtpClientAsync(AsyncFtpClient client, bool useTls, int port, CancellationToken ct)
+    {
+        if (useTls)
+        {
+            client.Config.EncryptionMode = FtpEncryptionMode.Explicit;
+            client.Config.ValidateAnyCertificate = true;
+            client.Config.DataConnectionEncryption = true;
+            client.Config.SslProtocols = System.Security.Authentication.SslProtocols.None;
+        }
+
+        try
+        {
+            await client.Connect(ct);
+        }
+        catch (Exception) when (useTls && port == 990)
+        {
+            client.Config.EncryptionMode = FtpEncryptionMode.Implicit;
+            await client.Connect(ct);
+        }
+    }
+
     private static async Task<List<RemoteItemInfo>> ListFtpItemsAsync(
         string host, int port, string username, string secret, bool useTls, string remotePath, CancellationToken ct)
     {
         using var client = new AsyncFtpClient(host, username, secret, port);
         client.Config.ConnectTimeout = 8000;
-        if (useTls)
-        {
-            client.Config.EncryptionMode = FtpEncryptionMode.Explicit;
-            client.Config.ValidateAnyCertificate = true;
-        }
-
-        await client.Connect(ct);
+        await ConnectFtpClientAsync(client, useTls, port, ct);
 
         try
         {
@@ -170,13 +185,9 @@ public class RemoteFileBrowserService
         }
         else if (protocol is StepType.TransfertFtp or StepType.TransfertFtps)
         {
-            using var client = new AsyncFtpClient(host, username, secret, port <= 0 ? 21 : port);
-            if (protocol == StepType.TransfertFtps)
-            {
-                client.Config.EncryptionMode = FtpEncryptionMode.Explicit;
-                client.Config.ValidateAnyCertificate = true;
-            }
-            await client.Connect(ct);
+            var portNum = port <= 0 ? 21 : port;
+            using var client = new AsyncFtpClient(host, username, secret, portNum);
+            await ConnectFtpClientAsync(client, protocol == StepType.TransfertFtps, portNum, ct);
             try
             {
                 using var ms = new MemoryStream();
@@ -216,13 +227,9 @@ public class RemoteFileBrowserService
         }
         else if (protocol is StepType.TransfertFtp or StepType.TransfertFtps)
         {
-            using var client = new AsyncFtpClient(host, username, secret, port <= 0 ? 21 : port);
-            if (protocol == StepType.TransfertFtps)
-            {
-                client.Config.EncryptionMode = FtpEncryptionMode.Explicit;
-                client.Config.ValidateAnyCertificate = true;
-            }
-            await client.Connect(ct);
+            var portNum = port <= 0 ? 21 : port;
+            using var client = new AsyncFtpClient(host, username, secret, portNum);
+            await ConnectFtpClientAsync(client, protocol == StepType.TransfertFtps, portNum, ct);
             try
             {
                 var status = await client.UploadStream(contentStream, remotePath, FtpRemoteExists.Overwrite, true, token: ct);
@@ -261,13 +268,9 @@ public class RemoteFileBrowserService
         }
         else if (protocol is StepType.TransfertFtp or StepType.TransfertFtps)
         {
-            using var client = new AsyncFtpClient(host, username, secret, port <= 0 ? 21 : port);
-            if (protocol == StepType.TransfertFtps)
-            {
-                client.Config.EncryptionMode = FtpEncryptionMode.Explicit;
-                client.Config.ValidateAnyCertificate = true;
-            }
-            await client.Connect(ct);
+            var portNum = port <= 0 ? 21 : port;
+            using var client = new AsyncFtpClient(host, username, secret, portNum);
+            await ConnectFtpClientAsync(client, protocol == StepType.TransfertFtps, portNum, ct);
             try
             {
                 if (isDirectory) await client.DeleteDirectory(remotePath, ct);
@@ -304,13 +307,9 @@ public class RemoteFileBrowserService
         }
         else if (protocol is StepType.TransfertFtp or StepType.TransfertFtps)
         {
-            using var client = new AsyncFtpClient(host, username, secret, port <= 0 ? 21 : port);
-            if (protocol == StepType.TransfertFtps)
-            {
-                client.Config.EncryptionMode = FtpEncryptionMode.Explicit;
-                client.Config.ValidateAnyCertificate = true;
-            }
-            await client.Connect(ct);
+            var portNum = port <= 0 ? 21 : port;
+            using var client = new AsyncFtpClient(host, username, secret, portNum);
+            await ConnectFtpClientAsync(client, protocol == StepType.TransfertFtps, portNum, ct);
             try
             {
                 await client.CreateDirectory(remotePath, ct);

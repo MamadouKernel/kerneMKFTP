@@ -207,17 +207,30 @@ public class ConnectionTestService
 
         if (useTls)
         {
-            client.Config.EncryptionMode = port == 990 ? FtpEncryptionMode.Implicit : FtpEncryptionMode.Explicit;
+            // Le standard GUCE et la majorité des serveurs maritimes/douaniers utilisent le chiffrement TLS/SSL explicite (AUTH TLS).
+            client.Config.EncryptionMode = FtpEncryptionMode.Explicit;
             client.Config.ValidateAnyCertificate = true;
             client.Config.DataConnectionEncryption = true;
-            client.Config.SslProtocols = System.Security.Authentication.SslProtocols.Tls12 | System.Security.Authentication.SslProtocols.Tls13;
+            client.Config.SslProtocols = System.Security.Authentication.SslProtocols.None;
         }
 
-        await client.Connect(ct);
+        try
+        {
+            await client.Connect(ct);
+        }
+        catch (Exception) when (useTls && port == 990)
+        {
+            // Repli sur le mode implicite uniquement si le mode explicite échoue sur le port historique 990
+            client.Config.EncryptionMode = FtpEncryptionMode.Implicit;
+            await client.Connect(ct);
+        }
+
         try
         {
             var pwd = await client.GetWorkingDirectory(ct);
-            var proto = useTls ? (port == 990 ? "FTPS (implicite)" : "FTPS (TLS explicite)") : "FTP";
+            var proto = useTls
+                ? (client.Config.EncryptionMode == FtpEncryptionMode.Implicit ? "FTPS (implicite)" : "FTPS (TLS/SSL explicite)")
+                : "FTP";
             var details = $"Répertoire de démarrage : {pwd}";
 
             if (!string.IsNullOrWhiteSpace(remotePath))

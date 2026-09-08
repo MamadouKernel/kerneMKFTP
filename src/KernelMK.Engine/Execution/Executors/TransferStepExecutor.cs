@@ -250,9 +250,19 @@ public class TransferStepExecutor : IStepExecutor
         {
             client.Config.EncryptionMode = FtpEncryptionMode.Explicit;
             client.Config.ValidateAnyCertificate = true;
+            client.Config.DataConnectionEncryption = true;
+            client.Config.SslProtocols = System.Security.Authentication.SslProtocols.None;
         }
 
-        await client.Connect(ct);
+        try
+        {
+            await client.Connect(ct);
+        }
+        catch (Exception) when ((useTls || config.UseTls) && port == 990)
+        {
+            client.Config.EncryptionMode = FtpEncryptionMode.Implicit;
+            await client.Connect(ct);
+        }
 
         try
         {
