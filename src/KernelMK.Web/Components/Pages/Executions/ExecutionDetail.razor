@@ -1,4 +1,6 @@
 @page "/executions/{ExecutionId:guid}"
+@page "/executions/{ExecutionId:guid}/detail"
+@page "/executions/detail/{ExecutionId:guid}"
 @rendermode InteractiveServer
 @attribute [Authorize(Roles = "Administrateur,Superviseur,Exploitant,Developpeur,Auditeur")]
 @using Microsoft.EntityFrameworkCore

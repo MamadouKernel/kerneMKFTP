@@ -1,4 +1,4 @@
-﻿@using KernelMK.Web.Components.Account.Shared
+@using KernelMK.Web.Components.Account.Shared
 <Router AppAssembly="typeof(Program).Assembly">
     <Found Context="routeData">
         <AuthorizeRouteView RouteData="routeData" DefaultLayout="typeof(Layout.MainLayout)">
@@ -8,4 +8,25 @@
         </AuthorizeRouteView>
         <FocusOnNavigate RouteData="routeData" Selector="h1" />
     </Found>
+    <NotFound>
+        <LayoutView Layout="typeof(Layout.MainLayout)">
+            <div class="max-w-xl mx-auto text-center py-16 px-4">
+                <div class="h-16 w-16 mx-auto mb-4 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center border border-amber-200 shadow-sm">
+                    <svg class="h-8 w-8" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" />
+                    </svg>
+                </div>
+                <h1 class="text-2xl font-bold text-slate-800 tracking-tight">Page non trouvée (404)</h1>
+                <p class="text-sm text-slate-500 mt-2 mb-6">L'adresse demandée n'existe pas ou a été déplacée.</p>
+                <div class="flex items-center justify-center gap-3">
+                    <a href="" class="kmk-btn-primary text-xs py-2 px-4 shadow-sm">
+                        Retour au tableau de bord
+                    </a>
+                    <a href="jobs" class="kmk-btn-secondary text-xs py-2 px-4">
+                        Voir les jobs
+                    </a>
+                </div>
+            </div>
+        </LayoutView>
+    </NotFound>
 </Router>
