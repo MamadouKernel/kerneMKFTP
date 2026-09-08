@@ -16,6 +16,7 @@ public class JobRunner : IJobRunner
     private readonly IDbContextFactory<AppDbContext> _dbFactory;
     private readonly StepExecutorFactory _executorFactory;
     private readonly ConcurrencyGate _concurrencyGate;
+    private readonly IJobExecutionCoordinator _coordinator;
     private readonly NotificationDispatcher _notifications;
     private readonly CredentialProtector _credentialProtector;
     private readonly ILogger<JobRunner> _logger;
@@ -24,6 +25,7 @@ public class JobRunner : IJobRunner
         IDbContextFactory<AppDbContext> dbFactory,
         StepExecutorFactory executorFactory,
         ConcurrencyGate concurrencyGate,
+        IJobExecutionCoordinator coordinator,
         NotificationDispatcher notifications,
         IDataProtectionProvider dataProtectionProvider,
         ILogger<JobRunner> logger)
@@ -31,6 +33,7 @@ public class JobRunner : IJobRunner
         _dbFactory = dbFactory;
         _executorFactory = executorFactory;
         _concurrencyGate = concurrencyGate;
+        _coordinator = coordinator;
         _notifications = notifications;
         _credentialProtector = new CredentialProtector(dataProtectionProvider);
         _logger = logger;
@@ -73,14 +76,17 @@ public class JobRunner : IJobRunner
         job.LastStatus = JobStatus.EnCours;
         await db.SaveChangesAsync(cancellationToken);
 
+        using var runCts = _coordinator.RegisterExecution(jobId, execution.Id, cancellationToken);
+
         try
         {
-            using var jobTimeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            using var jobTimeoutCts = CancellationTokenSource.CreateLinkedTokenSource(runCts.Token);
             jobTimeoutCts.CancelAfter(TimeSpan.FromSeconds(job.TimeoutSeconds));
 
             var maxAttempts = Math.Max(1, job.MaxRetries + 1);
             bool overallSuccess = false;
             bool timedOut = false;
+            bool userCanceled = false;
 
             for (var attempt = 1; attempt <= maxAttempts && !overallSuccess; attempt++)
             {
@@ -89,47 +95,95 @@ public class JobRunner : IJobRunner
                 {
                     overallSuccess = await RunStepsAsync(job, execution, db, jobTimeoutCts.Token);
                 }
-                catch (OperationCanceledException) when (jobTimeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                catch (OperationCanceledException) when (runCts.IsCancellationRequested && !jobTimeoutCts.IsCancellationRequested)
                 {
-                    timedOut = true;
+                    userCanceled = true;
+                    break;
+                }
+                catch (OperationCanceledException) when (jobTimeoutCts.IsCancellationRequested)
+                {
+                    if (runCts.IsCancellationRequested)
+                    {
+                        userCanceled = true;
+                    }
+                    else
+                    {
+                        timedOut = true;
+                    }
                     break;
                 }
 
                 if (!overallSuccess && attempt < maxAttempts)
                 {
-                    await Task.Delay(TimeSpan.FromSeconds(job.RetryDelaySeconds), cancellationToken);
+                    try
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(job.RetryDelaySeconds), runCts.Token);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        userCanceled = true;
+                        break;
+                    }
                 }
             }
 
             execution.FinishedAt = DateTime.UtcNow;
-            execution.Status = timedOut ? JobStatus.Echec : (overallSuccess ? JobStatus.Succes : JobStatus.Echec);
-            execution.Message = timedOut
-                ? $"Timeout dépassé ({job.TimeoutSeconds}s)."
-                : (overallSuccess ? "Exécution terminée avec succès." : "Exécution terminée en échec après reprises.");
-            execution.ReturnCode = overallSuccess ? 0 : 1;
-
-            job.LastStatus = execution.Status;
-            await db.SaveChangesAsync(cancellationToken);
-
-            if (timedOut)
+            if (userCanceled)
             {
-                await _notifications.DispatchAsync(job, NotificationEvent.Timeout, execution);
-            }
-            else if (overallSuccess)
-            {
-                await _notifications.DispatchAsync(job, NotificationEvent.Succes, execution);
+                execution.Status = JobStatus.Annule;
+                execution.Message = "Exécution arrêtée manuellement par l'opérateur.";
+                execution.ReturnCode = -1;
+                job.LastStatus = JobStatus.Annule;
             }
             else
             {
-                await _notifications.DispatchAsync(job, NotificationEvent.Echec, execution);
+                execution.Status = timedOut ? JobStatus.Echec : (overallSuccess ? JobStatus.Succes : JobStatus.Echec);
+                execution.Message = timedOut
+                    ? $"Timeout dépassé ({job.TimeoutSeconds}s)."
+                    : (overallSuccess ? "Exécution terminée avec succès." : "Exécution terminée en échec après reprises.");
+                execution.ReturnCode = overallSuccess ? 0 : 1;
+                job.LastStatus = execution.Status;
             }
 
-            await TriggerDependentJobsAsync(jobId, execution.Status, cancellationToken);
+            await db.SaveChangesAsync(CancellationToken.None);
 
+            if (!userCanceled)
+            {
+                if (timedOut)
+                {
+                    await _notifications.DispatchAsync(job, NotificationEvent.Timeout, execution);
+                }
+                else if (overallSuccess)
+                {
+                    await _notifications.DispatchAsync(job, NotificationEvent.Succes, execution);
+                }
+                else
+                {
+                    await _notifications.DispatchAsync(job, NotificationEvent.Echec, execution);
+                }
+
+                await TriggerDependentJobsAsync(jobId, execution.Status, cancellationToken);
+            }
+
+            return execution;
+        }
+        catch (OperationCanceledException) when (runCts.IsCancellationRequested)
+        {
+            execution.FinishedAt = DateTime.UtcNow;
+            execution.Status = JobStatus.Annule;
+            execution.Message = "Exécution arrêtée manuellement par l'opérateur.";
+            execution.ReturnCode = -1;
+            job.LastStatus = JobStatus.Annule;
+            try
+            {
+                await db.SaveChangesAsync(CancellationToken.None);
+            }
+            catch { }
             return execution;
         }
         finally
         {
+            _coordinator.UnregisterExecution(jobId, execution.Id);
             _concurrencyGate.Exit(jobId);
         }
     }
@@ -269,7 +323,7 @@ public class JobRunner : IJobRunner
         }
     }
 
-    private async Task<(string? Username, string? Secret)?> ResolveCredentialAsync(JobStep step, AppDbContext db, CancellationToken ct)
+    private async Task<(string? Username, string? Secret, string? Host, int? Port)?> ResolveCredentialAsync(JobStep step, AppDbContext db, CancellationToken ct)
     {
         if (step.CredentialId is null) return null;
 
@@ -277,6 +331,6 @@ public class JobRunner : IJobRunner
         if (credential is null) return null;
 
         var secret = _credentialProtector.Unprotect(credential.EncryptedSecret);
-        return (credential.Username, secret);
+        return (credential.Username, secret, credential.Host, credential.Port);
     }
 }

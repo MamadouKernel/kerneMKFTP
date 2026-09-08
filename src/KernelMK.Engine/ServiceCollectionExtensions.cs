@@ -28,10 +28,13 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<StepExecutorFactory>();
 
         services.AddSingleton(new ConcurrencyGate(maxParallelJobs: configuration.GetValue("Engine:MaxParallelJobs", 20)));
+        services.AddSingleton<IJobExecutionCoordinator, JobExecutionCoordinator>();
         services.AddScoped<NotificationDispatcher>();
         services.AddScoped<AuditService>();
         services.AddScoped<BackupService>();
         services.AddScoped<AssistantService>();
+        services.AddScoped<ConnectionTestService>();
+        services.AddScoped<RemoteFileBrowserService>();
         services.AddScoped<IJobRunner, JobRunner>();
 
         services.AddHostedService<JobSchedulerService>();

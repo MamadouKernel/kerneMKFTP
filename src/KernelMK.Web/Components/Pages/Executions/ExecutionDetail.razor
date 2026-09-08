@@ -2,82 +2,453 @@
 @rendermode InteractiveServer
 @attribute [Authorize(Roles = "Administrateur,Superviseur,Exploitant,Developpeur,Auditeur")]
 @using Microsoft.EntityFrameworkCore
+@using KernelMK.Engine.Workflow
 @inject IDbContextFactory<AppDbContext> DbFactory
+@inject IJobExecutionCoordinator ExecutionCoordinator
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
 
 <PageTitle>Détail d'exécution · kernelMK</PageTitle>
 
 @if (_loading)
 {
-    <p class="text-sm text-slate-500">Chargement...</p>
+    <div class="flex items-center justify-center py-20">
+        <div class="flex flex-col items-center gap-3">
+            <div class="h-8 w-8 animate-spin rounded-full border-4 border-brand-600 border-t-transparent"></div>
+            <p class="text-sm font-medium text-slate-500">Chargement des détails de l'exécution...</p>
+        </div>
+    </div>
 }
 else if (_execution is null)
 {
-    <p class="text-sm text-slate-500">Exécution introuvable.</p>
+    <div class="kmk-card p-12 text-center">
+        <div class="h-12 w-12 rounded-full bg-slate-100 text-slate-400 mx-auto flex items-center justify-center mb-3">
+            <svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+        </div>
+        <h3 class="text-slate-800 font-semibold mb-1">Exécution introuvable</h3>
+        <p class="text-sm text-slate-500 mb-4">L'exécution demandée n'existe pas ou a été archivée.</p>
+        <a href="executions" class="kmk-btn-secondary">Retour à l'historique</a>
+    </div>
 }
 else
 {
-    <h1 class="mb-6">Exécution : @_execution.Job?.Name</h1>
+    <!-- Breadcrumb & Header -->
+    <div class="mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div>
+            <nav class="flex items-center gap-2 text-xs text-slate-400 mb-2">
+                <a href="executions" class="hover:text-slate-600 transition-colors">Historique</a>
+                <span>/</span>
+                @if (_execution.Job is not null)
+                {
+                    <a href="jobs/@_execution.JobId/edit" class="hover:text-slate-600 transition-colors">@_execution.Job.Name</a>
+                    <span>/</span>
+                }
+                <span class="text-slate-600 font-mono">@_execution.Id.ToString()[..8]</span>
+            </nav>
+            <div class="flex items-center gap-3">
+                <h1 class="text-2xl font-bold text-slate-900">@(_execution.Job?.Name ?? "Job sans nom")</h1>
+                <span class="@StatusBadge(_execution.Status) px-3 py-1 text-xs font-semibold rounded-full flex items-center gap-1.5">
+                    @if (_execution.Status == JobStatus.EnCours)
+                    {
+                        <span class="h-2 w-2 rounded-full bg-amber-500 animate-ping"></span>
+                    }
+                    else if (_execution.Status == JobStatus.Succes)
+                    {
+                        <span class="h-2 w-2 rounded-full bg-emerald-500"></span>
+                    }
+                    else if (_execution.Status == JobStatus.Echec)
+                    {
+                        <span class="h-2 w-2 rounded-full bg-red-500"></span>
+                    }
+                    @_execution.Status
+                </span>
+            </div>
+        </div>
 
-    <div class="kmk-card mb-6">
-        <div class="kmk-card-body grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3 text-sm">
-            <div class="flex justify-between border-b border-slate-100 pb-2"><span class="text-slate-500">Statut</span><span class="@StatusBadge(_execution.Status)">@_execution.Status</span></div>
-            <div class="flex justify-between border-b border-slate-100 pb-2"><span class="text-slate-500">Déclenché par</span><span class="font-medium">@_execution.TriggeredBy</span></div>
-            <div class="flex justify-between border-b border-slate-100 pb-2"><span class="text-slate-500">Serveur</span><span class="font-medium">@_execution.ServerName</span></div>
-            <div class="flex justify-between border-b border-slate-100 pb-2"><span class="text-slate-500">Compte</span><span class="font-medium">@_execution.ExecutionAccount</span></div>
-            <div class="flex justify-between border-b border-slate-100 pb-2"><span class="text-slate-500">Début</span><span class="font-medium">@_execution.StartedAt.ToLocalTime().ToString("G")</span></div>
-            <div class="flex justify-between border-b border-slate-100 pb-2"><span class="text-slate-500">Fin</span><span class="font-medium">@(_execution.FinishedAt?.ToLocalTime().ToString("G") ?? "-")</span></div>
-            <div class="flex justify-between border-b border-slate-100 pb-2"><span class="text-slate-500">Durée</span><span class="font-medium">@(_execution.Duration?.ToString(@"hh\:mm\:ss") ?? "-")</span></div>
-            <div class="flex justify-between border-b border-slate-100 pb-2"><span class="text-slate-500">Code retour</span><span class="font-medium">@_execution.ReturnCode</span></div>
-            <div class="sm:col-span-2 flex justify-between"><span class="text-slate-500">Message</span><span class="font-medium text-right">@_execution.Message</span></div>
+        <div class="flex items-center gap-2">
+            @if (_execution.Status == JobStatus.EnCours || ExecutionCoordinator.IsExecutionRunning(_execution.Id))
+            {
+                <button type="button" class="kmk-btn-stop text-sm flex items-center gap-1.5 animate-pulse" @onclick="StopExecution">
+                    <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 24 24"><path d="M5.25 5.25h13.5v13.5H5.25z"/></svg>
+                    <span>Arrêter l'exécution</span>
+                </button>
+            }
+            <a href="executions" class="kmk-btn-secondary text-sm">
+                <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" /></svg>
+                Historique
+            </a>
+            @if (_execution.Job is not null)
+            {
+                <a href="jobs/@_execution.JobId/edit" class="kmk-btn-secondary text-sm">
+                    <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L6.832 19.82a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Zm0 0L19.5 7.125" /></svg>
+                    Modifier le job
+                </a>
+            }
+            <a href="explorer" class="kmk-btn-primary text-sm flex items-center gap-1.5">
+                <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z" /></svg>
+                Explorateur distant
+            </a>
         </div>
     </div>
 
-    <h3 class="mb-3">Étapes exécutées</h3>
-    <div class="kmk-card overflow-x-auto mb-6">
-        <table>
-            <thead><tr><th>Ordre</th><th>Étape</th><th>Tentative</th><th>Statut</th><th>Durée</th><th>Sortie</th><th>Erreur</th></tr></thead>
-            <tbody>
-                @foreach (var log in _execution.StepLogs.OrderBy(l => l.Order).ThenBy(l => l.AttemptNumber))
-                {
-                    <tr>
-                        <td class="text-slate-500">@log.Order</td>
-                        <td class="font-medium">@log.StepName</td>
-                        <td class="text-slate-500">@log.AttemptNumber</td>
-                        <td><span class="@StepStatusBadge(log.Status)">@log.Status</span></td>
-                        <td class="text-slate-500">@(log.Duration?.ToString(@"hh\:mm\:ss") ?? "-")</td>
-                        <td><pre class="text-xs whitespace-pre-wrap text-slate-600 max-w-xs">@log.Output</pre></td>
-                        <td><pre class="text-xs whitespace-pre-wrap text-red-600 max-w-xs">@log.ErrorOutput</pre></td>
-                    </tr>
-                }
-            </tbody>
-        </table>
+    <!-- Diagnostic Intelligent (affiché si échec ou erreur) -->
+    @if (_diagnostic is not null)
+    {
+        <div class="mb-6 rounded-2xl border border-rose-200 bg-gradient-to-r from-rose-50/80 via-white to-amber-50/50 p-5 shadow-sm">
+            <div class="flex items-start gap-4">
+                <div class="h-10 w-10 shrink-0 rounded-xl bg-gradient-to-br from-purple-500 to-indigo-600 text-white flex items-center justify-center shadow-md shadow-indigo-500/20 text-lg">
+                    🪄
+                </div>
+                <div class="flex-1 min-w-0">
+                    <div class="flex flex-wrap items-center gap-2 mb-1">
+                        <span class="text-xs font-bold uppercase tracking-wider text-indigo-700 bg-indigo-100/70 px-2 py-0.5 rounded-full">Diagnostic Intelligent</span>
+                        <span class="text-xs font-semibold px-2 py-0.5 rounded-full @(_diagnostic.Severity == DiagnosticSeverity.Critical ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700")">
+                            @_diagnostic.Category
+                        </span>
+                    </div>
+                    <h3 class="text-base font-bold text-slate-900 mb-1">@_diagnostic.Title</h3>
+                    <p class="text-sm text-slate-700 mb-3 leading-relaxed">@_diagnostic.Explanation</p>
+
+                    <div class="bg-white/80 rounded-xl border border-slate-200/80 p-3.5 mb-3 text-xs">
+                        <div class="font-semibold text-slate-800 mb-1 flex items-center gap-1.5">
+                            <svg class="h-4 w-4 text-emerald-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
+                            Action recommandée :
+                        </div>
+                        <p class="text-slate-600 leading-relaxed">@_diagnostic.Recommendation</p>
+                    </div>
+
+                    @if (_diagnostic.ActionLinks.Count > 0)
+                    {
+                        <div class="flex flex-wrap gap-2">
+                            @foreach (var link in _diagnostic.ActionLinks)
+                            {
+                                <a href="@link.Url" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-sm transition-colors">
+                                    <span>@link.Label</span>
+                                    <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" /></svg>
+                                </a>
+                            }
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    }
+
+    <!-- Visual Workflow Pipeline Stepper -->
+    <div class="kmk-card mb-6 overflow-hidden">
+        <div class="kmk-card-header flex items-center justify-between">
+            <div class="flex items-center gap-2">
+                <svg class="h-5 w-5 text-brand-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25a2.25 2.25 0 0 1-2.25 2.25H6a2.25 2.25 0 0 1-2.25-2.25V6ZM3.75 15.75A2.25 2.25 0 0 1 6 13.5h2.25a2.25 2.25 0 0 1 2.25 2.25V18a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 18v-2.25ZM13.5 6a2.25 2.25 0 0 1 2.25-2.25H18A2.25 2.25 0 0 1 20.25 6v2.25A2.25 2.25 0 0 1 18 10.5h-2.25a2.25 2.25 0 0 1-2.25-2.25V6ZM13.5 15.75a2.25 2.25 0 0 1 2.25-2.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-2.25A2.25 2.25 0 0 1 13.5 18v-2.25Z" /></svg>
+                <span>Pipeline d'exécution des étapes</span>
+            </div>
+            <span class="text-xs text-slate-500 font-medium">
+                @_stepLogs.Count(s => s.Status == StepExecutionStatus.Succes) / @_stepLogs.Count étape(s) terminée(s) avec succès
+            </span>
+        </div>
+        <div class="kmk-card-body p-6">
+            @if (_stepLogs.Count == 0)
+            {
+                <p class="text-sm text-slate-400 text-center py-4">Aucune étape enregistrée pour cette exécution.</p>
+            }
+            else
+            {
+                <div class="relative flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
+                    @for (int i = 0; i < _stepLogs.Count; i++)
+                    {
+                        var step = _stepLogs[i];
+                        var isLast = i == _stepLogs.Count - 1;
+                        var isSelected = _selectedStepId == step.Id;
+
+                        <div class="flex-1 flex flex-col items-center relative group cursor-pointer"
+                             @onclick="() => SelectStep(step.Id)">
+                            
+                            <!-- Connecting line between nodes (desktop) -->
+                            @if (!isLast)
+                            {
+                                <div class="hidden md:block absolute top-5 left-1/2 w-full h-0.5 z-0 @(step.Status == StepExecutionStatus.Succes ? "bg-emerald-400" : (step.Status == StepExecutionStatus.Echec ? "bg-rose-400" : "bg-slate-200"))"></div>
+                            }
+
+                            <!-- Stepper Node Circle -->
+                            <div class="relative z-10 h-10 w-10 rounded-full flex items-center justify-center font-bold text-sm shadow-sm transition-all duration-200 @(isSelected ? "ring-4 ring-brand-300 scale-110" : "") @StepNodeClass(step.Status)">
+                                @if (step.Status == StepExecutionStatus.Succes)
+                                {
+                                    <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>
+                                }
+                                else if (step.Status == StepExecutionStatus.Echec)
+                                {
+                                    <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
+                                }
+                                else if (step.Status == StepExecutionStatus.EnCours)
+                                {
+                                    <div class="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
+                                }
+                                else if (step.Status == StepExecutionStatus.Timeout)
+                                {
+                                    <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
+                                }
+                                else
+                                {
+                                    <span>@(i + 1)</span>
+                                }
+                            </div>
+
+                            <!-- Step Title & Meta -->
+                            <div class="mt-2 text-center max-w-[140px]">
+                                <div class="text-xs font-semibold text-slate-800 truncate" title="@step.StepName">@step.StepName</div>
+                                <div class="text-[11px] text-slate-400 mt-0.5">
+                                    @(step.Duration?.ToString(@"mm\:ss") ?? "-")
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
     </div>
 
-    <a class="kmk-btn-secondary" href="executions">← Retour</a>
+    <!-- Execution Details Metadata Grid -->
+    <div class="kmk-card mb-6">
+        <div class="kmk-card-header flex items-center justify-between">
+            <span>Métadonnées d'exécution</span>
+            <span class="font-mono text-xs text-slate-400">UUID: @_execution.Id</span>
+        </div>
+        <div class="kmk-card-body grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
+            <div class="bg-slate-50 rounded-xl p-3.5 border border-slate-100">
+                <span class="text-xs text-slate-400 block mb-1">Déclenché par</span>
+                <span class="font-semibold text-slate-800">@_execution.TriggeredBy</span>
+            </div>
+            <div class="bg-slate-50 rounded-xl p-3.5 border border-slate-100">
+                <span class="text-xs text-slate-400 block mb-1">Serveur d'exécution</span>
+                <span class="font-semibold text-slate-800">@(_execution.ServerName ?? Environment.MachineName)</span>
+            </div>
+            <div class="bg-slate-50 rounded-xl p-3.5 border border-slate-100">
+                <span class="text-xs text-slate-400 block mb-1">Compte système</span>
+                <span class="font-semibold text-slate-800">@(_execution.ExecutionAccount ?? Environment.UserName)</span>
+            </div>
+            <div class="bg-slate-50 rounded-xl p-3.5 border border-slate-100">
+                <span class="text-xs text-slate-400 block mb-1">Durée totale</span>
+                <span class="font-semibold text-slate-800">@(_execution.Duration?.ToString(@"hh\:mm\:ss") ?? "-")</span>
+            </div>
+            <div class="bg-slate-50 rounded-xl p-3.5 border border-slate-100">
+                <span class="text-xs text-slate-400 block mb-1">Date de début</span>
+                <span class="font-medium text-slate-700">@_execution.StartedAt.ToLocalTime().ToString("G")</span>
+            </div>
+            <div class="bg-slate-50 rounded-xl p-3.5 border border-slate-100">
+                <span class="text-xs text-slate-400 block mb-1">Date de fin</span>
+                <span class="font-medium text-slate-700">@(_execution.FinishedAt?.ToLocalTime().ToString("G") ?? "-")</span>
+            </div>
+            <div class="bg-slate-50 rounded-xl p-3.5 border border-slate-100">
+                <span class="text-xs text-slate-400 block mb-1">Code retour</span>
+                <span class="font-semibold @(_execution.ReturnCode == 0 ? "text-emerald-600" : (_execution.ReturnCode is null ? "text-slate-400" : "text-rose-600"))">
+                    @(_execution.ReturnCode?.ToString() ?? "-")
+                </span>
+            </div>
+            <div class="bg-slate-50 rounded-xl p-3.5 border border-slate-100">
+                <span class="text-xs text-slate-400 block mb-1">Message d'état</span>
+                <span class="font-medium text-slate-700 truncate block" title="@_execution.Message">@(_execution.Message ?? "Aucun message")</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Step Logs Detail List with Dark Terminal -->
+    <div class="flex items-center justify-between mb-3">
+        <h2 class="text-lg font-bold text-slate-900">Détails des étapes exécutées</h2>
+        <span class="text-xs text-slate-500">Cliquez sur une étape pour consulter sa trace console</span>
+    </div>
+
+    <div class="space-y-4 mb-6">
+        @foreach (var log in _stepLogs)
+        {
+            var isSelected = _selectedStepId == log.Id;
+            <div id="step-card-@log.Id" class="kmk-card transition-all @(isSelected ? "ring-2 ring-brand-500 shadow-md" : "")">
+                <div class="kmk-card-header flex items-center justify-between cursor-pointer py-3.5"
+                     @onclick="() => SelectStep(log.Id)">
+                    <div class="flex items-center gap-3">
+                        <span class="h-7 w-7 rounded-lg flex items-center justify-center font-bold text-xs @StepBadgeOrderClass(log.Status)">
+                            #@log.Order
+                        </span>
+                        <div>
+                            <div class="font-bold text-slate-900 text-sm">@log.StepName</div>
+                            <div class="text-[11px] text-slate-400 flex items-center gap-3">
+                                <span>Tentative : @log.AttemptNumber</span>
+                                <span>•</span>
+                                <span>Début : @log.StartedAt.ToLocalTime().ToString("T")</span>
+                                @if (log.FinishedAt.HasValue)
+                                {
+                                    <span>•</span>
+                                    <span>Fin : @log.FinishedAt.Value.ToLocalTime().ToString("T")</span>
+                                }
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center gap-3">
+                        @if (!string.IsNullOrEmpty(log.FilesProcessedCsv))
+                        {
+                            <span class="px-2 py-0.5 text-xs font-semibold rounded bg-sky-50 text-sky-700 border border-sky-200">
+                                📁 @log.FilesProcessedCsv.Split(',', StringSplitOptions.RemoveEmptyEntries).Length fichier(s)
+                            </span>
+                        }
+                        <span class="text-xs font-medium text-slate-500">
+                            @(log.Duration?.ToString(@"hh\:mm\:ss") ?? "-")
+                        </span>
+                        <span class="@StepStatusBadge(log.Status)">@log.Status</span>
+                        <svg class="h-4 w-4 text-slate-400 transition-transform @(isSelected ? "rotate-180" : "")" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+                        </svg>
+                    </div>
+                </div>
+
+                @if (isSelected)
+                {
+                    <div class="kmk-card-body border-t border-slate-100 p-4 space-y-4">
+                        @if (!string.IsNullOrWhiteSpace(log.FilesProcessedCsv))
+                        {
+                            <div>
+                                <label class="text-xs font-bold uppercase tracking-wider text-slate-500 block mb-1">Fichiers traités</label>
+                                <div class="flex flex-wrap gap-1.5">
+                                    @foreach (var file in log.FilesProcessedCsv.Split(',', StringSplitOptions.RemoveEmptyEntries))
+                                    {
+                                        <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-slate-100 text-slate-700 font-mono text-xs border border-slate-200">
+                                            <svg class="h-3 w-3 text-slate-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" /></svg>
+                                            @file.Trim()
+                                        </span>
+                                    }
+                                </div>
+                            </div>
+                        }
+
+                        <!-- Output Terminal -->
+                        @if (!string.IsNullOrWhiteSpace(log.Output))
+                        {
+                            <div>
+                                <div class="flex items-center justify-between mb-1.5">
+                                    <label class="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                                        <span class="h-2 w-2 rounded-full bg-emerald-500"></span>
+                                        Sortie standard (Console)
+                                    </label>
+                                    <button class="text-xs text-brand-600 hover:text-brand-800 font-medium"
+                                            @onclick="() => CopyToClipboard(log.Output)">
+                                        Copier la sortie
+                                    </button>
+                                </div>
+                                <pre class="bg-slate-950 text-slate-100 font-mono text-xs p-4 rounded-xl overflow-x-auto max-h-64 leading-relaxed border border-slate-800 shadow-inner">@log.Output</pre>
+                            </div>
+                        }
+
+                        <!-- Error Terminal -->
+                        @if (!string.IsNullOrWhiteSpace(log.ErrorOutput))
+                        {
+                            <div>
+                                <div class="flex items-center justify-between mb-1.5">
+                                    <label class="text-xs font-bold uppercase tracking-wider text-rose-600 flex items-center gap-1.5">
+                                        <span class="h-2 w-2 rounded-full bg-rose-500"></span>
+                                        Erreurs &amp; Traces d'exception
+                                    </label>
+                                    <button class="text-xs text-rose-600 hover:text-rose-800 font-medium"
+                                            @onclick="() => CopyToClipboard(log.ErrorOutput)">
+                                        Copier l'erreur
+                                    </button>
+                                </div>
+                                <pre class="bg-rose-950/40 text-rose-200 font-mono text-xs p-4 rounded-xl overflow-x-auto max-h-64 leading-relaxed border border-rose-900/50 shadow-inner">@log.ErrorOutput</pre>
+                            </div>
+                        }
+
+                        @if (string.IsNullOrWhiteSpace(log.Output) && string.IsNullOrWhiteSpace(log.ErrorOutput))
+                        {
+                            <p class="text-xs text-slate-400 italic">Aucune sortie textuelle produite par cette étape.</p>
+                        }
+                    </div>
+                }
+            </div>
+        }
+    </div>
+
+    @if (_copiedToast)
+    {
+        <div class="fixed bottom-6 right-6 z-50 bg-slate-900 text-white px-4 py-2 rounded-xl text-xs font-medium shadow-lg flex items-center gap-2 animate-bounce">
+            <svg class="h-4 w-4 text-emerald-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>
+            Texte copié dans le presse-papiers !
+        </div>
+    }
 }
 
 @code {
     [Parameter] public Guid ExecutionId { get; set; }
     private JobExecution? _execution;
+    private List<StepExecutionLog> _stepLogs = new();
+    private Guid? _selectedStepId;
     private bool _loading = true;
+    private bool _copiedToast = false;
+    private DiagnosticResult? _diagnostic;
 
     protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
     {
         await using var db = await DbFactory.CreateDbContextAsync();
         _execution = await db.JobExecutions
             .Include(e => e.Job)
             .Include(e => e.StepLogs)
             .FirstOrDefaultAsync(e => e.Id == ExecutionId);
+
+        if (_execution is not null)
+        {
+            _stepLogs = _execution.StepLogs
+                .OrderBy(l => l.Order)
+                .ThenBy(l => l.AttemptNumber)
+                .ToList();
+
+            var failedStep = _stepLogs.FirstOrDefault(s => s.Status == StepExecutionStatus.Echec);
+            _selectedStepId = failedStep?.Id ?? _stepLogs.LastOrDefault()?.Id;
+            _diagnostic = AnalyzeExecution(_execution, _stepLogs);
+        }
+
         _loading = false;
+        StateHasChanged();
+    }
+
+    private async Task StopExecution()
+    {
+        if (_execution is null) return;
+        ExecutionCoordinator.TryStopExecution(_execution.Id);
+        ExecutionCoordinator.TryStopJob(_execution.JobId);
+        await Task.Delay(400);
+        await LoadAsync();
+    }
+
+    private void SelectStep(Guid stepId)
+    {
+        _selectedStepId = _selectedStepId == stepId ? null : stepId;
+    }
+
+    private async Task CopyToClipboard(string text)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("kernelMK.copyToClipboard", text);
+            _copiedToast = true;
+            StateHasChanged();
+            await Task.Delay(2000);
+            _copiedToast = false;
+            StateHasChanged();
+        }
+        catch
+        {
+            // Ignore clipboard errors
+        }
     }
 
     private static string StatusBadge(JobStatus status) => status switch
     {
-        JobStatus.Succes => "kmk-badge-success",
-        JobStatus.Echec => "kmk-badge-danger",
-        JobStatus.EnCours => "kmk-badge-warning",
-        JobStatus.Annule => "kmk-badge-neutral",
-        _ => "kmk-badge-neutral"
+        JobStatus.Succes => "bg-emerald-50 text-emerald-700 border border-emerald-200",
+        JobStatus.Echec => "bg-rose-50 text-rose-700 border border-rose-200",
+        JobStatus.EnCours => "bg-amber-50 text-amber-700 border border-amber-200",
+        JobStatus.Annule => "bg-slate-100 text-slate-700 border border-slate-200",
+        _ => "bg-slate-100 text-slate-700 border border-slate-200"
     };
 
     private static string StepStatusBadge(StepExecutionStatus status) => status switch
@@ -88,4 +459,186 @@ else
         StepExecutionStatus.Annule or StepExecutionStatus.Ignore => "kmk-badge-neutral",
         _ => "kmk-badge-neutral"
     };
+
+    private static string StepNodeClass(StepExecutionStatus status) => status switch
+    {
+        StepExecutionStatus.Succes => "bg-emerald-600 text-white shadow-emerald-600/30",
+        StepExecutionStatus.Echec => "bg-rose-600 text-white shadow-rose-600/30",
+        StepExecutionStatus.EnCours => "bg-amber-500 text-white shadow-amber-500/30 animate-pulse",
+        StepExecutionStatus.Timeout => "bg-amber-600 text-white",
+        _ => "bg-slate-200 text-slate-600"
+    };
+
+    private static string StepBadgeOrderClass(StepExecutionStatus status) => status switch
+    {
+        StepExecutionStatus.Succes => "bg-emerald-100 text-emerald-700",
+        StepExecutionStatus.Echec => "bg-rose-100 text-rose-700",
+        StepExecutionStatus.EnCours => "bg-amber-100 text-amber-700",
+        _ => "bg-slate-100 text-slate-700"
+    };
+
+    // Diagnostic intelligent de l'exécution
+    private DiagnosticResult? AnalyzeExecution(JobExecution execution, List<StepExecutionLog> steps)
+    {
+        if (execution.Status != JobStatus.Echec && !steps.Any(s => s.Status == StepExecutionStatus.Echec))
+        {
+            return null;
+        }
+
+        var allErrors = string.Join(" ", steps.Select(s => s.ErrorOutput ?? "") + " " + (execution.Message ?? ""));
+
+        // 1. Host vide / non défini
+        if (allErrors.Contains("Parameter 'host' cannot be empty", StringComparison.OrdinalIgnoreCase) ||
+            allErrors.Contains("host' cannot be empty", StringComparison.OrdinalIgnoreCase) ||
+            allErrors.Contains("ArgumentException: Parameter 'host'", StringComparison.OrdinalIgnoreCase))
+        {
+            return new DiagnosticResult
+            {
+                Category = "Configuration Réseau",
+                Severity = DiagnosticSeverity.Critical,
+                Title = "Paramètre d'hôte (Host) manquant ou non renseigné",
+                Explanation = "Le client de transfert (SFTP/FTP) a échoué car aucune adresse de serveur distant n'a été transmise.",
+                Recommendation = "Assurez-vous qu'un Credential avec un nom d'hôte valide (ex: 'stgmamsftp.blob.core.windows.net') est bien sélectionné sur l'étape du job, ou renseignez manuellement l'hôte distant dans la configuration de l'étape.",
+                ActionLinks = new()
+                {
+                    new("Modifier le job", $"jobs/{execution.JobId}/edit"),
+                    new("Vérifier les Credentials", "credentials")
+                }
+            };
+        }
+
+        // 2. Erreur d'authentification SSH / SFTP / FTP
+        if (allErrors.Contains("SshAuthenticationException", StringComparison.OrdinalIgnoreCase) ||
+            allErrors.Contains("Permission denied (publickey,password)", StringComparison.OrdinalIgnoreCase) ||
+            allErrors.Contains("Authentication failed", StringComparison.OrdinalIgnoreCase) ||
+            allErrors.Contains("530 User cannot log in", StringComparison.OrdinalIgnoreCase) ||
+            allErrors.Contains("530 Login incorrect", StringComparison.OrdinalIgnoreCase))
+        {
+            return new DiagnosticResult
+            {
+                Category = "Sécurité & Accès",
+                Severity = DiagnosticSeverity.Critical,
+                Title = "Échec d'authentification sur le serveur distant",
+                Explanation = "Le serveur a refusé les identifiants de connexion (nom d'utilisateur, mot de passe ou clé SSH privée).",
+                Recommendation = "Pour Azure Blob SFTP, le nom d'utilisateur doit être au format '<compte_stockage>.<conteneur>.<utilisateur>'. Vérifiez les identifiants configurés dans vos Credentials et lancez un test de connexion en direct.",
+                ActionLinks = new()
+                {
+                    new("Tester la connexion dans Credentials", "credentials"),
+                    new("Modifier le job", $"jobs/{execution.JobId}/edit")
+                }
+            };
+        }
+
+        // 3. Timeout / Réseau / Port fermé
+        if (allErrors.Contains("SocketException", StringComparison.OrdinalIgnoreCase) ||
+            allErrors.Contains("timed out", StringComparison.OrdinalIgnoreCase) ||
+            allErrors.Contains("No such host is known", StringComparison.OrdinalIgnoreCase) ||
+            allErrors.Contains("Connection refused", StringComparison.OrdinalIgnoreCase) ||
+            allErrors.Contains("A connection attempt failed", StringComparison.OrdinalIgnoreCase))
+        {
+            return new DiagnosticResult
+            {
+                Category = "Connectivité & Pare-feu",
+                Severity = DiagnosticSeverity.Critical,
+                Title = "Délai de connexion dépassé (Timeout / Port inaccessible)",
+                Explanation = "kernelMK n'a pas pu joindre le serveur distant sur le port spécifié (généralement le port 22 pour SFTP ou 21 pour FTP).",
+                Recommendation = "Si vous utilisez Azure Storage SFTP, assurez-vous que votre adresse IP publique actuelle est autorisée dans les règles de pare-feu du compte de stockage Azure. Vérifiez également que le serveur distant est en ligne et accessible.",
+                ActionLinks = new()
+                {
+                    new("Tester le serveur dans Credentials", "credentials"),
+                    new("Ouvrir l'Explorateur distant", "explorer")
+                }
+            };
+        }
+
+        // 4. Chemin distant introuvable
+        if (allErrors.Contains("SftpPathNotFoundException", StringComparison.OrdinalIgnoreCase) ||
+            allErrors.Contains("No such file", StringComparison.OrdinalIgnoreCase) ||
+            allErrors.Contains("550 File not found", StringComparison.OrdinalIgnoreCase) ||
+            allErrors.Contains("550 The system cannot find the file", StringComparison.OrdinalIgnoreCase))
+        {
+            return new DiagnosticResult
+            {
+                Category = "Chemin Distant",
+                Severity = DiagnosticSeverity.Warning,
+                Title = "Répertoire ou fichier distant introuvable",
+                Explanation = "Le chemin distant spécifié dans la configuration de l'étape n'existe pas ou n'est pas accessible avec les droits du compte distant.",
+                Recommendation = "Utilisez l'Explorateur Distant pour parcourir l'arborescence du serveur en direct et copier le chemin absolu exact.",
+                ActionLinks = new()
+                {
+                    new("Ouvrir l'Explorateur distant", "explorer"),
+                    new("Modifier le chemin du job", $"jobs/{execution.JobId}/edit")
+                }
+            };
+        }
+
+        // 5. Fichier local ou dossier introuvable
+        if (allErrors.Contains("DirectoryNotFoundException", StringComparison.OrdinalIgnoreCase) ||
+            allErrors.Contains("FileNotFoundException", StringComparison.OrdinalIgnoreCase))
+        {
+            return new DiagnosticResult
+            {
+                Category = "Système Local",
+                Severity = DiagnosticSeverity.Warning,
+                Title = "Dossier local ou fichier source manquant",
+                Explanation = "Le dossier local source ou de destination spécifié dans les paramètres de l'étape n'a pas été trouvé sur le disque du serveur.",
+                Recommendation = "Vérifiez que le chemin local existe bien et que le compte de service dispose des autorisations en lecture/écriture.",
+                ActionLinks = new()
+                {
+                    new("Modifier le job", $"jobs/{execution.JobId}/edit")
+                }
+            };
+        }
+
+        // 6. Conflit de verrou de fichier (IOException)
+        if (allErrors.Contains("used by another process", StringComparison.OrdinalIgnoreCase) ||
+            allErrors.Contains("cannot access the file because it is being used", StringComparison.OrdinalIgnoreCase))
+        {
+            return new DiagnosticResult
+            {
+                Category = "Verrouillage Fichier",
+                Severity = DiagnosticSeverity.Warning,
+                Title = "Fichier verrouillé par un autre processus",
+                Explanation = "Le fichier ne peut pas être lu, déplacé ou archivé car un flux est encore ouvert par une application externe.",
+                Recommendation = "Fermez les applications accédant au fichier ou vérifiez que le programme générateur a terminé son écriture avant le lancement du transfert.",
+                ActionLinks = new()
+                {
+                    new("Modifier le job", $"jobs/{execution.JobId}/edit")
+                }
+            };
+        }
+
+        // 7. Défaut générique
+        return new DiagnosticResult
+        {
+            Category = "Erreur d'Exécution",
+            Severity = DiagnosticSeverity.Critical,
+            Title = "Échec lors de l'exécution de l'étape",
+            Explanation = "Une anomalie s'est produite lors du traitement. Consultez le détail de l'erreur dans la console ci-dessous pour identifier la source précise.",
+            Recommendation = "Inspectez les traces d'exception et vérifiez les paramètres du job.",
+            ActionLinks = new()
+            {
+                new("Modifier le job", $"jobs/{execution.JobId}/edit"),
+                new("Ouvrir l'Explorateur distant", "explorer")
+            }
+        };
+    }
+
+    private class DiagnosticResult
+    {
+        public string Category { get; set; } = string.Empty;
+        public DiagnosticSeverity Severity { get; set; } = DiagnosticSeverity.Critical;
+        public string Title { get; set; } = string.Empty;
+        public string Explanation { get; set; } = string.Empty;
+        public string Recommendation { get; set; } = string.Empty;
+        public List<DiagnosticActionLink> ActionLinks { get; set; } = new();
+    }
+
+    private enum DiagnosticSeverity
+    {
+        Critical,
+        Warning
+    }
+
+    private record DiagnosticActionLink(string Label, string Url);
 }

@@ -1,66 +1,295 @@
 @page "/executions"
 @rendermode InteractiveServer
 @attribute [Authorize(Roles = "Administrateur,Superviseur,Exploitant,Developpeur,Auditeur")]
+@implements IDisposable
 @using Microsoft.EntityFrameworkCore
 @using KernelMK.Engine.Reporting
+@using KernelMK.Engine.Workflow
 @inject IDbContextFactory<AppDbContext> DbFactory
+@inject IJobExecutionCoordinator ExecutionCoordinator
 @inject IJSRuntime JS
 
-<PageTitle>Historique d'exécution · kernelMK</PageTitle>
+<PageTitle>Historique d'exécution · kernelMK · Côte d'Ivoire Terminal</PageTitle>
 
-<div class="flex items-center justify-between mb-6">
+<!-- Top Title Bar -->
+<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
     <div>
-        <h1>Historique d'exécution</h1>
-        <p class="text-sm text-slate-500 mt-1">Journal détaillé des exécutions, logs et résultats.</p>
+        <div class="flex items-center gap-3">
+            <h1 class="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight flex items-center gap-2.5">
+                <span class="h-9 w-9 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shadow-xs border border-indigo-100">
+                    <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6l4 2M3.284 9A8.25 8.25 0 1 1 3 12" />
+                    </svg>
+                </span>
+                Historique d'exécution
+            </h1>
+            <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                <span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+                Temps réel
+            </span>
+        </div>
+        <p class="text-xs sm:text-sm text-slate-500 mt-1">Journal détaillé des traitements, diagnostics et traces de logs.</p>
     </div>
-    <div class="flex gap-2">
-        <button class="kmk-btn-secondary" @onclick="ExportCsv">Export CSV</button>
-        <button class="kmk-btn-secondary" @onclick="ExportJson">Export JSON</button>
+
+    <div class="flex items-center gap-2">
+        <button type="button" class="kmk-btn-secondary text-xs py-2 px-3 flex items-center gap-1.5 shadow-xs" @onclick="ExportCsv">
+            <svg class="h-3.5 w-3.5 text-slate-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+            </svg>
+            <span>Export CSV</span>
+        </button>
+        <button type="button" class="kmk-btn-secondary text-xs py-2 px-3 flex items-center gap-1.5 shadow-xs" @onclick="ExportJson">
+            <svg class="h-3.5 w-3.5 text-slate-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M17.25 6.75 22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3-4.5 16.5" />
+            </svg>
+            <span>Export JSON</span>
+        </button>
+        <button type="button" class="kmk-btn-secondary text-xs py-2 px-3 flex items-center gap-1.5 shadow-xs" @onclick="RefreshAsync">
+            <svg class="h-3.5 w-3.5 text-slate-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+            </svg>
+            <span>Actualiser</span>
+        </button>
     </div>
 </div>
 
-<div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">
-    <select class="kmk-select" @bind="_filterJobId">
-        <option value="">Tous les jobs</option>
-        @foreach (var j in _jobs)
-        {
-            <option value="@j.Id">@j.Name</option>
-        }
-    </select>
-    <select class="kmk-select" @bind="_filterStatus">
-        <option value="">Tous les statuts</option>
-        @foreach (var s in Enum.GetValues<JobStatus>())
-        {
-            <option value="@s">@s</option>
-        }
-    </select>
+<!-- Stat Cards -->
+@if (!_loading)
+{
+    var totalCount = _executions.Count;
+    var successCount = _executions.Count(e => e.Status == JobStatus.Succes);
+    var failedCount = _executions.Count(e => e.Status == JobStatus.Echec);
+    var runningCount = _executions.Count(e => e.Status == JobStatus.EnCours);
+
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3.5 mb-6">
+        <div class="kmk-card p-4 flex items-center gap-3.5 hover:shadow-md transition-shadow">
+            <div class="h-11 w-11 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center shrink-0 border border-slate-200/80">
+                <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+                </svg>
+            </div>
+            <div>
+                <span class="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">Total Récent</span>
+                <span class="text-2xl font-bold text-slate-900 leading-none">@totalCount</span>
+            </div>
+        </div>
+
+        <div class="kmk-card p-4 flex items-center gap-3.5 hover:shadow-md transition-shadow">
+            <div class="h-11 w-11 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0 border border-emerald-200">
+                <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                </svg>
+            </div>
+            <div>
+                <span class="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">Succès</span>
+                <span class="text-2xl font-bold text-emerald-600 leading-none">@successCount</span>
+            </div>
+        </div>
+
+        <div class="kmk-card p-4 flex items-center gap-3.5 hover:shadow-md transition-shadow">
+            <div class="h-11 w-11 rounded-xl @(failedCount > 0 ? "bg-rose-50 text-rose-600 border border-rose-200" : "bg-slate-100 text-slate-400 border border-slate-200") flex items-center justify-center shrink-0">
+                <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+                </svg>
+            </div>
+            <div>
+                <span class="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">Échecs</span>
+                <span class="text-2xl font-bold @(failedCount > 0 ? "text-rose-600" : "text-slate-800") leading-none">@failedCount</span>
+            </div>
+        </div>
+
+        <div class="kmk-card p-4 flex items-center gap-3.5 hover:shadow-md transition-shadow">
+            <div class="h-11 w-11 rounded-xl @(runningCount > 0 ? "bg-indigo-50 text-indigo-600 border border-indigo-200 animate-pulse" : "bg-slate-100 text-slate-400 border border-slate-200") flex items-center justify-center shrink-0">
+                <svg class="h-5 w-5 @(runningCount > 0 ? "animate-spin" : "")" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+                </svg>
+            </div>
+            <div>
+                <span class="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">En cours</span>
+                <span class="text-2xl font-bold @(runningCount > 0 ? "text-indigo-600" : "text-slate-800") leading-none">@runningCount</span>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Filters Bar -->
+<div class="kmk-card p-3.5 mb-5 flex flex-col sm:flex-row items-center gap-3 bg-white/95">
+    <div class="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full">
+        <select class="kmk-select !py-2 text-xs" @bind="_filterJobId">
+            <option value="">Tous les jobs</option>
+            @foreach (var j in _jobs)
+            {
+                <option value="@j.Id">@j.Name</option>
+            }
+        </select>
+        <select class="kmk-select !py-2 text-xs" @bind="_filterStatus">
+            <option value="">Tous les statuts</option>
+            @foreach (var s in Enum.GetValues<JobStatus>())
+            {
+                <option value="@s">@FormatStatus(s)</option>
+            }
+        </select>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(_filterJobId) || !string.IsNullOrWhiteSpace(_filterStatus))
+    {
+        <button type="button" @onclick="ResetFilters" class="kmk-btn-secondary !py-2 !px-3 text-xs text-slate-500 hover:text-slate-800 shrink-0">
+            Réinitialiser
+        </button>
+    }
 </div>
 
+<!-- Table Container -->
 @if (_loading)
 {
-    <p class="text-sm text-slate-500">Chargement...</p>
+    <div class="kmk-card p-12 flex flex-col items-center justify-center gap-3 text-sm text-slate-500">
+        <svg class="animate-spin h-6 w-6 text-brand-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+        </svg>
+        <span>Chargement de l'historique d'exécution...</span>
+    </div>
 }
 else
 {
-    <div class="kmk-card overflow-x-auto">
-        <table>
-            <thead><tr><th>Job</th><th>Statut</th><th>Déclencheur</th><th>Début</th><th>Durée</th><th>Code retour</th><th></th></tr></thead>
+    <div class="kmk-table-container">
+        <table class="kmk-table">
+            <thead>
+                <tr>
+                    <th class="min-w-[200px]">
+                        <div class="flex items-center gap-1.5">
+                            <svg class="h-3.5 w-3.5 text-slate-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 13.5V3.75m0 9.75a1.5 1.5 0 0 1 0 3m0-3a1.5 1.5 0 0 0 0 3m0 3.75V16.5m12-3V3.75m0 9.75a1.5 1.5 0 0 1 0 3m0-3a1.5 1.5 0 0 0 0 3m0 3.75V16.5m-6-9V3.75m0 3.75a1.5 1.5 0 0 1 0 3m0-3a1.5 1.5 0 0 0 0 3m0 9.75V10.5" /></svg>
+                            <span>Job</span>
+                        </div>
+                    </th>
+                    <th class="min-w-[120px]">Statut</th>
+                    <th class="min-w-[140px]">Déclencheur</th>
+                    <th class="min-w-[150px]">Date &amp; Heure (Début)</th>
+                    <th class="min-w-[100px]">Durée</th>
+                    <th class="min-w-[90px]">Code retour</th>
+                    <th class="text-right min-w-[150px] pr-5">Actions</th>
+                </tr>
+            </thead>
             <tbody>
                 @foreach (var e in Filtered)
                 {
+                    var isRunning = e.Status == JobStatus.EnCours || ExecutionCoordinator.IsExecutionRunning(e.Id);
+
                     <tr>
-                        <td class="font-medium">@e.Job?.Name</td>
-                        <td><span class="@StatusBadge(e.Status)">@e.Status</span></td>
-                        <td class="text-slate-500">@e.TriggeredBy</td>
-                        <td class="text-slate-500">@e.StartedAt.ToLocalTime().ToString("g")</td>
-                        <td class="text-slate-500">@(e.Duration?.ToString(@"hh\:mm\:ss") ?? "-")</td>
-                        <td class="text-slate-500">@e.ReturnCode</td>
-                        <td><a class="kmk-btn-secondary kmk-btn-sm" href="@($"executions/{e.Id}")">Détail</a></td>
+                        <!-- Nom du Job -->
+                        <td>
+                            <div class="flex items-center gap-2">
+                                <a href="@($"executions/{e.Id}")" class="font-semibold text-slate-900 hover:text-brand-600 transition-colors text-sm">
+                                    @(e.Job?.Name ?? "Job sans nom")
+                                </a>
+                                @if (e.AttemptNumber > 1)
+                                {
+                                    <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200">
+                                        Tentative @e.AttemptNumber
+                                    </span>
+                                }
+                            </div>
+                            @if (!string.IsNullOrWhiteSpace(e.Message))
+                            {
+                                <div class="text-xs text-slate-400 truncate max-w-xs mt-0.5" title="@e.Message">
+                                    @e.Message
+                                </div>
+                            }
+                        </td>
+
+                        <!-- Statut -->
+                        <td>
+                            @if (isRunning)
+                            {
+                                <span class="kmk-badge-running animate-pulse">
+                                    <svg class="animate-spin h-3 w-3 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+                                    </svg>
+                                    En cours
+                                </span>
+                            }
+                            else
+                            {
+                                <span class="@StatusBadge(e.Status)">
+                                    <span class="h-1.5 w-1.5 rounded-full @StatusDot(e.Status)"></span>
+                                    @FormatStatus(e.Status)
+                                </span>
+                            }
+                        </td>
+
+                        <!-- Déclencheur -->
+                        <td class="text-xs text-slate-600">
+                            <span class="inline-flex items-center gap-1">
+                                <svg class="h-3 w-3 text-slate-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" /></svg>
+                                @e.TriggeredBy
+                            </span>
+                        </td>
+
+                        <!-- Début -->
+                        <td class="text-xs text-slate-600">
+                            <div>@e.StartedAt.ToLocalTime().ToString("dd/MM/yyyy")</div>
+                            <div class="text-[11px] text-slate-400 font-mono">@e.StartedAt.ToLocalTime().ToString("HH:mm:ss")</div>
+                        </td>
+
+                        <!-- Durée -->
+                        <td class="text-xs font-mono text-slate-600">
+                            @(e.Duration?.ToString(@"hh\:mm\:ss") ?? (isRunning ? "Calcul en cours..." : "-"))
+                        </td>
+
+                        <!-- Code retour -->
+                        <td>
+                            @if (e.ReturnCode == 0)
+                            {
+                                <span class="text-xs font-mono font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">0</span>
+                            }
+                            else if (e.ReturnCode is not null)
+                            {
+                                <span class="text-xs font-mono font-semibold text-rose-600 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">@e.ReturnCode</span>
+                            }
+                            else
+                            {
+                                <span class="text-xs text-slate-400">-</span>
+                            }
+                        </td>
+
+                        <!-- Actions -->
+                        <td class="text-right whitespace-nowrap pr-4">
+                            <div class="flex items-center justify-end gap-1.5">
+                                @if (isRunning)
+                                {
+                                    <button type="button" class="kmk-btn-stop kmk-btn-xs flex items-center gap-1 animate-pulse"
+                                            @onclick="() => StopExecution(e)"
+                                            title="Arrêter cette exécution en cours sans supprimer le job">
+                                        <svg class="h-3 w-3 text-rose-700" xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 24 24"><path d="M5.25 5.25h13.5v13.5H5.25z"/></svg>
+                                        <span>Arrêter</span>
+                                    </button>
+                                }
+                                <a class="kmk-btn-secondary kmk-btn-xs flex items-center gap-1" href="@($"executions/{e.Id}")">
+                                    <svg class="h-3 w-3 text-slate-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" /></svg>
+                                    <span>Détail</span>
+                                </a>
+                            </div>
+                        </td>
                     </tr>
                 }
-                @if (!Filtered.Any())
+
+                @if (!Filtered.Any() && _executions.Count > 0)
                 {
-                    <tr><td colspan="7" class="text-center text-slate-400 py-8">Aucune exécution ne correspond aux filtres.</td></tr>
+                    <tr>
+                        <td colspan="7" class="text-center py-10 text-slate-400 text-xs">
+                            Aucune exécution ne correspond aux filtres sélectionnés.
+                        </td>
+                    </tr>
+                }
+
+                @if (_executions.Count == 0)
+                {
+                    <tr>
+                        <td colspan="7" class="text-center py-14 text-slate-400 text-sm">
+                            Aucune exécution enregistrée pour le moment.
+                        </td>
+                    </tr>
                 }
             </tbody>
         </table>
@@ -73,12 +302,43 @@ else
     private bool _loading = true;
     private string _filterJobId = "";
     private string _filterStatus = "";
+    private PeriodicTimer? _refreshTimer;
+    private CancellationTokenSource? _timerCts;
 
     private IEnumerable<JobExecution> Filtered => _executions.Where(e =>
         (string.IsNullOrWhiteSpace(_filterJobId) || e.JobId.ToString() == _filterJobId) &&
         (string.IsNullOrWhiteSpace(_filterStatus) || e.Status.ToString() == _filterStatus));
 
     protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+
+        _timerCts = new CancellationTokenSource();
+        _refreshTimer = new PeriodicTimer(TimeSpan.FromSeconds(4));
+        _ = RunPeriodicRefreshAsync(_timerCts.Token);
+    }
+
+    private async Task RunPeriodicRefreshAsync(CancellationToken ct)
+    {
+        try
+        {
+            while (await _refreshTimer!.WaitForNextTickAsync(ct))
+            {
+                await RefreshAsync();
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    private async Task LoadDataAsync()
+    {
+        _loading = true;
+        await RefreshAsync();
+        _loading = false;
+    }
+
+    private async Task RefreshAsync()
     {
         await using var db = await DbFactory.CreateDbContextAsync();
         _jobs = await db.Jobs.OrderBy(j => j.Name).ToListAsync();
@@ -87,7 +347,21 @@ else
             .OrderByDescending(e => e.StartedAt)
             .Take(500)
             .ToListAsync();
-        _loading = false;
+    }
+
+    private async Task StopExecution(JobExecution e)
+    {
+        ExecutionCoordinator.TryStopExecution(e.Id);
+        ExecutionCoordinator.TryStopJob(e.JobId);
+        await Task.Delay(400);
+        await RefreshAsync();
+        StateHasChanged();
+    }
+
+    private void ResetFilters()
+    {
+        _filterJobId = "";
+        _filterStatus = "";
     }
 
     private Task ExportCsv() => ExportAsync("csv");
@@ -101,12 +375,39 @@ else
         await JS.InvokeVoidAsync("kernelMK.downloadFile", $"executions.{format}", mime, Convert.ToBase64String(bytes));
     }
 
+    private static string FormatStatus(JobStatus status) => status switch
+    {
+        JobStatus.Succes => "Succès",
+        JobStatus.Echec => "Échec",
+        JobStatus.EnCours => "En cours",
+        JobStatus.Annule => "Arrêté",
+        JobStatus.Inactif => "Inactif",
+        JobStatus.EnAttente => "En attente",
+        _ => status.ToString()
+    };
+
     private static string StatusBadge(JobStatus status) => status switch
     {
         JobStatus.Succes => "kmk-badge-success",
         JobStatus.Echec => "kmk-badge-danger",
-        JobStatus.EnCours => "kmk-badge-warning",
+        JobStatus.EnCours => "kmk-badge-running",
         JobStatus.Annule => "kmk-badge-neutral",
         _ => "kmk-badge-neutral"
     };
+
+    private static string StatusDot(JobStatus status) => status switch
+    {
+        JobStatus.Succes => "bg-emerald-500",
+        JobStatus.Echec => "bg-rose-500",
+        JobStatus.EnCours => "bg-indigo-500",
+        JobStatus.Annule => "bg-slate-400",
+        _ => "bg-slate-400"
+    };
+
+    public void Dispose()
+    {
+        _timerCts?.Cancel();
+        _timerCts?.Dispose();
+        _refreshTimer?.Dispose();
+    }
 }

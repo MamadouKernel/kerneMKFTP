@@ -41,7 +41,7 @@ public class EmailStepExecutor : IStepExecutor
 
             if (context.ResolvedCredential is { Username: not null })
             {
-                await client.AuthenticateAsync(context.ResolvedCredential.Value.Username, context.ResolvedCredential.Value.Secret, context.CancellationToken);
+                await client.AuthenticateAsync(context.ResolvedCredential.Value.Username, context.ResolvedCredential.Value.Secret ?? string.Empty, context.CancellationToken);
             }
 
             await client.SendAsync(message, context.CancellationToken);

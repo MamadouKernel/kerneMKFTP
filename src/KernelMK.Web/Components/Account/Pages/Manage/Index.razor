@@ -1,4 +1,4 @@
-﻿@page "/Account/Manage"
+@page "/Account/Manage"
 
 @using System.ComponentModel.DataAnnotations
 @using Microsoft.AspNetCore.Identity
@@ -9,26 +9,60 @@
 @inject IdentityUserAccessor UserAccessor
 @inject IdentityRedirectManager RedirectManager
 
-<PageTitle>Profile</PageTitle>
+<PageTitle>Profil - Mon compte</PageTitle>
 
-<h3>Profile</h3>
-<StatusMessage />
+<div class="space-y-6">
+    <div>
+        <h3 class="text-base font-semibold text-slate-900">Profil &amp; Coordonnées</h3>
+        <p class="text-sm text-slate-500 mt-0.5">Gérez votre nom d'affichage et vos informations personnelles.</p>
+    </div>
 
-<div class="row">
-    <div class="col-xl-6">
-        <EditForm Model="Input" FormName="profile" OnValidSubmit="OnValidSubmitAsync" method="post">
+    <StatusMessage />
+
+    <div class="max-w-xl">
+        <EditForm Model="Input" FormName="profile" OnValidSubmit="OnValidSubmitAsync" method="post" class="space-y-4">
             <DataAnnotationsValidator />
-            <ValidationSummary class="text-danger" role="alert" />
-            <div class="form-floating mb-3">
-                <input type="text" value="@username" id="username" class="form-control" placeholder="Choose your username." disabled />
-                <label for="username" class="form-label">Username</label>
+            <ValidationSummary class="text-red-600 text-sm" role="alert" />
+
+            <!-- Identifiant de compte en lecture seule -->
+            <div>
+                <label for="username" class="kmk-label">Identifiant de connexion</label>
+                <div class="flex items-center gap-2">
+                    <input type="text" value="@username" id="username" class="kmk-input bg-slate-50 text-slate-600 cursor-not-allowed" disabled />
+                    <a href="Account/Manage/Email" class="kmk-btn-secondary shrink-0 text-xs" title="Modifier l'adresse e-mail et l'identifiant">
+                        Modifier
+                    </a>
+                </div>
+                <p class="text-[11px] text-slate-400 mt-1">
+                    Pour changer votre identifiant de connexion, accédez à l'onglet <a href="Account/Manage/Email" class="text-brand-600 hover:underline">Adresse e-mail</a>.
+                </p>
             </div>
-            <div class="form-floating mb-3">
-                <InputText @bind-Value="Input.PhoneNumber" id="Input.PhoneNumber" class="form-control" placeholder="Enter your phone number" />
-                <label for="Input.PhoneNumber" class="form-label">Phone number</label>
-                <ValidationMessage For="() => Input.PhoneNumber" class="text-danger" />
+
+            <!-- Nom d'affichage / Nom complet -->
+            <div>
+                <label for="Input_DisplayName" class="kmk-label">Nom complet / Nom d'affichage</label>
+                <InputText @bind-Value="Input.DisplayName" id="Input_DisplayName" class="kmk-input" placeholder="ex : Mamadou Koné" maxlength="40" />
+                <ValidationMessage For="() => Input.DisplayName" class="text-red-600 text-xs mt-1" />
+                <p class="text-[11px] text-slate-400 mt-1">
+                    Limité à 40 caractères max. Les noms longs sont automatiquement raccourcis à 20 caractères dans les barres de menu tout en restant visibles au survol.
+                </p>
             </div>
-            <button type="submit" class="w-100 btn btn-lg btn-primary">Save</button>
+
+            <!-- Numéro de téléphone -->
+            <div>
+                <label for="Input_PhoneNumber" class="kmk-label">Numéro de téléphone</label>
+                <InputText @bind-Value="Input.PhoneNumber" id="Input_PhoneNumber" class="kmk-input" placeholder="ex : +225 07 00 00 00 00" />
+                <ValidationMessage For="() => Input.PhoneNumber" class="text-red-600 text-xs mt-1" />
+            </div>
+
+            <div class="pt-2">
+                <button type="submit" class="kmk-btn-primary">
+                    <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                    </svg>
+                    Enregistrer les modifications
+                </button>
+            </div>
         </EditForm>
     </div>
 </div>
@@ -50,28 +84,59 @@
         username = await UserManager.GetUserNameAsync(user);
         phoneNumber = await UserManager.GetPhoneNumberAsync(user);
 
+        Input.DisplayName ??= user.DisplayName;
         Input.PhoneNumber ??= phoneNumber;
     }
 
     private async Task OnValidSubmitAsync()
     {
-        if (Input.PhoneNumber != phoneNumber)
+        bool changed = false;
+
+        var newDisplayName = Input.DisplayName?.Trim();
+        if (newDisplayName != user.DisplayName)
         {
-            var setPhoneResult = await UserManager.SetPhoneNumberAsync(user, Input.PhoneNumber);
+            user.DisplayName = newDisplayName;
+            var updateResult = await UserManager.UpdateAsync(user);
+            if (!updateResult.Succeeded)
+            {
+                RedirectManager.RedirectToCurrentPageWithStatus($"Error: {string.Join(", ", updateResult.Errors.Select(e => e.Description))}", HttpContext);
+                return;
+            }
+            changed = true;
+        }
+
+        var newPhone = Input.PhoneNumber?.Trim();
+        if (newPhone != phoneNumber)
+        {
+            var setPhoneResult = await UserManager.SetPhoneNumberAsync(user, newPhone);
             if (!setPhoneResult.Succeeded)
             {
-                RedirectManager.RedirectToCurrentPageWithStatus("Error: Failed to set phone number.", HttpContext);
+                RedirectManager.RedirectToCurrentPageWithStatus($"Error: {string.Join(", ", setPhoneResult.Errors.Select(e => e.Description))}", HttpContext);
+                return;
             }
+            changed = true;
         }
 
         await SignInManager.RefreshSignInAsync(user);
-        RedirectManager.RedirectToCurrentPageWithStatus("Your profile has been updated", HttpContext);
+
+        if (changed)
+        {
+            RedirectManager.RedirectToCurrentPageWithStatus("Votre profil a été mis à jour avec succès.", HttpContext);
+        }
+        else
+        {
+            RedirectManager.RedirectToCurrentPageWithStatus("Aucune modification détectée.", HttpContext);
+        }
     }
 
     private sealed class InputModel
     {
-        [Phone]
-        [Display(Name = "Phone number")]
+        [Display(Name = "Nom complet / Nom d'affichage")]
+        [StringLength(40, ErrorMessage = "Le nom ne doit pas dépasser 40 caractères.")]
+        public string? DisplayName { get; set; }
+
+        [Phone(ErrorMessage = "Le format du numéro de téléphone est invalide.")]
+        [Display(Name = "Numéro de téléphone")]
         public string? PhoneNumber { get; set; }
     }
 }

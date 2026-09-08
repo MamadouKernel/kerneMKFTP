@@ -1,60 +1,87 @@
-﻿@page "/Account/Manage/Email"
+@page "/Account/Manage/Email"
 
 @using System.ComponentModel.DataAnnotations
-@using System.Text
-@using System.Text.Encodings.Web
 @using Microsoft.AspNetCore.Identity
-@using Microsoft.AspNetCore.WebUtilities
 @using KernelMK.Data.Identity
 
 @inject UserManager<ApplicationUser> UserManager
-@inject IEmailSender<ApplicationUser> EmailSender
+@inject SignInManager<ApplicationUser> SignInManager
 @inject IdentityUserAccessor UserAccessor
-@inject NavigationManager NavigationManager
 
-<PageTitle>Manage email</PageTitle>
+<PageTitle>Adresse e-mail - Mon compte</PageTitle>
 
-<h3>Manage email</h3>
+<div class="space-y-6">
+    <div>
+        <h3 class="text-base font-semibold text-slate-900">Adresse e-mail</h3>
+        <p class="text-sm text-slate-500 mt-0.5">Consultez et mettez à jour l'adresse e-mail associée à votre compte d'accès.</p>
+    </div>
 
-<StatusMessage Message="@message"/>
-<div class="row">
-    <div class="col-xl-6">
-        <form @onsubmit="OnSendEmailVerificationAsync" @formname="send-verification" id="send-verification-form" method="post">
-            <AntiforgeryToken />
-        </form>
-        <EditForm Model="Input" FormName="change-email" OnValidSubmit="OnValidSubmitAsync" method="post">
-            <DataAnnotationsValidator />
-            <ValidationSummary class="text-danger" role="alert" />
-            @if (isEmailConfirmed)
-            {
-                <div class="form-floating mb-3 input-group">
-                    <input type="text" value="@email" id="email" class="form-control" placeholder="Enter your email" disabled />
-                    <div class="input-group-append">
-                        <span class="h-100 input-group-text text-success font-weight-bold">✓</span>
-                    </div>
-                    <label for="email" class="form-label">Email</label>
+    @if (!string.IsNullOrEmpty(message))
+    {
+        <StatusMessage Message="@message" IsError="@isError" />
+    }
+
+    <!-- Carte E-mail actuel -->
+    <div class="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+        <div class="flex items-start justify-between flex-wrap gap-3">
+            <div class="flex items-center gap-3">
+                <div class="h-10 w-10 rounded-xl bg-white border border-slate-200 shadow-xs flex items-center justify-center text-brand-600 shrink-0">
+                    <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75" />
+                    </svg>
                 </div>
-            }
-            else
-            {
-                <div class="form-floating mb-3">
-                    <input type="text" value="@email" id="email" class="form-control" placeholder="Enter your email" disabled />
-                    <label for="email" class="form-label">Email</label>
-                    <button type="submit" class="btn btn-link" form="send-verification-form">Send verification email</button>
+                <div>
+                    <span class="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Adresse e-mail actuelle</span>
+                    <span class="text-base font-semibold text-slate-900 select-all font-mono">@email</span>
                 </div>
-            }
-            <div class="form-floating mb-3">
-                <InputText @bind-Value="Input.NewEmail" id="Input.NewEmail" class="form-control" autocomplete="email" aria-required="true" placeholder="Enter a new email" />
-                <label for="Input.NewEmail" class="form-label">New email</label>
-                <ValidationMessage For="() => Input.NewEmail" class="text-danger" />
             </div>
-            <button type="submit" class="w-100 btn btn-lg btn-primary">Change email</button>
+            <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                <svg class="h-3.5 w-3.5 text-emerald-600" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z" clip-rule="evenodd" />
+                </svg>
+                Actif &amp; Vérifié
+            </span>
+        </div>
+        <p class="text-xs text-slate-500 mt-3 pt-3 border-t border-slate-200/80 flex items-center gap-1.5">
+            <svg class="h-4 w-4 text-slate-400 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            Cette adresse e-mail sert également d'identifiant de connexion au portail d'automatisation.
+        </p>
+    </div>
+
+    <!-- Formulaire de modification -->
+    <div class="max-w-xl">
+        <h4 class="text-sm font-semibold text-slate-900 mb-3">Changer d'adresse e-mail</h4>
+
+        <EditForm Model="Input" FormName="change-email" OnValidSubmit="OnValidSubmitAsync" method="post" class="space-y-4">
+            <DataAnnotationsValidator />
+            <ValidationSummary class="text-red-600 text-sm" role="alert" />
+
+            <div>
+                <label for="Input_NewEmail" class="kmk-label">Nouvelle adresse e-mail</label>
+                <InputText @bind-Value="Input.NewEmail" id="Input_NewEmail" class="kmk-input" autocomplete="email" aria-required="true" placeholder="ex: prenom.nom@cotedivoireterminal.ci" />
+                <ValidationMessage For="() => Input.NewEmail" class="text-red-600 text-xs mt-1" />
+                <p class="text-xs text-slate-400 mt-1.5">
+                    Entrez la nouvelle adresse. La modification est appliquée immédiatement sans rupture d'accès.
+                </p>
+            </div>
+
+            <div class="pt-2">
+                <button type="submit" class="kmk-btn-primary">
+                    <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                    </svg>
+                    Mettre à jour l'adresse e-mail
+                </button>
+            </div>
         </EditForm>
     </div>
 </div>
 
 @code {
     private string? message;
+    private bool isError;
     private ApplicationUser user = default!;
     private string? email;
     private bool isEmailConfirmed;
@@ -70,54 +97,58 @@
         user = await UserAccessor.GetRequiredUserAsync(HttpContext);
         email = await UserManager.GetEmailAsync(user);
         isEmailConfirmed = await UserManager.IsEmailConfirmedAsync(user);
-
-        Input.NewEmail ??= email;
     }
 
     private async Task OnValidSubmitAsync()
     {
-        if (Input.NewEmail is null || Input.NewEmail == email)
+        if (string.IsNullOrWhiteSpace(Input.NewEmail) || string.Equals(Input.NewEmail.Trim(), email, StringComparison.OrdinalIgnoreCase))
         {
-            message = "Your email is unchanged.";
+            message = "Veuillez saisir une nouvelle adresse e-mail différente de l'adresse actuelle.";
+            isError = true;
             return;
         }
 
-        var userId = await UserManager.GetUserIdAsync(user);
-        var code = await UserManager.GenerateChangeEmailTokenAsync(user, Input.NewEmail);
-        code = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(code));
-        var callbackUrl = NavigationManager.GetUriWithQueryParameters(
-            NavigationManager.ToAbsoluteUri("Account/ConfirmEmailChange").AbsoluteUri,
-            new Dictionary<string, object?> { ["userId"] = userId, ["email"] = Input.NewEmail, ["code"] = code });
+        var newEmail = Input.NewEmail.Trim();
 
-        await EmailSender.SendConfirmationLinkAsync(user, Input.NewEmail, HtmlEncoder.Default.Encode(callbackUrl));
-
-        message = "Confirmation link to change email sent. Please check your email.";
-    }
-
-    private async Task OnSendEmailVerificationAsync()
-    {
-        if (email is null)
+        var existingUser = await UserManager.FindByEmailAsync(newEmail);
+        if (existingUser is not null && existingUser.Id != user.Id)
         {
+            message = "Cette adresse e-mail est déjà associée à un autre compte utilisateur.";
+            isError = true;
             return;
         }
 
-        var userId = await UserManager.GetUserIdAsync(user);
-        var code = await UserManager.GenerateEmailConfirmationTokenAsync(user);
-        code = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(code));
-        var callbackUrl = NavigationManager.GetUriWithQueryParameters(
-            NavigationManager.ToAbsoluteUri("Account/ConfirmEmail").AbsoluteUri,
-            new Dictionary<string, object?> { ["userId"] = userId, ["code"] = code });
+        var token = await UserManager.GenerateChangeEmailTokenAsync(user, newEmail);
+        var result = await UserManager.ChangeEmailAsync(user, newEmail, token);
+        if (!result.Succeeded)
+        {
+            message = $"Erreur : {string.Join(", ", result.Errors.Select(e => e.Description))}";
+            isError = true;
+            return;
+        }
 
-        await EmailSender.SendConfirmationLinkAsync(user, email, HtmlEncoder.Default.Encode(callbackUrl));
+        var currentUserName = await UserManager.GetUserNameAsync(user);
+        if (string.Equals(currentUserName, email, StringComparison.OrdinalIgnoreCase))
+        {
+            await UserManager.SetUserNameAsync(user, newEmail);
+        }
 
-        message = "Verification email sent. Please check your email.";
+        user.EmailConfirmed = true;
+        await UserManager.UpdateAsync(user);
+
+        await SignInManager.RefreshSignInAsync(user);
+
+        email = newEmail;
+        Input.NewEmail = null;
+        message = "Votre adresse e-mail a été mise à jour avec succès !";
+        isError = false;
     }
 
     private sealed class InputModel
     {
-        [Required]
-        [EmailAddress]
-        [Display(Name = "New email")]
+        [Required(ErrorMessage = "Veuillez saisir une nouvelle adresse e-mail.")]
+        [EmailAddress(ErrorMessage = "Le format de l'adresse e-mail est invalide.")]
+        [Display(Name = "Nouvelle adresse e-mail")]
         public string? NewEmail { get; set; }
     }
 }

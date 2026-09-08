@@ -8,8 +8,8 @@ public class StepExecutionContext
     public required JobStep Step { get; init; }
     public required JobExecution Execution { get; init; }
     public required CancellationToken CancellationToken { get; init; }
-    /// <summary>Identifiants (username/secret déchiffré) résolus pour le credential associé à l'étape, si présent.</summary>
-    public (string? Username, string? Secret)? ResolvedCredential { get; init; }
+    /// <summary>Identifiants (username/secret déchiffré, hôte et port éventuels) résolus pour le credential associé à l'étape, si présent.</summary>
+    public (string? Username, string? Secret, string? Host, int? Port)? ResolvedCredential { get; init; }
 }
 
 public class StepExecutionResult

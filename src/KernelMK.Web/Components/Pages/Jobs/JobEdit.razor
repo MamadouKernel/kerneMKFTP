@@ -1,14 +1,19 @@
 @page "/jobs/new"
 @rendermode InteractiveServer
 @page "/jobs/{JobId:guid}"
-@attribute [Authorize(Roles = "Administrateur,Developpeur,Superviseur,Exploitant,Auditeur")]
+@attribute [Authorize(Roles = "Administrateur,Developpeur")]
 @using System.Text.Json
 @using Microsoft.EntityFrameworkCore
+@using KernelMK.Core.StepConfigs
+@using KernelMK.Data.Security
 @using KernelMK.Engine.Audit
+@using KernelMK.Engine.Execution
 @inject IDbContextFactory<AppDbContext> DbFactory
 @inject AuditService Audit
 @inject AuthenticationStateProvider AuthState
 @inject NavigationManager Nav
+@inject ConnectionTestService TestService
+@inject CredentialProtector Protector
 
 <PageTitle>@(IsNew ? "Nouveau job" : "Modifier le job") · kernelMK</PageTitle>
 
@@ -100,7 +105,7 @@ else
                             </div>
                             <div class="col-span-2">
                                 <label class="kmk-label">Type</label>
-                                <select class="kmk-select" @bind="step.Type">
+                                <select class="kmk-select" value="@step.Type" @onchange="(e) => OnStepTypeChanged(step, e.Value?.ToString())">
                                     @foreach (var t in Enum.GetValues<StepType>())
                                     {
                                         <option value="@t">@t</option>
@@ -138,24 +143,231 @@ else
                             </div>
                             <div class="col-span-2">
                                 <label class="kmk-label">Credential</label>
-                                <select class="kmk-select" @bind="step.CredentialId">
+                                <select class="kmk-select" value="@step.CredentialId" @onchange="(e) => OnCredentialChanged(step, e.Value?.ToString())">
                                     <option value="">(aucun)</option>
                                     @foreach (var c in _credentials)
                                     {
-                                        <option value="@c.Id">@c.Name</option>
+                                        <option value="@c.Id">@c.Name @(!string.IsNullOrWhiteSpace(c.Host) ? $" · {c.Host}" : "")</option>
                                     }
                                 </select>
                             </div>
                             <div class="flex items-end">
-                                <button type="button" class="kmk-btn-secondary w-full" @onclick="() => LoadTemplate(step)">Modèle JSON</button>
+                                <button type="button" class="kmk-btn-secondary w-full" @onclick="() => LoadTemplate(step)">Modèle par défaut</button>
                             </div>
 
-                            <div class="col-span-2 sm:col-span-4 md:col-span-6">
-                                <label class="kmk-label">Configuration (JSON)</label>
-                                <textarea class="kmk-input font-mono text-xs" rows="4" @bind="step.ConfigJson"></textarea>
-                            </div>
+                            @if (IsTransferStep(step.Type))
+                            {
+                                var tConfig = GetOrCreateTransferConfig(step);
+                                <div class="col-span-2 sm:col-span-4 md:col-span-6 bg-slate-50/90 border border-slate-200/90 rounded-xl p-4 mt-2">
+                                    <div class="flex items-center justify-between mb-3 border-b border-slate-200/60 pb-2">
+                                        <div class="flex items-center gap-2">
+                                            <span class="text-xs font-bold uppercase tracking-wider text-slate-700">Paramètres de transfert (@step.Type)</span>
+                                            @if (step.CredentialId != null && !string.IsNullOrWhiteSpace(GetCredentialHost(step.CredentialId)))
+                                            {
+                                                <span class="kmk-badge kmk-badge-info text-[10px]">Hérite de @GetCredentialName(step.CredentialId)</span>
+                                            }
+                                        </div>
+                                        <button type="button" class="kmk-btn-secondary kmk-btn-sm text-xs" @onclick="() => ToggleRawJson(step)">
+                                            @(IsRawJsonMode(step) ? "Afficher le formulaire" : "Mode JSON brut")
+                                        </button>
+                                    </div>
+
+                                    @if (IsRawJsonMode(step))
+                                    {
+                                        <div class="space-y-1">
+                                            <label class="kmk-label">Configuration (JSON brut)</label>
+                                            <textarea class="kmk-input font-mono text-xs" rows="4" @bind="step.ConfigJson"></textarea>
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                                            @if (step.Type != StepType.TransfertSmb)
+                                            {
+                                                <div class="md:col-span-3">
+                                                    <label class="kmk-label">Hôte / Serveur distant (nom ou adresse IP)</label>
+                                                    <input class="kmk-input" placeholder="ex: sftp.partenaire.fr ou 192.168.1.50"
+                                                           value="@tConfig.Host"
+                                                           @oninput="(e) => { tConfig.Host = e.Value?.ToString() ?? string.Empty; SyncTransferConfig(step); }" />
+                                                </div>
+                                                <div>
+                                                    <label class="kmk-label">Port</label>
+                                                    <input type="number" class="kmk-input" placeholder="@(step.Type == StepType.TransfertSftp ? "22" : "21")"
+                                                           value="@tConfig.Port"
+                                                           @oninput="(e) => { if (int.TryParse(e.Value?.ToString(), out var p)) tConfig.Port = p; SyncTransferConfig(step); }" />
+                                                </div>
+                                            }
+                                            else
+                                            {
+                                                <div class="md:col-span-4">
+                                                    <label class="kmk-label">Partage réseau SMB (chemin UNC)</label>
+                                                    <input class="kmk-input font-mono text-xs" placeholder="ex: \\serveur\partage\dossier"
+                                                           value="@tConfig.SmbShare"
+                                                           @oninput="(e) => { tConfig.SmbShare = e.Value?.ToString(); SyncTransferConfig(step); }" />
+                                                </div>
+                                            }
+
+                                            <div class="col-span-1 sm:col-span-2 md:col-span-4">
+                                                <label class="kmk-label">Sens du transfert</label>
+                                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                                    <label class="flex items-center gap-2.5 p-2.5 rounded-xl border @(!tConfig.Upload ? "border-brand-500 bg-brand-50/60 font-semibold text-brand-900 shadow-sm" : "border-slate-200 bg-white text-slate-700") cursor-pointer transition-all">
+                                                        <input type="radio" name="@($"transfer_dir_{step.Order}")" checked="@(!tConfig.Upload)"
+                                                               @onchange="() => { tConfig.Upload = false; SyncTransferConfig(step); }" class="kmk-checkbox" />
+                                                        <span class="text-xs">
+                                                            <span class="text-sm mr-1">⬇️</span> <strong>Télécharger</strong> (Serveur distant ➔ Dossier local)
+                                                        </span>
+                                                    </label>
+                                                    <label class="flex items-center gap-2.5 p-2.5 rounded-xl border @(tConfig.Upload ? "border-brand-500 bg-brand-50/60 font-semibold text-brand-900 shadow-sm" : "border-slate-200 bg-white text-slate-700") cursor-pointer transition-all">
+                                                        <input type="radio" name="@($"transfer_dir_{step.Order}")" checked="@(tConfig.Upload)"
+                                                               @onchange="() => { tConfig.Upload = true; SyncTransferConfig(step); }" class="kmk-checkbox" />
+                                                        <span class="text-xs">
+                                                            <span class="text-sm mr-1">⬆️</span> <strong>Déposer / Envoyer</strong> (Dossier local ➔ Serveur distant)
+                                                        </span>
+                                                    </label>
+                                                </div>
+                                            </div>
+
+                                            <div class="col-span-1 sm:col-span-2">
+                                                <label class="kmk-label">Chemin distant (@(tConfig.Upload ? "dossier cible sur le serveur" : "dossier/fichier source sur le serveur"))</label>
+                                                <input class="kmk-input font-mono text-xs" placeholder="ex: /upload/fichiers/ ou /in/fichier.csv"
+                                                       value="@tConfig.RemotePath"
+                                                       @oninput="(e) => { tConfig.RemotePath = e.Value?.ToString() ?? string.Empty; SyncTransferConfig(step); }" />
+                                            </div>
+
+                                            <div class="col-span-1 sm:col-span-2">
+                                                <label class="kmk-label">Chemin local (@(tConfig.Upload ? "dossier/fichier source local" : "dossier cible local"))</label>
+                                                <input class="kmk-input font-mono text-xs" placeholder="ex: C:\Donnees\Local\ ou C:\data\mon_fichier.csv"
+                                                       value="@tConfig.LocalPath"
+                                                       @oninput="(e) => { tConfig.LocalPath = e.Value?.ToString() ?? string.Empty; SyncTransferConfig(step); }" />
+                                            </div>
+
+                                            <div class="col-span-1 sm:col-span-2">
+                                                <label class="kmk-label">Filtre de fichiers (multi-fichiers)</label>
+                                                <input class="kmk-input font-mono text-xs" placeholder="ex: *.csv;*.txt;*.edi (vide = fichier unique)"
+                                                       value="@tConfig.Filter"
+                                                       @oninput="(e) => { tConfig.Filter = string.IsNullOrWhiteSpace(e.Value?.ToString()) ? null : e.Value?.ToString(); SyncTransferConfig(step); }" />
+                                            </div>
+
+                                            <div class="col-span-1 sm:col-span-2">
+                                                <label class="kmk-label">Armateur / Ligne Maritime (Partenaire)</label>
+                                                <div class="flex gap-2">
+                                                    <select class="kmk-select text-xs w-44 shrink-0"
+                                                            value="@(string.IsNullOrEmpty(tConfig.Armateur) ? "" : tConfig.Armateur)"
+                                                            @onchange="(e) => { var val = e.Value?.ToString(); if (!string.IsNullOrEmpty(val)) { tConfig.Armateur = val; SyncTransferConfig(step); } }">
+                                                        <option value="">(Sélection...)</option>
+                                                        <option value="MSC">MSC</option>
+                                                        <option value="CMA CGM">CMA CGM</option>
+                                                        <option value="MAERSK">MAERSK</option>
+                                                        <option value="HAPAG-LLOYD">HAPAG-LLOYD</option>
+                                                        <option value="COSCO">COSCO</option>
+                                                        <option value="ONE">ONE</option>
+                                                        <option value="GRIMALDI">GRIMALDI</option>
+                                                        <option value="PIL">PIL</option>
+                                                        <option value="ARKAS">ARKAS</option>
+                                                    </select>
+                                                    <input class="kmk-input text-xs flex-1" placeholder="Nom de l'armateur (ex: MSC, CMA CGM, MAERSK...)"
+                                                           value="@tConfig.Armateur"
+                                                           @oninput="(e) => { tConfig.Armateur = e.Value?.ToString(); SyncTransferConfig(step); }" />
+                                                </div>
+                                            </div>
+
+                                            <div class="col-span-1 sm:col-span-2 flex flex-col justify-center gap-2 pt-1">
+                                                @if (step.Type == StepType.TransfertFtps || step.Type == StepType.TransfertFtp)
+                                                {
+                                                    <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                                                        <input type="checkbox" class="kmk-checkbox" checked="@tConfig.UseTls"
+                                                               @onchange="(e) => { tConfig.UseTls = (bool)(e.Value ?? false); SyncTransferConfig(step); }" />
+                                                        Chiffrement TLS explicite (FTPS)
+                                                    </label>
+                                                }
+                                                @if (tConfig.Upload)
+                                                {
+                                                    <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                                                        <input type="checkbox" class="kmk-checkbox" checked="@tConfig.ArchiveAfterTransfer"
+                                                               @onchange="(e) => { tConfig.ArchiveAfterTransfer = (bool)(e.Value ?? false); SyncTransferConfig(step); }" />
+                                                        <span class="font-semibold text-slate-800">Couper / Déplacer vers l'archive</span>
+                                                        <span class="text-slate-500 text-[11px]">(déplace le fichier local pour ne plus le renvoyer)</span>
+                                                    </label>
+                                                }
+                                                else
+                                                {
+                                                    <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                                                        <input type="checkbox" class="kmk-checkbox" checked="@tConfig.DeleteRemoteAfterDownload"
+                                                               @onchange="(e) => { tConfig.DeleteRemoteAfterDownload = (bool)(e.Value ?? false); SyncTransferConfig(step); }" />
+                                                        <span class="font-semibold text-slate-800">Supprimer le fichier distant</span>
+                                                        <span class="text-slate-500 text-[11px]">(évite de re-télécharger le même fichier au prochain tour)</span>
+                                                    </label>
+                                                }
+                                            </div>
+
+                                            @if (tConfig.Upload && tConfig.ArchiveAfterTransfer)
+                                            {
+                                                <div class="col-span-1 sm:col-span-2 md:col-span-4">
+                                                    <label class="kmk-label">Dossier d'archivage local (où couper et ranger les fichiers envoyés)</label>
+                                                    <input class="kmk-input font-mono text-xs" placeholder="ex: C:\Donnees\Archives\"
+                                                           value="@tConfig.ArchiveDirectory"
+                                                           @oninput="(e) => { tConfig.ArchiveDirectory = e.Value?.ToString(); SyncTransferConfig(step); }" />
+                                                </div>
+                                            }
+
+                                            <!-- Zone Test de connexion en direct -->
+                                            <div class="col-span-1 sm:col-span-2 md:col-span-4 pt-3 border-t border-slate-200/80 mt-1 flex flex-wrap items-center justify-between gap-3">
+                                                <button type="button" class="kmk-btn-secondary kmk-btn-sm flex items-center gap-1.5"
+                                                        disabled="@(_isTesting.GetValueOrDefault(step))"
+                                                        @onclick="() => TestStepConnectionAsync(step)">
+                                                    @if (_isTesting.GetValueOrDefault(step))
+                                                    {
+                                                        <svg class="animate-spin h-3.5 w-3.5 text-brand-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg>
+                                                        <span>Test de connexion en cours...</span>
+                                                    }
+                                                    else
+                                                    {
+                                                        <span>🔌 Tester la connexion au serveur</span>
+                                                    }
+                                                </button>
+
+                                                @if (_testResults.TryGetValue(step, out var testResult) && testResult is not null)
+                                                {
+                                                    <div class="flex-1 min-w-[280px]">
+                                                        @if (testResult.Success)
+                                                        {
+                                                            <div class="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 flex items-start gap-2">
+                                                                <span class="text-emerald-600 font-bold text-sm">✓</span>
+                                                                <div>
+                                                                    <div class="font-semibold">@testResult.Message</div>
+                                                                    @if (!string.IsNullOrWhiteSpace(testResult.WorkingDirectory))
+                                                                    {
+                                                                        <div class="text-emerald-700 mt-0.5">@testResult.WorkingDirectory</div>
+                                                                    }
+                                                                </div>
+                                                            </div>
+                                                        }
+                                                        else
+                                                        {
+                                                            <div class="p-2.5 rounded-xl bg-red-50 border border-red-200 text-xs text-red-800 flex items-start gap-2">
+                                                                <span class="text-red-600 font-bold text-sm">✗</span>
+                                                                <div>
+                                                                    <div class="font-semibold">Échec du test de connexion</div>
+                                                                    <div class="text-red-700 mt-0.5">@testResult.Message</div>
+                                                                </div>
+                                                            </div>
+                                                        }
+                                                    </div>
+                                                }
+                                            </div>
+                                        </div>
+                                    }
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="col-span-2 sm:col-span-4 md:col-span-6">
+                                    <label class="kmk-label">Configuration (JSON)</label>
+                                    <textarea class="kmk-input font-mono text-xs" rows="4" @bind="step.ConfigJson"></textarea>
+                                </div>
+                            }
                             <div class="col-span-2 sm:col-span-4 md:col-span-6 text-right">
-                                <button type="button" class="kmk-btn-danger kmk-btn-sm" @onclick="() => _job.Steps.Remove(step)">Supprimer l'étape</button>
+                                <button type="button" class="kmk-btn-danger kmk-btn-sm" @onclick="() => RemoveStep(step)">Supprimer l'étape</button>
                             </div>
                         </div>
                     </div>
@@ -409,8 +621,233 @@ else
         if (TimeSpan.TryParse(value, out var ts)) trigger.WindowStart = ts;
     }
 
+    private readonly Dictionary<JobStep, TransferStepConfig> _transferConfigs = new();
+    private readonly Dictionary<JobStep, bool> _rawJsonMode = new();
+    private readonly Dictionary<JobStep, ConnectionTestResult?> _testResults = new();
+    private readonly Dictionary<JobStep, bool> _isTesting = new();
+
+    private static bool IsTransferStep(StepType type) =>
+        type is StepType.TransfertSftp or StepType.TransfertFtp or StepType.TransfertFtps or StepType.TransfertSmb;
+
+    private bool IsRawJsonMode(JobStep step) => _rawJsonMode.GetValueOrDefault(step, false);
+
+    private void ToggleRawJson(JobStep step)
+    {
+        var current = IsRawJsonMode(step);
+        if (!current)
+        {
+            SyncTransferConfig(step);
+        }
+        else
+        {
+            _transferConfigs.Remove(step);
+            _ = GetOrCreateTransferConfig(step);
+        }
+        _rawJsonMode[step] = !current;
+    }
+
+    private string? GetCredentialHost(Guid? credentialId) =>
+        credentialId is null ? null : _credentials.FirstOrDefault(c => c.Id == credentialId)?.Host;
+
+    private string? GetCredentialName(Guid? credentialId) =>
+        credentialId is null ? null : _credentials.FirstOrDefault(c => c.Id == credentialId)?.Name;
+
+    private TransferStepConfig GetOrCreateTransferConfig(JobStep step)
+    {
+        if (!_transferConfigs.TryGetValue(step, out var config))
+        {
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(step.ConfigJson) && step.ConfigJson != "{}")
+                {
+                    config = JsonSerializer.Deserialize<TransferStepConfig>(step.ConfigJson) ?? new TransferStepConfig();
+                }
+                else
+                {
+                    config = new TransferStepConfig
+                    {
+                        Host = "",
+                        Port = step.Type == StepType.TransfertSftp ? 22 : 21,
+                        Upload = false,
+                        RemotePath = "/upload/fichiers/",
+                        LocalPath = @"C:\Donnees\Local\",
+                        Filter = null
+                    };
+                }
+            }
+            catch
+            {
+                config = new TransferStepConfig();
+            }
+
+            if (step.CredentialId is not null)
+            {
+                var cred = _credentials.FirstOrDefault(c => c.Id == step.CredentialId.Value);
+                if (cred is not null)
+                {
+                    if (string.IsNullOrWhiteSpace(config.Host) && !string.IsNullOrWhiteSpace(cred.Host))
+                    {
+                        config.Host = cred.Host;
+                    }
+                    if (config.Port <= 0 && cred.Port is > 0)
+                    {
+                        config.Port = cred.Port.Value;
+                    }
+                }
+            }
+
+            _transferConfigs[step] = config;
+        }
+        return config;
+    }
+
+    private void SyncTransferConfig(JobStep step)
+    {
+        if (_transferConfigs.TryGetValue(step, out var config))
+        {
+            step.ConfigJson = JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true });
+        }
+    }
+
+    private void OnCredentialChanged(JobStep step, string? credIdStr)
+    {
+        if (Guid.TryParse(credIdStr, out var id))
+        {
+            step.CredentialId = id;
+            if (IsTransferStep(step.Type))
+            {
+                var cred = _credentials.FirstOrDefault(c => c.Id == id);
+                if (cred is not null)
+                {
+                    var config = GetOrCreateTransferConfig(step);
+                    if (!string.IsNullOrWhiteSpace(cred.Host) && (string.IsNullOrWhiteSpace(config.Host) || config.Host == "sftp.exemple.fr"))
+                    {
+                        config.Host = cred.Host;
+                    }
+                    if (cred.Port is > 0 && (config.Port <= 0 || config.Port == 22 || config.Port == 21))
+                    {
+                        config.Port = cred.Port.Value;
+                    }
+                    SyncTransferConfig(step);
+                }
+            }
+        }
+        else
+        {
+            step.CredentialId = null;
+        }
+    }
+
+    private void OnStepTypeChanged(JobStep step, string? typeStr)
+    {
+        if (Enum.TryParse<StepType>(typeStr, out var newType))
+        {
+            step.Type = newType;
+            if (IsTransferStep(newType))
+            {
+                var config = GetOrCreateTransferConfig(step);
+                if (newType == StepType.TransfertSftp && (config.Port <= 0 || config.Port == 21)) config.Port = 22;
+                if ((newType == StepType.TransfertFtp || newType == StepType.TransfertFtps) && (config.Port <= 0 || config.Port == 22)) config.Port = 21;
+                SyncTransferConfig(step);
+            }
+        }
+    }
+
+    private async Task TestStepConnectionAsync(JobStep step)
+    {
+        _isTesting[step] = true;
+        _testResults[step] = null;
+        StateHasChanged();
+
+        var config = GetOrCreateTransferConfig(step);
+        string? username = null;
+        string? secret = null;
+
+        if (step.CredentialId is not null)
+        {
+            var cred = _credentials.FirstOrDefault(c => c.Id == step.CredentialId.Value);
+            if (cred is not null)
+            {
+                username = cred.Username;
+                try
+                {
+                    secret = Protector.Unprotect(cred.EncryptedSecret);
+                }
+                catch
+                {
+                    secret = null;
+                }
+
+                if (string.IsNullOrWhiteSpace(config.Host) && !string.IsNullOrWhiteSpace(cred.Host))
+                {
+                    config.Host = cred.Host;
+                }
+                if (config.Port <= 0 && cred.Port is > 0)
+                {
+                    config.Port = cred.Port.Value;
+                }
+            }
+        }
+
+        var host = !string.IsNullOrWhiteSpace(config.Host)
+            ? config.Host
+            : (step.CredentialId != null ? _credentials.FirstOrDefault(c => c.Id == step.CredentialId)?.Host ?? "" : "");
+
+        var defaultPort = step.Type == StepType.TransfertSftp ? 22 : 21;
+        var port = config.Port > 0 ? config.Port : defaultPort;
+
+        _testResults[step] = await TestService.TestConnectionAsync(
+            step.Type,
+            host,
+            port,
+            username,
+            secret,
+            config.RemotePath);
+
+        _isTesting[step] = false;
+        StateHasChanged();
+    }
+
+    private void RemoveStep(JobStep step)
+    {
+        _job.Steps.Remove(step);
+        _transferConfigs.Remove(step);
+        _rawJsonMode.Remove(step);
+        _testResults.Remove(step);
+        _isTesting.Remove(step);
+    }
+
     private void LoadTemplate(JobStep step)
     {
+        if (IsTransferStep(step.Type))
+        {
+            var port = step.Type == StepType.TransfertSftp ? 22 : 21;
+            var defaultHost = "";
+            if (step.CredentialId is not null)
+            {
+                var cred = _credentials.FirstOrDefault(c => c.Id == step.CredentialId.Value);
+                if (cred is not null)
+                {
+                    defaultHost = cred.Host ?? "";
+                    if (cred.Port is > 0) port = cred.Port.Value;
+                }
+            }
+
+            var tConfig = new TransferStepConfig
+            {
+                Host = defaultHost,
+                Port = port,
+                Upload = false,
+                RemotePath = "/upload/fichiers/",
+                LocalPath = @"C:\Donnees\Local\",
+                Filter = null
+            };
+            _transferConfigs[step] = tConfig;
+            _rawJsonMode[step] = false;
+            SyncTransferConfig(step);
+            return;
+        }
+
         object template = step.Type switch
         {
             StepType.CommandeSysteme or StepType.ScriptPowerShell or StepType.ScriptPython or StepType.ScriptBatch =>
@@ -422,10 +859,7 @@ else
                 new TransferStepConfig
                 {
                     Host = "sftp.exemple.fr", Port = 22, Upload = true,
-                    // Mono-fichier : RemotePath/LocalPath désignent un fichier, laisser Filter à null.
                     RemotePath = "/upload/fichier.csv", LocalPath = @"C:\data\fichier.csv",
-                    // Multi-fichiers : renseigner Filter pour traiter RemotePath/LocalPath comme des dossiers,
-                    // ex Filter = "*.csv;*.txt;*.xml" (plusieurs formats en une seule étape).
                     Filter = null
                 },
             StepType.BaseDeDonneesRequete or StepType.ScriptSql =>
@@ -457,6 +891,15 @@ else
 
     private async Task SaveAsync()
     {
+        // Synchroniser tous les formulaires visuels de transfert vers le ConfigJson
+        foreach (var s in _job.Steps)
+        {
+            if (IsTransferStep(s.Type) && !_rawJsonMode.GetValueOrDefault(s, false))
+            {
+                SyncTransferConfig(s);
+            }
+        }
+
         await using var db = await DbFactory.CreateDbContextAsync();
 
         if (IsNew)

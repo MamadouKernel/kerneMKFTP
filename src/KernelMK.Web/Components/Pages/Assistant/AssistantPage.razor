@@ -6,11 +6,18 @@
 
 <PageTitle>Assistant · kernelMK</PageTitle>
 
-<h1>Assistant</h1>
-<p class="text-sm text-slate-500 mt-1 mb-6">
-    Pose une question sur tes jobs — l'assistant répond en interrogeant directement les données réelles
-    de la plateforme (aucune IA externe, tout reste local).
-</p>
+<div class="mb-6">
+    <h1 class="flex items-center gap-2.5">
+        <span class="h-9 w-9 rounded-xl bg-brand-50 text-brand-600 flex items-center justify-center shadow-sm">
+            <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M8.625 12a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H8.25m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H12m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 0 1-2.555-.337A5.972 5.972 0 0 1 5.41 20.97a5.969 5.969 0 0 1-.474-.065 4.48 4.48 0 0 0 .978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25Z" /></svg>
+        </span>
+        Assistant
+    </h1>
+    <p class="text-sm text-slate-500 mt-1">
+        Pose une question sur tes jobs — l'assistant répond en interrogeant directement les données réelles
+        de la plateforme (aucune IA externe, tout reste local).
+    </p>
+</div>
 
 <div class="kmk-card mb-6">
     <div class="kmk-card-body">
@@ -29,19 +36,31 @@
 
         @if (_loading)
         {
-            <p class="text-sm text-slate-400">Recherche en cours...</p>
+            <div class="flex items-center gap-2 text-sm text-slate-400">
+                <svg class="animate-spin h-4 w-4 text-brand-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg>
+                Recherche en cours...
+            </div>
         }
 
         @if (_history.Count > 0)
         {
-            <div class="space-y-4 mt-2">
+            <div class="space-y-3 mt-2">
                 @foreach (var (q, a) in Enumerable.Reverse(_history))
                 {
-                    <div class="border border-slate-100 rounded-xl p-4 bg-slate-50">
-                        <p class="text-sm font-semibold text-slate-700 mb-1">🗨️ @q</p>
-                        <p class="text-sm text-slate-600 whitespace-pre-line">🤖 @a</p>
+                    <div class="flex justify-end">
+                        <div class="bg-brand-600 text-white text-sm rounded-2xl rounded-tr-sm px-4 py-2.5 max-w-[80%] shadow-sm">@q</div>
+                    </div>
+                    <div class="flex justify-start">
+                        <div class="bg-slate-100 text-slate-700 text-sm rounded-2xl rounded-tl-sm px-4 py-2.5 max-w-[80%] whitespace-pre-line">@a</div>
                     </div>
                 }
+            </div>
+        }
+        else if (!_loading)
+        {
+            <div class="text-center py-10 text-slate-400">
+                <div class="text-3xl mb-2">💬</div>
+                <p class="text-sm">Choisis une suggestion ci-dessus ou pose ta propre question pour démarrer.</p>
             </div>
         }
     </div>

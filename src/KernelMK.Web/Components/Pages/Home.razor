@@ -1,158 +1,575 @@
 @page "/"
 @rendermode InteractiveServer
 @attribute [Authorize]
+@implements IDisposable
+@using System.Text.Json
+@using System.Text
 @using Microsoft.EntityFrameworkCore
+@using KernelMK.Core.StepConfigs
+@using KernelMK.Engine.Workflow
 @inject IDbContextFactory<AppDbContext> DbFactory
+@inject IJobExecutionCoordinator ExecutionCoordinator
+@inject NavigationManager Navigation
+@inject ILogger<Home> Logger
+@inject IJSRuntime JS
 
-<PageTitle>Tableau de bord · kernelMK</PageTitle>
+<PageTitle>Tableau de bord · Côte d'Ivoire Terminal</PageTitle>
 
-<div class="mb-6 flex items-center justify-between">
+<!-- Top Header with Live Health Bar -->
+<div class="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
     <div>
-        <h1>Tableau de bord</h1>
-        <p class="text-sm text-slate-500 mt-1">Vue d'ensemble de l'automatisation et de la supervision des jobs.</p>
+        <div class="flex flex-wrap items-center gap-2.5">
+            <h1 class="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Tableau de bord</h1>
+            @if (_failedCount > 0)
+            {
+                <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200 shadow-sm">
+                    <span class="h-2 w-2 rounded-full bg-rose-500 animate-pulse"></span>
+                    @_failedCount incident(s) détecté(s) (24h)
+                </span>
+            }
+            else
+            {
+                <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-sm">
+                    <span class="h-2 w-2 rounded-full bg-emerald-500"></span>
+                    Plateforme 100% opérationnelle
+                </span>
+            }
+
+            <!-- Badge Live Auto-Refresh -->
+            <button type="button" @onclick="ToggleAutoRefresh"
+                    class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium border transition-colors @(_autoRefresh ? "bg-indigo-50 text-indigo-700 border-indigo-200" : "bg-slate-100 text-slate-500 border-slate-200")"
+                    title="Cliquer pour activer/désactiver le rafraîchissement temps réel (toutes les 5s)">
+                <span class="h-2 w-2 rounded-full @(_autoRefresh ? "bg-indigo-600 animate-ping" : "bg-slate-400")"></span>
+                <span>@(_autoRefresh ? "Temps réel actif (5s)" : "Temps réel en pause")</span>
+            </button>
+        </div>
+        <p class="text-xs sm:text-sm text-slate-500 mt-1">Côte d'Ivoire Terminal · Port d'Abidjan · Supervision des flux EDI &amp; transferts SFTP</p>
     </div>
-    <a href="jobs/new" class="kmk-btn-primary">
-        <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
-        Nouveau job
+
+    <div class="flex items-center gap-2.5">
+        <button type="button" class="kmk-btn-secondary flex items-center gap-1.5 text-xs py-2 shadow-xs" @onclick="ExportBilanCsv" title="Exporter la synthèse opérationnelle des flux maritimes en CSV">
+            <svg class="h-3.5 w-3.5 text-slate-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+            </svg>
+            <span>Bilan CSV</span>
+        </button>
+
+        <button class="kmk-btn-secondary flex items-center gap-1.5 text-xs py-2" @onclick="LoadDashboardAsync" disabled="@_refreshing">
+            <svg class="h-3.5 w-3.5 @(_refreshing ? "animate-spin text-brand-600" : "text-slate-500")" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+            </svg>
+            Actualiser
+        </button>
+        <AuthorizeView Roles="Administrateur,Developpeur,Superviseur,Exploitant">
+            <a href="explorer" class="kmk-btn-secondary flex items-center gap-2 text-xs py-2">
+                <svg class="h-4 w-4 text-brand-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z" /></svg>
+                Explorateur distant
+            </a>
+        </AuthorizeView>
+        <AuthorizeView Roles="Administrateur,Developpeur">
+            <a href="jobs/new" class="kmk-btn-primary flex items-center gap-2 text-xs py-2">
+                <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+                Nouveau job
+            </a>
+        </AuthorizeView>
+    </div>
+</div>
+
+@if (!string.IsNullOrEmpty(_loadError))
+{
+    <div class="mb-6 p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-sm flex items-center justify-between">
+        <div class="flex items-center gap-2">
+            <span>⚠</span>
+            <span>Chargement partiel des métriques : @_loadError</span>
+        </div>
+        <button class="text-xs font-semibold text-amber-900 underline" @onclick="LoadDashboardAsync">Réessayer</button>
+    </div>
+}
+
+<!-- High-Impact KPI Cards -->
+<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
+    <!-- Jobs Actifs -->
+    <div class="kmk-stat-card">
+        <div class="flex items-center justify-between">
+            <span class="kmk-stat-label">Jobs Actifs</span>
+            <span class="kmk-stat-icon bg-brand-50 text-brand-600">
+                <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 0 1 0 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 0 1 0-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" /></svg>
+            </span>
+        </div>
+        <div class="flex items-baseline gap-2">
+            <span class="kmk-stat-value">@_activeJobs</span>
+            <span class="text-xs text-slate-400">/ @_totalJobs</span>
+        </div>
+        <div class="w-full bg-slate-100 rounded-full h-1.5 mt-1 overflow-hidden">
+            <div class="bg-brand-500 h-1.5 rounded-full transition-all duration-500" style="width: @(_totalJobs > 0 ? (_activeJobs * 100 / _totalJobs) : 0)%"></div>
+        </div>
+    </div>
+
+    <!-- En Cours -->
+    <div class="kmk-stat-card">
+        <div class="flex items-center justify-between">
+            <span class="kmk-stat-label">En Cours</span>
+            <span class="kmk-stat-icon @(_runningCount > 0 ? "bg-amber-100 text-amber-600 animate-pulse" : "bg-amber-50 text-amber-500")">
+                <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6l4 2M3.284 9A8.25 8.25 0 1 1 3 12" /></svg>
+            </span>
+        </div>
+        <span class="kmk-stat-value @(_runningCount > 0 ? "text-amber-500" : "text-slate-800")">@_runningCount</span>
+        <span class="text-xs text-slate-400">@( _runningCount > 0 ? "Traitement actif..." : "En attente de flux" )</span>
+    </div>
+
+    <!-- Taux de Succès (24h) -->
+    <div class="kmk-stat-card">
+        <div class="flex items-center justify-between">
+            <span class="kmk-stat-label">Taux Réussite</span>
+            <span class="kmk-stat-icon bg-emerald-50 text-emerald-600">
+                <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
+            </span>
+        </div>
+        <div class="flex items-baseline gap-1.5">
+            <span class="kmk-stat-value text-emerald-600">@_successRate%</span>
+        </div>
+        <div class="w-full bg-slate-100 rounded-full h-1.5 mt-1 overflow-hidden">
+            <div class="bg-emerald-500 h-1.5 rounded-full transition-all duration-500" style="width: @_successRate%"></div>
+        </div>
+    </div>
+
+    <!-- Fichiers Traités (24h) -->
+    <div class="kmk-stat-card">
+        <div class="flex items-center justify-between">
+            <span class="kmk-stat-label">Fichiers (24h)</span>
+            <span class="kmk-stat-icon bg-sky-50 text-sky-600">
+                <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75M3.75 6.75h16.5M3.75 6.75v10.5A2.25 2.25 0 0 0 6 19.5h12a2.25 2.25 0 0 0 2.25-2.25V6.75m-16.5 0A2.25 2.25 0 0 1 6 4.5h12a2.25 2.25 0 0 1 2.25 2.25" /></svg>
+            </span>
+        </div>
+        <span class="kmk-stat-value text-sky-600">@_filesProcessed</span>
+        <span class="text-xs text-slate-400">Transférés &amp; coupés</span>
+    </div>
+
+    <!-- Durée Moyenne (24h) -->
+    <div class="kmk-stat-card">
+        <div class="flex items-center justify-between">
+            <span class="kmk-stat-label">Durée Moyenne</span>
+            <span class="kmk-stat-icon bg-indigo-50 text-indigo-600">
+                <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
+            </span>
+        </div>
+        <span class="kmk-stat-value text-slate-900">@FormatDuration(_avgDurationSeconds)</span>
+        <span class="text-xs text-slate-400">Temps de traitement</span>
+    </div>
+
+    <!-- Échecs (24h) -->
+    <div class="kmk-stat-card">
+        <div class="flex items-center justify-between">
+            <span class="kmk-stat-label">Incidents (24h)</span>
+            <span class="kmk-stat-icon @(_failedCount > 0 ? "bg-rose-100 text-rose-600" : "bg-slate-100 text-slate-400")">
+                <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" /></svg>
+            </span>
+        </div>
+        <span class="kmk-stat-value @(_failedCount > 0 ? "text-rose-600" : "text-slate-400")">@_failedCount</span>
+        <span class="text-xs text-slate-400">@( _failedCount > 0 ? "Diagnostic requis" : "Aucune anomalie" )</span>
+    </div>
+</div>
+
+<!-- Quick Action Launch Hub (4 Interactive Cards) -->
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+    <AuthorizeView Roles="Administrateur,Developpeur,Superviseur,Exploitant">
+        <a href="explorer" class="kmk-card p-4 hover:shadow-md hover:border-brand-400 transition-all duration-150 group flex flex-col justify-between">
+            <div class="flex items-start gap-3 mb-2">
+                <div class="h-10 w-10 rounded-xl bg-brand-50 group-hover:bg-brand-600 group-hover:text-white text-brand-600 transition-colors flex items-center justify-center shrink-0">
+                    <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z" /></svg>
+                </div>
+                <div>
+                    <div class="text-sm font-bold text-slate-900 group-hover:text-brand-600 transition-colors flex items-center gap-1.5">
+                        Explorateur Distant
+                        <svg class="h-3.5 w-3.5 text-slate-400 group-hover:translate-x-0.5 transition-transform" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" /></svg>
+                    </div>
+                    <p class="text-xs text-slate-500 mt-1">Parcourez vos serveurs SFTP, FTP et SMB comme dans WinSCP en direct.</p>
+                </div>
+            </div>
+            <div class="text-[11px] font-semibold text-brand-600 flex items-center gap-1 mt-2">
+                <span>Ouvrir l'explorateur</span> →
+            </div>
+        </a>
+    </AuthorizeView>
+
+    <a href="jobs" class="kmk-card p-4 hover:shadow-md hover:border-purple-400 transition-all duration-150 group flex flex-col justify-between">
+        <div class="flex items-start gap-3 mb-2">
+            <div class="h-10 w-10 rounded-xl bg-purple-50 group-hover:bg-purple-600 group-hover:text-white text-purple-600 transition-colors flex items-center justify-center shrink-0">
+                <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25a2.25 2.25 0 0 1-2.25 2.25H6a2.25 2.25 0 0 1-2.25-2.25V6ZM3.75 15.75A2.25 2.25 0 0 1 6 13.5h2.25a2.25 2.25 0 0 1 2.25 2.25V18a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 18v-2.25ZM13.5 6a2.25 2.25 0 0 1 2.25-2.25H18A2.25 2.25 0 0 1 20.25 6v2.25A2.25 2.25 0 0 1 18 10.5h-2.25a2.25 2.25 0 0 1-2.25-2.25V6ZM13.5 15.75a2.25 2.25 0 0 1 2.25-2.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-2.25a2.25 2.25 0 0 1 13.5 18v-2.25Z" /></svg>
+            </div>
+            <div>
+                <div class="text-sm font-bold text-slate-900 group-hover:text-purple-600 transition-colors flex items-center gap-1.5">
+                    Pipelines &amp; Jobs
+                    <svg class="h-3.5 w-3.5 text-slate-400 group-hover:translate-x-0.5 transition-transform" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" /></svg>
+                </div>
+                <p class="text-xs text-slate-500 mt-1">Orchestrez vos flux de transfert, filtres et archivages automatiques.</p>
+            </div>
+        </div>
+        <div class="text-[11px] font-semibold text-purple-600 flex items-center gap-1 mt-2">
+            <span>Gérer les flux (@_activeJobs actifs)</span> →
+        </div>
+    </a>
+
+    <AuthorizeView Roles="Administrateur,Developpeur">
+        <a href="credentials" class="kmk-card p-4 hover:shadow-md hover:border-amber-400 transition-all duration-150 group flex flex-col justify-between">
+            <div class="flex items-start gap-3 mb-2">
+                <div class="h-10 w-10 rounded-xl bg-amber-50 group-hover:bg-amber-600 group-hover:text-white text-amber-600 transition-colors flex items-center justify-center shrink-0">
+                    <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m15.75 5.25 3 3m-3-3-9.53 9.53a2.121 2.121 0 0 0 0 3 2.121 2.121 0 0 0 3 0l.72-.72m5.81-11.81a3 3 0 1 1 4.243 4.243m-4.243-4.243 4.243 4.243m0 0-3.585 3.586" /></svg>
+                </div>
+                <div>
+                    <div class="text-sm font-bold text-slate-900 group-hover:text-amber-600 transition-colors flex items-center gap-1.5">
+                        Serveurs &amp; Accès
+                        <svg class="h-3.5 w-3.5 text-slate-400 group-hover:translate-x-0.5 transition-transform" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" /></svg>
+                    </div>
+                    <p class="text-xs text-slate-500 mt-1">Configurez les comptes Azure SFTP, clés SSH avec test de connexion immédiat.</p>
+                </div>
+            </div>
+            <div class="text-[11px] font-semibold text-amber-600 flex items-center gap-1 mt-2">
+                <span>Tester la connectivité</span> →
+            </div>
+        </a>
+    </AuthorizeView>
+
+    <a href="executions" class="kmk-card p-4 hover:shadow-md hover:border-sky-400 transition-all duration-150 group flex flex-col justify-between">
+        <div class="flex items-start gap-3 mb-2">
+            <div class="h-10 w-10 rounded-xl bg-sky-50 group-hover:bg-sky-600 group-hover:text-white text-sky-600 transition-colors flex items-center justify-center shrink-0">
+                <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6l4 2M3.284 9A8.25 8.25 0 1 1 3 12" /></svg>
+            </div>
+            <div>
+                <div class="text-sm font-bold text-slate-900 group-hover:text-sky-600 transition-colors flex items-center gap-1.5">
+                    Historique &amp; Audit
+                    <svg class="h-3.5 w-3.5 text-slate-400 group-hover:translate-x-0.5 transition-transform" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" /></svg>
+                </div>
+                <p class="text-xs text-slate-500 mt-1">Audit trail exhaustif, journaux d'exécution et diagnostics intelligents.</p>
+            </div>
+        </div>
+        <div class="text-[11px] font-semibold text-sky-600 flex items-center gap-1 mt-2">
+            <span>Consulter l'historique</span> →
+        </div>
     </a>
 </div>
 
-@if (_loading)
-{
-    <p class="text-slate-500 text-sm">Chargement...</p>
-}
-else if (_totalJobs == 0)
-{
-    <div class="kmk-card">
-        <div class="kmk-card-body flex flex-col items-center text-center py-14 px-6">
-            <div class="h-14 w-14 rounded-2xl bg-brand-50 text-brand-600 flex items-center justify-center mb-4">
-                <svg class="h-7 w-7" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6"><path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 0 1 0 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 0 1 0-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" /></svg>
+<!-- SECTION SPÉCIFIQUE : SUIVI DES FLUX PAR ARMATEUR (ENVOYÉS & RÉCUPÉRÉS) -->
+<div class="kmk-card mb-6 overflow-hidden">
+    <div class="kmk-card-header flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 bg-gradient-to-r from-slate-900 to-slate-800 text-white py-3.5">
+        <div class="flex items-center gap-3">
+            <span class="h-8 w-8 rounded-lg bg-white/10 flex items-center justify-center text-lg">🚢</span>
+            <div>
+                <div class="font-bold text-sm tracking-wide text-white flex items-center gap-2">
+                    <span>Bilan des Flux par Armateur &amp; Lignes Maritimes</span>
+                    <span class="text-[10px] bg-brand-500/30 border border-brand-400/40 text-brand-200 px-2 py-0.5 rounded-full uppercase font-bold">CIT Logistics</span>
+                </div>
+                <div class="text-[11px] text-slate-300">Volumes de fichiers envoyés (Uploads TOS ➔ Armateur) et récupérés (Downloads Armateur ➔ TOS)</div>
             </div>
-            <h3 class="mb-1">Bienvenue sur kernelMK 👋</h3>
-            <p class="text-sm text-slate-500 max-w-md mb-6">
-                Aucun job n'a encore été créé. Un job regroupe une ou plusieurs étapes (script, transfert de fichier,
-                requête SQL...) déclenchées manuellement, sur planification, ou par un événement.
-            </p>
-            <a href="jobs/new" class="kmk-btn-primary">
-                <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
-                Créer mon premier job
-            </a>
         </div>
-    </div>
-}
-else
-{
-    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
-        <div class="kmk-stat-card">
-            <div class="flex items-center justify-between">
-                <span class="kmk-stat-label">Jobs actifs</span>
-                <span class="kmk-stat-icon bg-brand-50 text-brand-600">
-                    <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>
-                </span>
-            </div>
-            <span class="kmk-stat-value">@_activeJobs</span>
-        </div>
-        <div class="kmk-stat-card">
-            <div class="flex items-center justify-between">
-                <span class="kmk-stat-label">Jobs inactifs</span>
-                <span class="kmk-stat-icon bg-slate-100 text-slate-400">
-                    <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M18.75 12H5.25" /></svg>
-                </span>
-            </div>
-            <span class="kmk-stat-value text-slate-400">@_inactiveJobs</span>
-        </div>
-        <div class="kmk-stat-card">
-            <div class="flex items-center justify-between">
-                <span class="kmk-stat-label">En cours</span>
-                <span class="kmk-stat-icon bg-amber-50 text-amber-500">
-                    <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6l4 2M3.284 9A8.25 8.25 0 1 1 3 12" /></svg>
-                </span>
-            </div>
-            <span class="kmk-stat-value text-amber-500">@_runningCount</span>
-        </div>
-        <div class="kmk-stat-card">
-            <div class="flex items-center justify-between">
-                <span class="kmk-stat-label">Réussis (24h)</span>
-                <span class="kmk-stat-icon bg-emerald-50 text-emerald-600">
-                    <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>
-                </span>
-            </div>
-            <span class="kmk-stat-value text-emerald-600">@_successCount</span>
-        </div>
-        <div class="kmk-stat-card">
-            <div class="flex items-center justify-between">
-                <span class="kmk-stat-label">Échoués (24h)</span>
-                <span class="kmk-stat-icon bg-red-50 text-red-500">
-                    <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" /></svg>
-                </span>
-            </div>
-            <span class="kmk-stat-value text-red-600">@_failedCount</span>
-        </div>
-        <div class="kmk-stat-card">
-            <div class="flex items-center justify-between">
-                <span class="kmk-stat-label">Fichiers traités (24h)</span>
-                <span class="kmk-stat-icon bg-sky-50 text-sky-600">
-                    <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75M3.75 6.75h16.5M3.75 6.75v10.5A2.25 2.25 0 0 0 6 19.5h12a2.25 2.25 0 0 0 2.25-2.25V6.75m-16.5 0A2.25 2.25 0 0 1 6 4.5h12a2.25 2.25 0 0 1 2.25 2.25" /></svg>
-                </span>
-            </div>
-            <span class="kmk-stat-value text-sky-600">@_filesProcessed</span>
+
+        <div class="flex items-center gap-2.5 text-xs flex-wrap">
+            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                <span>📤 Envoyés :</span> <strong class="text-white">@_totalEnvoyes</strong>
+            </span>
+            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-sky-500/20 text-sky-300 border border-sky-500/30">
+                <span>📥 Récupérés :</span> <strong class="text-white">@_totalRecuperes</strong>
+            </span>
+            <button type="button" @onclick="ExportBilanCsv" class="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white border border-white/20 text-xs font-semibold flex items-center gap-1 transition-colors">
+                <svg class="h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                </svg>
+                <span>Export CSV</span>
+            </button>
         </div>
     </div>
 
-    <p class="text-sm text-slate-500 mb-6">
-        Durée moyenne des traitements (24h) : <span class="font-medium text-slate-800">@_avgDurationSeconds.ToString("F1") s</span>
-    </p>
+    <!-- Répartition Visuelle des Volumes par Compagnie Maritime -->
+    @if (_armateurStats.Count > 0)
+    {
+        var grandTotal = _armateurStats.Sum(a => a.TotalFichiers);
+        if (grandTotal > 0)
+        {
+            <div class="px-5 py-3 bg-slate-850 bg-slate-900/95 border-b border-slate-700/60 text-white">
+                <div class="flex items-center justify-between text-xs mb-2">
+                    <span class="text-slate-300 font-semibold flex items-center gap-1.5">
+                        <span>📊</span> <span>Part de marché des échanges EDI (@grandTotal fichiers au total)</span>
+                    </span>
+                    <span class="text-[11px] text-slate-400 font-mono">100% traçabilité portuaire</span>
+                </div>
+                <!-- Stacked Progress Bar -->
+                <div class="h-3 w-full bg-slate-800 rounded-full flex overflow-hidden shadow-inner gap-0.5 p-0.5">
+                    @foreach (var arm in _armateurStats)
+                    {
+                        var pct = Math.Max(3, (arm.TotalFichiers * 100) / grandTotal);
+                        var bgClass = GetArmateurColorClass(arm.Armateur);
+                        <div class="@bgClass h-full rounded-xs transition-all duration-500" style="width: @pct%" title="@arm.Armateur : @arm.TotalFichiers fichier(s) (@pct%)"></div>
+                    }
+                </div>
+                <!-- Legend Badges -->
+                <div class="flex flex-wrap items-center gap-3 mt-2.5 pt-1 text-xs">
+                    @foreach (var arm in _armateurStats)
+                    {
+                        var pct = (arm.TotalFichiers * 100) / grandTotal;
+                        var dotClass = GetArmateurDotClass(arm.Armateur);
+                        <span class="inline-flex items-center gap-1.5 text-slate-300">
+                            <span class="h-2 w-2 rounded-full @dotClass"></span>
+                            <span class="font-bold text-white">@arm.Armateur</span>
+                            <span class="text-[11px] text-slate-400 font-mono">@pct% (@arm.TotalFichiers)</span>
+                        </span>
+                    }
+                </div>
+            </div>
+        }
+    }
 
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div class="kmk-card">
-            <div class="kmk-card-header">Prochaines exécutions planifiées</div>
-            <div class="kmk-card-body overflow-x-auto">
+    <div class="kmk-card-body p-0 overflow-x-auto">
+        @if (_armateurStats.Count == 0)
+        {
+            <div class="p-8 text-center text-slate-400 text-sm">
+                <p>Aucun flux de fichier associé à un armateur n'a encore été traité.</p>
+                <p class="text-xs text-slate-400 mt-1">Indiquez le nom de l'armateur (ex: MSC, CMA CGM, MAERSK) dans la configuration de l'étape de transfert ou dans le nom du job.</p>
+            </div>
+        }
+        else
+        {
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="border-b border-slate-100 bg-slate-50/70 text-slate-600">
+                        <th class="px-5 py-3">Armateur / Ligne Maritime</th>
+                        <th class="py-3">Fichiers Envoyés (📤 Upload)</th>
+                        <th class="py-3">Fichiers Récupérés (📥 Download)</th>
+                        <th class="py-3">Total Échangé</th>
+                        <th class="py-3">Dernier Fichier Traité</th>
+                        <th class="px-5 py-3 text-right">Dernier Échange</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                    @foreach (var arm in _armateurStats)
+                    {
+                        var total = arm.TotalFichiers > 0 ? arm.TotalFichiers : 1;
+                        var pctEnvoye = (arm.FichiersEnvoyes * 100) / total;
+                        var pctRecupere = 100 - pctEnvoye;
+
+                        <tr class="hover:bg-slate-50/80 transition-colors">
+                            <td class="px-5 py-3">
+                                <div class="flex items-center gap-2.5">
+                                    <div class="h-8 w-8 rounded-lg bg-slate-100 border border-slate-200 text-slate-700 flex items-center justify-center font-bold text-xs uppercase shadow-xs">
+                                        @arm.Armateur.Substring(0, Math.Min(3, arm.Armateur.Length))
+                                    </div>
+                                    <div>
+                                        <div class="font-bold text-slate-900 text-sm">@arm.Armateur</div>
+                                        <div class="text-[11px] text-slate-400">@arm.TotalExecutions exécution(s) enregistrée(s)</div>
+                                    </div>
+                                </div>
+                            </td>
+                            <td class="py-3">
+                                <div class="flex items-center gap-2">
+                                    <span class="inline-flex items-center gap-1 font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded text-xs border border-emerald-100">
+                                        <span>📤</span> @arm.FichiersEnvoyes fichier(s)
+                                    </span>
+                                </div>
+                            </td>
+                            <td class="py-3">
+                                <div class="flex items-center gap-2">
+                                    <span class="inline-flex items-center gap-1 font-bold text-sky-700 bg-sky-50 px-2 py-0.5 rounded text-xs border border-sky-100">
+                                        <span>📥</span> @arm.FichiersRecuperes fichier(s)
+                                    </span>
+                                </div>
+                            </td>
+                            <td class="py-3">
+                                <div class="flex flex-col gap-1 w-36">
+                                    <div class="flex justify-between text-xs font-semibold">
+                                        <span class="text-slate-800">@arm.TotalFichiers</span>
+                                        <span class="text-[10px] text-slate-400">@pctEnvoye% / @pctRecupere%</span>
+                                    </div>
+                                    <div class="h-1.5 w-full bg-slate-100 rounded-full flex overflow-hidden">
+                                        <div class="bg-emerald-500 h-full" style="width: @pctEnvoye%"></div>
+                                        <div class="bg-sky-500 h-full" style="width: @pctRecupere%"></div>
+                                    </div>
+                                </div>
+                            </td>
+                            <td class="py-3">
+                                @if (!string.IsNullOrEmpty(arm.DernierFichier))
+                                {
+                                    <span class="font-mono text-xs text-slate-700 bg-slate-100 px-2 py-0.5 rounded border border-slate-200 truncate inline-block max-w-[200px]" title="@arm.DernierFichier">
+                                        @arm.DernierFichier
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span class="text-slate-400 text-xs italic">En attente de transmission</span>
+                                }
+                            </td>
+                            <td class="px-5 py-3 text-right text-xs text-slate-500">
+                                @(arm.DernierEchange?.ToLocalTime().ToString("g") ?? "-")
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </div>
+</div>
+
+<!-- Live Execution Stream (Activité récente des flux) -->
+<div class="kmk-card mb-6">
+    <div class="kmk-card-header flex items-center justify-between">
+        <div class="flex items-center gap-2">
+            <span class="h-2.5 w-2.5 rounded-full bg-brand-500 @(_runningCount > 0 ? "animate-ping" : "")"></span>
+            <span class="font-bold text-slate-900">Activité récente des flux automatisés</span>
+        </div>
+        <a href="executions" class="text-xs font-semibold text-brand-600 hover:text-brand-800 flex items-center gap-1">
+            Voir tout l'historique →
+        </a>
+    </div>
+    <div class="kmk-card-body p-0 overflow-x-auto">
+        @if (_recentExecutions.Count == 0)
+        {
+            <div class="p-8 text-center text-slate-400 text-sm">
+                Aucune exécution enregistrée récemment.
+            </div>
+        }
+        else
+        {
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="border-b border-slate-100 bg-slate-50/50">
+                        <th class="px-5 py-3">Job</th>
+                        <th class="py-3">Statut</th>
+                        <th class="py-3">Déclencheur</th>
+                        <th class="py-3">Date &amp; Heure</th>
+                        <th class="py-3">Durée</th>
+                        <th class="py-3">Fichiers</th>
+                        <th class="px-5 py-3 text-right">Action</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                    @foreach (var ex in _recentExecutions)
+                    {
+                        <tr class="hover:bg-slate-50/80 transition-colors">
+                            <td class="px-5 py-3 font-semibold text-slate-900">
+                                <a href="executions/@ex.Id" class="hover:underline flex items-center gap-2">
+                                    <span class="text-slate-400">⚡</span>
+                                    @ex.Job?.Name
+                                </a>
+                            </td>
+                            <td class="py-3">
+                                <span class="@StatusBadge(ex.Status) px-2.5 py-0.5 text-xs font-semibold rounded-full inline-flex items-center gap-1.5">
+                                    @if (ex.Status == JobStatus.EnCours)
+                                    {
+                                        <span class="h-1.5 w-1.5 rounded-full bg-amber-500 animate-ping"></span>
+                                    }
+                                    @ex.Status
+                                </span>
+                            </td>
+                            <td class="py-3 text-slate-500 text-xs">@ex.TriggeredBy</td>
+                            <td class="py-3 text-slate-500 text-xs">
+                                @ex.StartedAt.ToLocalTime().ToString("g")
+                            </td>
+                            <td class="py-3 text-slate-600 font-mono text-xs">
+                                @(ex.Duration?.ToString(@"hh\:mm\:ss") ?? "-")
+                            </td>
+                            <td class="py-3">
+                                @{
+                                    var fileCount = ex.StepLogs
+                                        .Where(l => !string.IsNullOrEmpty(l.FilesProcessedCsv))
+                                        .Sum(l => l.FilesProcessedCsv!.Split(new[] { ';', ',' }, StringSplitOptions.RemoveEmptyEntries).Length);
+                                }
+                                @if (fileCount > 0)
+                                {
+                                    <span class="px-2 py-0.5 rounded bg-sky-50 text-sky-700 text-xs font-medium border border-sky-100">
+                                        📁 @fileCount
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span class="text-slate-400 text-xs">-</span>
+                                }
+                            </td>
+                            <td class="px-5 py-3 text-right">
+                                <div class="flex items-center justify-end gap-1.5">
+                                    @if (ex.Status == JobStatus.EnCours || ExecutionCoordinator.IsExecutionRunning(ex.Id))
+                                    {
+                                        <AuthorizeView Roles="Administrateur,Superviseur,Exploitant">
+                                            <button type="button" class="kmk-btn-stop kmk-btn-xs flex items-center gap-1 animate-pulse"
+                                                    @onclick="() => StopRunningExecution(ex)"
+                                                    title="Arrêter immédiatement cette exécution en cours">
+                                                <svg class="h-3 w-3 text-rose-700" xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 24 24"><path d="M5.25 5.25h13.5v13.5H5.25z"/></svg>
+                                                <span>Arrêter</span>
+                                            </button>
+                                        </AuthorizeView>
+                                    }
+                                    <a href="executions/@ex.Id" class="kmk-btn-secondary text-xs py-1 px-2.5">
+                                        @(ex.Status == JobStatus.Echec ? "🪄 Diagnostic" : "Détails")
+                                    </a>
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </div>
+</div>
+
+<!-- Split Grid: Operations & Infrastructure -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+    <!-- Prochaines Exécutions Planifiées -->
+    <div class="kmk-card flex flex-col justify-between">
+        <div>
+            <div class="kmk-card-header flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <svg class="h-4 w-4 text-brand-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
+                    <span>Prochaines exécutions planifiées</span>
+                </div>
+                <span class="text-xs text-slate-400">@_upcoming.Count planifiée(s)</span>
+            </div>
+            <div class="kmk-card-body p-0 overflow-x-auto">
                 @if (_upcoming.Count == 0)
                 {
-                    <p class="text-sm text-slate-400">Aucune exécution planifiée.</p>
+                    <div class="p-8 text-center text-slate-400 text-sm">
+                        <p>Aucune exécution automatique planifiée pour le moment.</p>
+                        <a href="jobs" class="text-xs text-brand-600 font-semibold mt-2 inline-block">Configurer un déclencheur cron ou intervalle →</a>
+                    </div>
                 }
                 else
                 {
-                    <table>
-                        <thead><tr><th>Job</th><th>Déclencheur</th><th>Prochaine exécution</th></tr></thead>
-                        <tbody>
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="border-b border-slate-100 bg-slate-50/50">
+                                <th class="px-5 py-2.5">Job</th>
+                                <th class="py-2.5">Type</th>
+                                <th class="py-2.5">Prochaine échéance</th>
+                                <th class="px-5 py-2.5 text-right">Délai</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-100">
                             @foreach (var t in _upcoming)
                             {
-                                <tr>
-                                    <td class="font-medium text-slate-700">@t.Job?.Name</td>
-                                    <td class="text-slate-500">@t.Type</td>
-                                    <td class="text-slate-500">@t.NextRunAt?.ToLocalTime().ToString("g")</td>
-                                </tr>
-                            }
-                        </tbody>
-                    </table>
-                }
-            </div>
-        </div>
-
-        <div class="kmk-card">
-            <div class="kmk-card-header">Derniers incidents</div>
-            <div class="kmk-card-body overflow-x-auto">
-                @if (_recentIncidents.Count == 0)
-                {
-                    <p class="text-sm text-slate-400">Aucun incident récent.</p>
-                }
-                else
-                {
-                    <table>
-                        <thead><tr><th>Job</th><th>Début</th><th>Étape en cause</th><th>Pourquoi</th></tr></thead>
-                        <tbody>
-                            @foreach (var e in _recentIncidents)
-                            {
-                                var failingStep = e.StepLogs
-                                    .Where(l => l.Status is StepExecutionStatus.Echec or StepExecutionStatus.Timeout)
-                                    .OrderBy(l => l.Order).FirstOrDefault();
-                                <tr>
-                                    <td><a href="@($"executions/{e.Id}")" class="font-medium">@e.Job?.Name</a></td>
-                                    <td class="text-slate-500">@e.StartedAt.ToLocalTime().ToString("g")</td>
-                                    <td class="text-slate-500">@(failingStep?.StepName ?? "-")</td>
-                                    <td class="text-slate-500 truncate max-w-xs" title="@(failingStep?.ErrorOutput ?? e.Message)">
-                                        @(failingStep?.ErrorOutput ?? e.Message)
+                                var timeRemaining = t.NextRunAt.HasValue ? t.NextRunAt.Value - DateTime.UtcNow : TimeSpan.Zero;
+                                <tr class="hover:bg-slate-50/80 transition-colors">
+                                    <td class="px-5 py-3 font-semibold text-slate-800">
+                                        <AuthorizeView Roles="Administrateur,Developpeur" Context="jobCtx">
+                                            <Authorized>
+                                                <a href="jobs/@t.JobId" class="hover:underline text-slate-800 hover:text-brand-600">
+                                                    @t.Job?.Name
+                                                </a>
+                                            </Authorized>
+                                            <NotAuthorized>
+                                                <span class="text-slate-800">
+                                                    @t.Job?.Name
+                                                </span>
+                                            </NotAuthorized>
+                                        </AuthorizeView>
+                                    </td>
+                                    <td class="py-3">
+                                        <span class="px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-100 text-slate-700">
+                                            @t.Type
+                                        </span>
+                                    </td>
+                                    <td class="py-3 text-slate-600 text-xs">
+                                        @t.NextRunAt?.ToLocalTime().ToString("g")
+                                    </td>
+                                    <td class="px-5 py-3 text-right">
+                                        <span class="px-2 py-0.5 rounded-full text-[11px] font-medium bg-brand-50 text-brand-700 border border-brand-100">
+                                            @FormatCountdown(timeRemaining)
+                                        </span>
                                     </td>
                                 </tr>
                             }
@@ -162,57 +579,492 @@ else
             </div>
         </div>
     </div>
-}
+
+    <!-- Connecteurs Distants Détectés (SFTP / FTP / SMB Hub) -->
+    <div class="kmk-card flex flex-col justify-between">
+        <div>
+            <div class="kmk-card-header flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <svg class="h-4 w-4 text-emerald-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 14.25h13.5m-13.5 0a3 3 0 0 1-3-3m3 3a3 3 0 1 0 0 6h13.5a3 3 0 1 0 0-6m-16.5-3a3 3 0 0 1 3-3h13.5a3 3 0 0 1 3 3m-19.5 0a4.5 4.5 0 0 1 .9-2.7L5.75 5.1a2.25 2.25 0 0 1 1.7-1.1h9.1a2.25 2.25 0 0 1 1.7 1.1l2.1 3.45a4.5 4.5 0 0 1 .9 2.7" /></svg>
+                    <span>Connecteurs distants &amp; Accès rapides</span>
+                </div>
+                <AuthorizeView Roles="Administrateur,Developpeur">
+                    <a href="credentials" class="text-xs font-semibold text-brand-600 hover:text-brand-800">Gérer les comptes →</a>
+                </AuthorizeView>
+            </div>
+            <div class="kmk-card-body p-0 overflow-x-auto">
+                @if (_remoteCredentials.Count == 0)
+                {
+                    <div class="p-8 text-center text-slate-400 text-sm">
+                        <p>Aucun serveur distant configuré avec un hôte SFTP/FTP.</p>
+                        <AuthorizeView Roles="Administrateur,Developpeur">
+                            <a href="credentials" class="text-xs text-brand-600 font-semibold mt-2 inline-block">Ajouter un identifiant serveur distant →</a>
+                        </AuthorizeView>
+                    </div>
+                }
+                else
+                {
+                    <div class="divide-y divide-slate-100">
+                        @foreach (var cred in _remoteCredentials)
+                        {
+                            <div class="p-4 flex items-center justify-between hover:bg-slate-50/70 transition-colors">
+                                <div class="flex items-center gap-3">
+                                    <div class="h-9 w-9 rounded-xl bg-slate-100 flex items-center justify-center font-bold text-xs text-slate-600">
+                                        @(cred.Type == CredentialType.FtpSftp ? "SFTP" : "SRV")
+                                    </div>
+                                    <div>
+                                        <div class="font-bold text-slate-900 text-sm flex items-center gap-2">
+                                            @cred.Name
+                                            <span class="text-[11px] font-mono text-slate-400 font-normal">(@cred.Host)</span>
+                                        </div>
+                                        <div class="text-xs text-slate-500 flex items-center gap-2">
+                                            <span>Port : @(cred.Port ?? 22)</span>
+                                            <span>•</span>
+                                            <span>Utilisateur : @(cred.Username ?? "N/A")</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <AuthorizeView Roles="Administrateur,Developpeur,Superviseur,Exploitant">
+                                    <a href="explorer" class="kmk-btn-secondary text-xs py-1.5 px-3 flex items-center gap-1.5 shadow-sm">
+                                        <svg class="h-3.5 w-3.5 text-brand-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z" /></svg>
+                                        Explorer
+                                    </a>
+                                </AuthorizeView>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Supervision des Incidents Récents & Diagnostic Intelligent -->
+<div class="kmk-card">
+    <div class="kmk-card-header flex items-center justify-between">
+        <div class="flex items-center gap-2">
+            <span class="h-2.5 w-2.5 rounded-full @(_recentIncidents.Count > 0 ? "bg-rose-500" : "bg-emerald-500")"></span>
+            <span class="font-bold text-slate-900">Derniers incidents &amp; Diagnostics</span>
+        </div>
+        @if (_recentIncidents.Count > 0)
+        {
+            <span class="px-2 py-0.5 rounded-full text-xs font-semibold bg-rose-100 text-rose-700">
+                @_recentIncidents.Count incident(s)
+            </span>
+        }
+    </div>
+    <div class="kmk-card-body p-0 overflow-x-auto">
+        @if (_recentIncidents.Count == 0)
+        {
+            <div class="p-8 text-center flex flex-col items-center justify-center">
+                <div class="h-12 w-12 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mb-2">
+                    <svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
+                </div>
+                <div class="font-semibold text-slate-800 text-sm">Tout est au vert !</div>
+                <p class="text-xs text-slate-400 max-w-sm mt-0.5">Aucun échec de traitement n'a été enregistré sur les dernières 24 heures. Vos flux automatisés tournent sans encombre.</p>
+            </div>
+        }
+        else
+        {
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="border-b border-slate-100 bg-rose-50/30">
+                        <th class="px-5 py-3">Job en échec</th>
+                        <th class="py-3">Date</th>
+                        <th class="py-3">Étape défaillante</th>
+                        <th class="py-3">Cause résumée</th>
+                        <th class="px-5 py-3 text-right">Diagnostic</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                    @foreach (var e in _recentIncidents)
+                    {
+                        var failingStep = e.StepLogs
+                            .Where(l => l.Status is StepExecutionStatus.Echec or StepExecutionStatus.Timeout)
+                            .OrderBy(l => l.Order)
+                            .FirstOrDefault();
+
+                        <tr class="hover:bg-rose-50/20 transition-colors">
+                            <td class="px-5 py-3">
+                                <a href="executions/@e.Id" class="font-bold text-rose-800 hover:underline flex items-center gap-1.5">
+                                    <span class="text-rose-500">⚠</span>
+                                    @e.Job?.Name
+                                </a>
+                            </td>
+                            <td class="py-3 text-slate-500 text-xs">@e.StartedAt.ToLocalTime().ToString("g")</td>
+                            <td class="py-3 text-slate-700 font-medium text-xs">
+                                @(failingStep?.StepName ?? "Étape inconnue")
+                            </td>
+                            <td class="py-3 text-slate-500 text-xs max-w-xs truncate" title="@(failingStep?.ErrorOutput ?? e.Message)">
+                                @(failingStep?.ErrorOutput ?? e.Message ?? "Erreur indéterminée")
+                            </td>
+                            <td class="px-5 py-3 text-right">
+                                <a href="executions/@e.Id" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-sm transition-colors">
+                                    <span>🪄 Voir Diagnostic</span>
+                                    <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" /></svg>
+                                </a>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </div>
+</div>
 
 @code {
-    private bool _loading = true;
+    private bool _refreshing = false;
+    private string? _loadError = null;
     private int _totalJobs;
     private int _activeJobs, _inactiveJobs, _runningCount, _successCount, _failedCount, _filesProcessed;
+    private int _successRate = 100;
     private double _avgDurationSeconds;
     private List<JobTrigger> _upcoming = new();
     private List<JobExecution> _recentIncidents = new();
+    private List<JobExecution> _recentExecutions = new();
+    private List<Credential> _remoteCredentials = new();
+
+    // Armateur Flux Statistics (Sent vs Received)
+    private List<ArmateurStat> _armateurStats = new();
+    private int _totalEnvoyes = 0;
+    private int _totalRecuperes = 0;
+
+    // Live Real-Time Auto-Refresh
+    private bool _autoRefresh = true;
+    private CancellationTokenSource? _cts;
+
+    public class ArmateurStat
+    {
+        public string Armateur { get; set; } = string.Empty;
+        public int FichiersEnvoyes { get; set; }   // Uploads
+        public int FichiersRecuperes { get; set; } // Downloads
+        public int TotalFichiers => FichiersEnvoyes + FichiersRecuperes;
+        public int TotalExecutions { get; set; }
+        public DateTime? DernierEchange { get; set; }
+        public string? DernierFichier { get; set; }
+    }
 
     protected override async Task OnInitializedAsync()
     {
-        await using var db = await DbFactory.CreateDbContextAsync();
+        await LoadDashboardAsync();
+        StartRealTimeTimer();
+    }
 
-        _totalJobs = await db.Jobs.CountAsync();
-        _activeJobs = await db.Jobs.CountAsync(j => j.Enabled);
-        _inactiveJobs = await db.Jobs.CountAsync(j => !j.Enabled);
-        _runningCount = await db.JobExecutions.CountAsync(e => e.Status == JobStatus.EnCours);
+    private void StartRealTimeTimer()
+    {
+        _cts?.Cancel();
+        _cts = new CancellationTokenSource();
+        _ = RunRealTimeLoopAsync(_cts.Token);
+    }
 
-        var since = DateTime.UtcNow.AddHours(-24);
-        var recent = db.JobExecutions.Where(e => e.StartedAt >= since && e.FinishedAt != null);
-        _successCount = await recent.CountAsync(e => e.Status == JobStatus.Succes);
-        _failedCount = await recent.CountAsync(e => e.Status == JobStatus.Echec);
+    private async Task RunRealTimeLoopAsync(CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+        while (!ct.IsCancellationRequested && await timer.WaitForNextTickAsync(ct))
+        {
+            if (_autoRefresh && !_refreshing)
+            {
+                await InvokeAsync(async () =>
+                {
+                    await LoadDashboardAsync();
+                    StateHasChanged();
+                });
+            }
+        }
+    }
 
-        var timestamps = await recent.Select(e => new { e.StartedAt, e.FinishedAt }).ToListAsync();
-        _avgDurationSeconds = timestamps.Count > 0
-            ? timestamps.Average(t => (t.FinishedAt!.Value - t.StartedAt).TotalSeconds)
-            : 0;
+    private void ToggleAutoRefresh()
+    {
+        _autoRefresh = !_autoRefresh;
+    }
 
-        var fileLogs = await db.StepExecutionLogs
-            .Include(l => l.JobExecution)
-            .Where(l => l.JobExecution!.StartedAt >= since && l.FilesProcessedCsv != null && l.FilesProcessedCsv != "")
-            .Select(l => l.FilesProcessedCsv)
-            .ToListAsync();
-        _filesProcessed = fileLogs.Sum(csv => csv!.Split(';', StringSplitOptions.RemoveEmptyEntries).Length);
+    private async Task LoadDashboardAsync()
+    {
+        _refreshing = true;
+        _loadError = null;
 
-        _upcoming = await db.JobTriggers
-            .Include(t => t.Job)
-            .Where(t => t.Enabled && t.NextRunAt != null && t.Job!.Enabled)
-            .OrderBy(t => t.NextRunAt)
-            .Take(10)
-            .ToListAsync();
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
 
-        _recentIncidents = await db.JobExecutions
-            .Include(e => e.Job)
-            .Include(e => e.StepLogs)
-            .Where(e => e.Status == JobStatus.Echec)
-            .OrderByDescending(e => e.StartedAt)
-            .Take(10)
-            .ToListAsync();
+            _totalJobs = await db.Jobs.CountAsync();
+            _activeJobs = await db.Jobs.CountAsync(j => j.Enabled);
+            _inactiveJobs = await db.Jobs.CountAsync(j => !j.Enabled);
+            _runningCount = await db.JobExecutions.CountAsync(e => e.Status == JobStatus.EnCours);
 
-        _loading = false;
+            var since = DateTime.UtcNow.AddHours(-24);
+            var recent = db.JobExecutions.Where(e => e.StartedAt >= since && e.FinishedAt != null);
+            _successCount = await recent.CountAsync(e => e.Status == JobStatus.Succes);
+            _failedCount = await recent.CountAsync(e => e.Status == JobStatus.Echec);
+
+            var totalRuns = _successCount + _failedCount;
+            _successRate = totalRuns > 0 ? (_successCount * 100 / totalRuns) : 100;
+
+            var timestamps = await recent.Select(e => new { e.StartedAt, e.FinishedAt }).ToListAsync();
+            _avgDurationSeconds = timestamps.Count > 0
+                ? timestamps.Where(t => t.FinishedAt.HasValue).Select(t => (t.FinishedAt!.Value - t.StartedAt).TotalSeconds).DefaultIfEmpty(0).Average()
+                : 0;
+
+            // Fichiers traités
+            var executionIds = await db.JobExecutions
+                .Where(e => e.StartedAt >= since)
+                .Select(e => e.Id)
+                .ToListAsync();
+
+            var fileLogs = await db.StepExecutionLogs
+                .Where(l => executionIds.Contains(l.JobExecutionId) && !string.IsNullOrEmpty(l.FilesProcessedCsv))
+                .Select(l => l.FilesProcessedCsv)
+                .ToListAsync();
+
+            _filesProcessed = fileLogs.Sum(csv => csv!.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries).Length);
+
+            // Prochaines planifications
+            _upcoming = await db.JobTriggers
+                .Include(t => t.Job)
+                .Where(t => t.Enabled && t.NextRunAt != null && t.Job != null && t.Job.Enabled)
+                .OrderBy(t => t.NextRunAt)
+                .Take(6)
+                .ToListAsync();
+
+            // Flux récent (6 dernières exécutions)
+            _recentExecutions = await db.JobExecutions
+                .Include(e => e.Job)
+                .Include(e => e.StepLogs)
+                .OrderByDescending(e => e.StartedAt)
+                .Take(6)
+                .ToListAsync();
+
+            // Incidents récents (6 derniers échecs)
+            _recentIncidents = await db.JobExecutions
+                .Include(e => e.Job)
+                .Include(e => e.StepLogs)
+                .Where(e => e.Status == JobStatus.Echec)
+                .OrderByDescending(e => e.StartedAt)
+                .Take(6)
+                .ToListAsync();
+
+            // Serveurs distants configurés
+            _remoteCredentials = await db.Credentials
+                .Where(c => !string.IsNullOrEmpty(c.Host))
+                .OrderBy(c => c.Name)
+                .Take(5)
+                .ToListAsync();
+
+            // CALCUL DU NOMBRE DE FICHIERS ENVOYÉS ET RÉCUPÉRÉS PAR ARMATEUR
+            var transferSteps = await db.JobSteps
+                .Include(s => s.Job)
+                .Include(s => s.Credential)
+                .Where(s => s.Type == StepType.TransfertSftp || s.Type == StepType.TransfertFtp || s.Type == StepType.TransfertFtps || s.Type == StepType.TransfertSmb)
+                .ToListAsync();
+
+            var stepConfigs = new Dictionary<Guid, (string Armateur, bool Upload)>();
+            foreach (var step in transferSteps)
+            {
+                try
+                {
+                    var cfg = JsonSerializer.Deserialize<TransferStepConfig>(step.ConfigJson);
+                    var upload = cfg?.Upload ?? true;
+                    var armateur = cfg?.Armateur;
+                    if (string.IsNullOrWhiteSpace(armateur))
+                    {
+                        armateur = DetectArmateur(step.Credential?.Name, step.Job?.Name, step.Name);
+                    }
+                    stepConfigs[step.Id] = (armateur, upload);
+                }
+                catch
+                {
+                    stepConfigs[step.Id] = (DetectArmateur(step.Credential?.Name, step.Job?.Name, step.Name), true);
+                }
+            }
+
+            var logs = await db.StepExecutionLogs
+                .Where(l => !string.IsNullOrEmpty(l.FilesProcessedCsv))
+                .OrderByDescending(l => l.FinishedAt ?? l.StartedAt)
+                .Take(500)
+                .ToListAsync();
+
+            var dict = new Dictionary<string, ArmateurStat>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var log in logs)
+            {
+                var files = log.FilesProcessedCsv!.Split(new[] { ';', ',' }, StringSplitOptions.RemoveEmptyEntries);
+                if (files.Length == 0) continue;
+
+                string armateur;
+                bool isUpload = true;
+
+                if (stepConfigs.TryGetValue(log.JobStepId, out var info))
+                {
+                    armateur = info.Armateur;
+                    isUpload = info.Upload;
+                }
+                else
+                {
+                    armateur = DetectArmateur(log.StepName);
+                }
+
+                if (!dict.TryGetValue(armateur, out var stat))
+                {
+                    stat = new ArmateurStat { Armateur = armateur };
+                    dict[armateur] = stat;
+                }
+
+                stat.TotalExecutions++;
+                if (isUpload)
+                {
+                    stat.FichiersEnvoyes += files.Length;
+                }
+                else
+                {
+                    stat.FichiersRecuperes += files.Length;
+                }
+
+                var logDate = log.FinishedAt ?? log.StartedAt;
+                if (stat.DernierEchange == null || logDate > stat.DernierEchange)
+                {
+                    stat.DernierEchange = logDate;
+                    stat.DernierFichier = Path.GetFileName(files.Last().Trim());
+                }
+            }
+
+            // Si des armateurs sont configurés dans les étapes sans logs récents, les inclure avec 0
+            foreach (var step in transferSteps)
+            {
+                if (stepConfigs.TryGetValue(step.Id, out var info) && !string.IsNullOrWhiteSpace(info.Armateur))
+                {
+                    if (!dict.ContainsKey(info.Armateur))
+                    {
+                        dict[info.Armateur] = new ArmateurStat { Armateur = info.Armateur };
+                    }
+                }
+            }
+
+            _armateurStats = dict.Values.OrderByDescending(s => s.TotalFichiers).ToList();
+            _totalEnvoyes = _armateurStats.Sum(s => s.FichiersEnvoyes);
+            _totalRecuperes = _armateurStats.Sum(s => s.FichiersRecuperes);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Erreur lors du chargement des métriques du tableau de bord.");
+            _loadError = ex.Message;
+        }
+        finally
+        {
+            _refreshing = false;
+        }
+    }
+
+    private static string DetectArmateur(params string?[] candidates)
+    {
+        var known = new[] { "MSC", "CMA CGM", "CMA-CGM", "MAERSK", "HAPAG-LLOYD", "HAPAG", "COSCO", "ONE", "GRIMALDI", "PIL", "ARKAS", "BOLUDA" };
+        foreach (var text in candidates)
+        {
+            if (string.IsNullOrWhiteSpace(text)) continue;
+            foreach (var k in known)
+            {
+                if (text.Contains(k, StringComparison.OrdinalIgnoreCase)) return k.ToUpper();
+            }
+        }
+        var fallback = candidates.FirstOrDefault(c => !string.IsNullOrWhiteSpace(c));
+        return !string.IsNullOrWhiteSpace(fallback) ? fallback.Trim() : "Partenaire Général";
+    }
+
+    private static string StatusBadge(JobStatus status) => status switch
+    {
+        JobStatus.Succes => "bg-emerald-50 text-emerald-700 border border-emerald-200",
+        JobStatus.Echec => "bg-rose-50 text-rose-700 border border-rose-200",
+        JobStatus.EnCours => "bg-amber-50 text-amber-700 border border-amber-200",
+        JobStatus.Annule => "bg-slate-100 text-slate-700 border border-slate-200",
+        _ => "bg-slate-100 text-slate-700 border border-slate-200"
+    };
+
+    private static string FormatDuration(double seconds)
+    {
+        if (seconds <= 0) return "0 s";
+        if (seconds < 60) return $"{seconds:F1} s";
+        var ts = TimeSpan.FromSeconds(seconds);
+        return $"{(int)ts.TotalMinutes}m {ts.Seconds}s";
+    }
+
+    private static string FormatCountdown(TimeSpan remaining)
+    {
+        if (remaining <= TimeSpan.Zero) return "Imminent";
+        if (remaining.TotalMinutes < 1) return $"dans {remaining.Seconds}s";
+        if (remaining.TotalHours < 1) return $"dans {(int)remaining.TotalMinutes} min";
+        if (remaining.TotalDays < 1) return $"dans {(int)remaining.TotalHours}h {remaining.Minutes}m";
+        return $"dans {(int)remaining.TotalDays}j {remaining.Hours}h";
+    }
+
+    private async Task StopRunningExecution(JobExecution ex)
+    {
+        ExecutionCoordinator.TryStopExecution(ex.Id);
+        ExecutionCoordinator.TryStopJob(ex.JobId);
+        await Task.Delay(400);
+        await LoadDashboardAsync();
+    }
+
+    private static string GetArmateurColorClass(string armateur)
+    {
+        var upper = armateur.ToUpperInvariant();
+        if (upper.Contains("MSC")) return "bg-amber-400";
+        if (upper.Contains("MAERSK")) return "bg-sky-400";
+        if (upper.Contains("CMA") || upper.Contains("CGM")) return "bg-indigo-500";
+        if (upper.Contains("HAPAG")) return "bg-orange-500";
+        if (upper.Contains("COSCO")) return "bg-rose-500";
+        if (upper.Contains("GRIMALDI")) return "bg-emerald-500";
+        return "bg-slate-400";
+    }
+
+    private static string GetArmateurDotClass(string armateur)
+    {
+        var upper = armateur.ToUpperInvariant();
+        if (upper.Contains("MSC")) return "bg-amber-400";
+        if (upper.Contains("MAERSK")) return "bg-sky-400";
+        if (upper.Contains("CMA") || upper.Contains("CGM")) return "bg-indigo-400";
+        if (upper.Contains("HAPAG")) return "bg-orange-400";
+        if (upper.Contains("COSCO")) return "bg-rose-400";
+        if (upper.Contains("GRIMALDI")) return "bg-emerald-400";
+        return "bg-slate-400";
+    }
+
+    private async Task ExportBilanCsv()
+    {
+        var sb = new StringBuilder();
+        sb.Append('\uFEFF');
+        sb.AppendLine("Armateur / Ligne;Fichiers Envoyés (Upload TOS->Armateur);Fichiers Récupérés (Download Armateur->TOS);Total Fichiers Échangés;Total Exécutions;Dernier Échange;Dernier Fichier Traité");
+
+        foreach (var arm in _armateurStats)
+        {
+            var armateur = EscapeCsv(arm.Armateur);
+            var envoyes = arm.FichiersEnvoyes;
+            var recuperes = arm.FichiersRecuperes;
+            var total = arm.TotalFichiers;
+            var execs = arm.TotalExecutions;
+            var date = arm.DernierEchange?.ToLocalTime().ToString("dd/MM/yyyy HH:mm:ss") ?? "-";
+            var fichier = EscapeCsv(arm.DernierFichier ?? "");
+
+            sb.AppendLine($"{armateur};{envoyes};{recuperes};{total};{execs};{date};{fichier}");
+        }
+
+        var bytes = Encoding.UTF8.GetBytes(sb.ToString());
+        var base64 = Convert.ToBase64String(bytes);
+        var fileName = $"bilan-flux-cit-{DateTime.Now:yyyyMMdd-HHmm}.csv";
+
+        await JS.InvokeVoidAsync("kernelMK.downloadFile", fileName, "text/csv;charset=utf-8", base64);
+    }
+
+    private static string EscapeCsv(string value)
+    {
+        if (value.Contains(';') || value.Contains('"') || value.Contains('\n') || value.Contains('\r'))
+        {
+            return string.Concat("\"", value.Replace("\"", "\"\""), "\"");
+        }
+        return value;
+    }
+
+    public void Dispose()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
     }
 }

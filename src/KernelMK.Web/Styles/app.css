@@ -22,17 +22,27 @@
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
 
-  h1 { @apply text-2xl font-bold text-slate-900 tracking-tight; }
+  /* FocusOnNavigate (Routes.razor) met le focus sur le h1 à chaque navigation pour l'accessibilité :
+     on remplace le cadre noir par défaut du navigateur par un anneau discret cohérent avec le reste de l'UI. */
+  h1 { @apply text-2xl font-bold text-slate-900 tracking-tight rounded-md outline-none; }
+  h1:focus-visible, h1:focus { box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25); }
   h3 { @apply text-lg font-semibold text-slate-900; }
   h4 { @apply text-base font-semibold text-slate-900; }
 
   a { @apply text-brand-600 hover:text-brand-700 transition-colors; }
 
-  table { @apply w-full text-sm; }
-  thead th { @apply text-left text-[11px] font-semibold uppercase tracking-wider text-slate-400 border-b border-slate-200 pb-3 pr-4; }
-  tbody td { @apply py-3 pr-4 border-b border-slate-100 align-middle; }
-  tbody tr { @apply transition-colors; }
-  tbody tr:hover { @apply bg-slate-50/80; }
+  table { @apply w-full text-sm border-collapse; }
+  thead { @apply bg-slate-50/80 border-b border-slate-200/90; }
+  thead th { @apply text-left text-[11px] font-bold uppercase tracking-wider text-slate-600 px-4 py-3.5 whitespace-nowrap; }
+  tbody td { @apply px-4 py-3.5 border-b border-slate-100/80 align-middle text-slate-700; }
+  tbody tr { @apply transition-colors duration-150; }
+  tbody tr:hover { @apply bg-indigo-50/25; }
+  tbody tr:last-child td { @apply border-b-0; }
+
+  img {
+    max-width: 100%;
+    height: auto;
+  }
 
   /* Ascenseur fin et discret, look moderne */
   ::-webkit-scrollbar { width: 10px; height: 10px; }
@@ -42,6 +52,30 @@
 }
 
 @layer components {
+  .kmk-logo-cit {
+    height: 32px;
+    max-height: 32px;
+    width: auto;
+    max-width: 140px;
+    object-fit: contain;
+    display: inline-block;
+  }
+  .kmk-logo-cit-sm {
+    height: 28px;
+    max-height: 28px;
+    width: auto;
+    max-width: 110px;
+    object-fit: contain;
+    display: inline-block;
+  }
+  .kmk-logo-cit-lg {
+    height: 44px;
+    max-height: 44px;
+    width: auto;
+    max-width: 170px;
+    object-fit: contain;
+    display: block;
+  }
   .kmk-card {
     @apply bg-white rounded-2xl border border-slate-200/80 shadow-[0_1px_2px_rgba(15,23,42,0.04),0_8px_24px_-12px_rgba(15,23,42,0.08)]
            transition-shadow duration-200;
@@ -70,8 +104,16 @@
   .kmk-btn-secondary { @apply bg-white text-slate-700 border border-slate-200 shadow-sm hover:bg-slate-50 hover:border-slate-300; }
   .kmk-btn-danger { @apply bg-white text-red-600 border border-red-200 shadow-sm hover:bg-red-50 hover:border-red-300; }
   .kmk-btn-success { @apply bg-white text-emerald-700 border border-emerald-200 shadow-sm hover:bg-emerald-50 hover:border-emerald-300; }
+  .kmk-btn-warning { @apply bg-white text-amber-700 border border-amber-200 shadow-sm hover:bg-amber-50 hover:border-amber-300; }
+  .kmk-btn-stop { @apply bg-rose-50 text-rose-700 border border-rose-200 shadow-sm hover:bg-rose-100 hover:border-rose-300 font-semibold; }
+  .kmk-btn-run { @apply bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-sm hover:bg-emerald-100 hover:border-emerald-300 font-semibold; }
   .kmk-btn-sm { @apply px-2.5 py-1.5 text-xs rounded-lg; }
+  .kmk-btn-xs { @apply px-2 py-1 text-[11px] rounded-md; }
   .kmk-btn-icon { @apply p-2; }
+
+  .kmk-table-container {
+    @apply bg-white rounded-2xl border border-slate-200/90 shadow-[0_1px_3px_rgba(15,23,42,0.03),0_6px_16px_-6px_rgba(15,23,42,0.06)] overflow-x-auto;
+  }
 
   .kmk-input, .kmk-select {
     @apply block w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-800 shadow-sm
@@ -93,7 +135,9 @@
   .kmk-badge-success,
   .kmk-badge-danger,
   .kmk-badge-warning,
-  .kmk-badge-info {
+  .kmk-badge-info,
+  .kmk-badge-pause,
+  .kmk-badge-running {
     @apply inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset;
   }
   .kmk-badge-neutral { @apply bg-slate-100 text-slate-600 ring-slate-200; }
@@ -101,6 +145,8 @@
   .kmk-badge-danger { @apply bg-red-50 text-red-700 ring-red-200; }
   .kmk-badge-warning { @apply bg-amber-50 text-amber-700 ring-amber-200; }
   .kmk-badge-info { @apply bg-sky-50 text-sky-700 ring-sky-200; }
+  .kmk-badge-pause { @apply bg-amber-50 text-amber-800 ring-amber-200; }
+  .kmk-badge-running { @apply bg-indigo-50 text-indigo-700 ring-indigo-200; }
 
   .kmk-stat-card {
     @apply bg-white rounded-2xl border border-slate-200/80 shadow-[0_1px_2px_rgba(15,23,42,0.04),0_8px_24px_-12px_rgba(15,23,42,0.08)]
@@ -157,4 +203,61 @@
   .alert { @apply rounded-xl px-4 py-3 text-sm mb-4 ring-1 ring-inset; }
   .alert-danger { @apply bg-red-50 text-red-700 ring-red-200; }
   .alert-success { @apply bg-emerald-50 text-emerald-700 ring-emerald-200; }
+  .alert-warning { @apply bg-amber-50 text-amber-800 ring-amber-200; }
+  .alert-info { @apply bg-sky-50 text-sky-800 ring-sky-200; }
+
+  /*
+   * Compatibilité grille Bootstrap (row/col-*) utilisée par les pages Identity générées
+   * par le template. Empile les colonnes en mobile, applique les largeurs à partir du
+   * palier annoncé par le nom de la classe (comportement mobile-first de Bootstrap).
+   */
+  .row { @apply flex flex-wrap -mx-3; }
+  .row > [class*="col-"] { @apply px-3 w-full; }
+  .col-md-4 { @apply md:w-1/3; }
+  .col-md-6 { @apply md:w-1/2; }
+  .col-md-12 { @apply md:w-full; }
+  .col-lg-3 { @apply lg:w-1/4; }
+  .col-lg-4 { @apply lg:w-1/3; }
+  .col-lg-6 { @apply lg:w-1/2; }
+  .col-lg-9 { @apply lg:w-3/4; }
+  .col-lg-offset-2 { @apply lg:ml-[16.6667%]; }
+  .col-xl-6 { @apply xl:w-1/2; }
+  .w-100 { @apply w-full; }
+  .btn-lg { @apply px-4 py-3 text-base; }
+  .btn-link { @apply bg-transparent shadow-none border-none px-0 py-0 text-xs font-medium text-brand-600 hover:text-brand-700 underline active:scale-100; }
+
+  /* Pages Identity : champs "form-floating" sans le JS/CSS flottant de Bootstrap -> label simple au-dessus du champ */
+  .form-floating { @apply relative mb-1; }
+  .form-floating > label { @apply block text-xs font-semibold text-slate-500 mt-1.5 mb-1.5 tracking-wide order-first; }
+  .form-floating { @apply flex flex-col; }
+  .input-group { @apply relative; }
+  .input-group .form-control { @apply pr-10; }
+  .input-group-append { @apply absolute inset-y-0 right-3 flex items-center; }
+  .input-group-text { @apply text-sm; }
+
+  /* Menu vertical "nav-pills" (ManageNavMenu, ExternalLoginPicker) */
+  .nav-pills { @apply flex flex-col gap-1 list-none p-0 m-0; }
+  .nav-pills .nav-item { @apply list-none; }
+  .nav-pills .nav-link {
+    @apply block rounded-xl px-3.5 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors;
+  }
+  /* Liens de navigation Mon Compte */
+  .kmk-manage-nav-item {
+    @apply flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors;
+  }
+  .kmk-manage-nav-item.active {
+    @apply bg-brand-50 text-brand-700 font-semibold shadow-xs;
+  }
+
+  hr { @apply border-slate-200 my-4; }
+}
+
+/* Dropdown universel <details> pour fonctionnement sur toutes les pages (SSR et Interactive) */
+details.kmk-dropdown summary {
+  list-style: none;
+}
+details.kmk-dropdown summary::-webkit-details-marker,
+details.kmk-dropdown summary::marker {
+  display: none !important;
+  content: "";
 }

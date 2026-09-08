@@ -10,8 +10,15 @@
 
 <PageTitle>Utilisateurs &amp; rôles · kernelMK</PageTitle>
 
-<h1>Utilisateurs &amp; rôles</h1>
-<p class="text-sm text-slate-500 mt-1 mb-4">Crée un compte pour chaque nouvelle personne et attribue-lui le rôle correspondant à ses besoins.</p>
+<div class="mb-4">
+    <h1 class="flex items-center gap-2.5">
+        <span class="h-9 w-9 rounded-xl bg-brand-50 text-brand-600 flex items-center justify-center shadow-sm">
+            <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.952 4.125 4.125 0 0 0-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 0 1 8.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0 1 11.964-3.07M12 6.375a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0Zm8.25 2.25a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z" /></svg>
+        </span>
+        Utilisateurs &amp; rôles
+    </h1>
+    <p class="text-sm text-slate-500 mt-1">Crée un compte pour chaque nouvelle personne et attribue-lui le rôle correspondant à ses besoins.</p>
+</div>
 
 <div class="kmk-card mb-6">
     <div class="kmk-card-body grid grid-cols-1 sm:grid-cols-5 gap-4 text-xs">
@@ -64,25 +71,36 @@
 }
 else
 {
-    <div class="kmk-card overflow-x-auto">
-        <table>
-            <thead><tr><th>Email</th><th>Nom</th><th>Actif</th><th>Rôles</th></tr></thead>
+    <div class="kmk-table-container">
+        <table class="kmk-table">
+            <thead>
+                <tr>
+                    <th class="min-w-[200px]">Email</th>
+                    <th class="min-w-[150px]">Nom affiché</th>
+                    <th class="min-w-[120px]">Statut du compte</th>
+                    <th>Rôles attribués</th>
+                </tr>
+            </thead>
             <tbody>
                 @foreach (var u in _users)
                 {
                     <tr>
-                        <td class="font-medium">@u.Email</td>
-                        <td class="text-slate-500">@u.DisplayName</td>
+                        <td class="font-semibold text-slate-900 text-sm">@u.Email</td>
+                        <td class="text-slate-600 text-sm">@(string.IsNullOrWhiteSpace(u.DisplayName) ? "-" : u.DisplayName)</td>
                         <td>
-                            <input type="checkbox" class="kmk-checkbox" checked="@u.Active" @onchange="e => ToggleActiveAsync(u, (bool)e.Value!)" />
+                            <button type="button" @onclick="() => ToggleActiveAsync(u, !u.Active)"
+                                    class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold @(u.Active ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-slate-100 text-slate-500 border border-slate-200") hover:opacity-80 transition-opacity cursor-pointer">
+                                <span class="h-1.5 w-1.5 rounded-full @(u.Active ? "bg-emerald-500" : "bg-slate-400")"></span>
+                                @(u.Active ? "Actif" : "Désactivé")
+                            </button>
                         </td>
                         <td>
-                            <div class="flex flex-wrap gap-3">
+                            <div class="flex flex-wrap gap-2.5">
                                 @foreach (var r in DbInitializer.AllRoles)
                                 {
                                     var hasRole = _userRoles.TryGetValue(u.Id, out var roles) && roles.Contains(r);
-                                    <label class="flex items-center gap-1.5 text-xs text-slate-600">
-                                        <input type="checkbox" class="kmk-checkbox" checked="@hasRole" @onchange="e => ToggleRoleAsync(u, r, (bool)e.Value!)" />
+                                    <label class="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-lg border @(hasRole ? "bg-indigo-50/80 border-indigo-200 text-indigo-800 font-medium" : "bg-slate-50 border-slate-200 text-slate-500") cursor-pointer hover:bg-slate-100 transition-colors">
+                                        <input type="checkbox" class="kmk-checkbox !h-3.5 !w-3.5" checked="@hasRole" @onchange="e => ToggleRoleAsync(u, r, (bool)e.Value!)" />
                                         @r
                                     </label>
                                 }

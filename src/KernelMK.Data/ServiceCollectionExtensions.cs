@@ -34,7 +34,8 @@ public static class ServiceCollectionExtensions
             })
             .AddEntityFrameworkStores<AppDbContext>()
             .AddDefaultTokenProviders()
-            .AddSignInManager();
+            .AddSignInManager()
+            .AddClaimsPrincipalFactory<AppUserClaimsPrincipalFactory>();
 
         return services;
     }

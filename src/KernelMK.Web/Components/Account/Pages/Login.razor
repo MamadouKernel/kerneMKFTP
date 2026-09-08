@@ -1,4 +1,5 @@
 @page "/Account/Login"
+@layout KernelMK.Web.Components.Layout.EmptyLayout
 
 @using System.ComponentModel.DataAnnotations
 @using Microsoft.AspNetCore.Authentication
@@ -19,10 +20,14 @@
     <div class="absolute -top-10 right-0 h-64 w-64 rounded-full bg-violet-500/10 blur-3xl"></div>
 
     <div class="relative w-full max-w-sm">
-        <div class="flex items-center justify-center gap-3 mb-8">
-            <div class="h-11 w-11 rounded-xl flex items-center justify-center text-white font-bold shadow-lg shadow-brand-600/40"
-                 style="background-image: linear-gradient(135deg, var(--color-brand-400), var(--color-brand-700));">K</div>
-            <span class="text-white font-bold tracking-tight text-2xl">kernel<span class="text-brand-400">MK</span></span>
+        <div class="flex flex-col items-center justify-center gap-3 mb-6">
+            <div class="bg-white rounded-2xl px-3 py-2 shadow-xl border border-white/20 flex items-center justify-center shrink-0" style="height: 52px; max-width: 180px;">
+                <img src="images/logo_cit.jpeg" alt="Côte d'Ivoire Terminal" class="kmk-logo-cit-lg" style="height: 38px; max-height: 38px; width: auto; max-width: 160px; object-fit: contain; display: block;" />
+            </div>
+            <div class="text-center">
+                <span class="text-white font-bold tracking-tight text-xl block">kernel<span class="text-brand-400">MK</span></span>
+                <span class="text-xs text-slate-400 font-medium">Plateforme Sécurisée de Transferts &amp; EDI · Port d'Abidjan</span>
+            </div>
         </div>
 
         <div class="kmk-card !shadow-2xl !shadow-slate-900/20">

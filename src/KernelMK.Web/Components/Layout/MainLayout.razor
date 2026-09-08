@@ -1,15 +1,245 @@
 @inherits LayoutComponentBase
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using KernelMK.Data.Identity
+@using KernelMK.Core.Entities
+@inject UserManager<ApplicationUser> UserManager
+@inject IDbContextFactory<AppDbContext> DbFactory
 
 <div class="min-h-screen flex bg-slate-50">
     <NavMenu />
 
     <div class="flex-1 min-w-0 flex flex-col">
-        <header class="h-14 border-b border-slate-200 bg-white flex items-center justify-end px-6 lg:hidden">
-            <label for="kmk-nav-toggle" class="cursor-pointer text-slate-500 hover:text-slate-700">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16" />
-                </svg>
-            </label>
+        <!-- Top Application Header Bar -->
+        <header class="h-16 border-b border-slate-200/80 bg-white/95 backdrop-blur sticky top-0 z-20 flex items-center justify-between px-4 sm:px-6 lg:px-8 shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
+            <!-- Mobile Toggle & Logo -->
+            <div class="flex items-center gap-3">
+                <label for="kmk-nav-toggle" class="cursor-pointer text-slate-500 hover:text-slate-700 lg:hidden p-1 rounded-lg hover:bg-slate-100 transition-colors">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+                    </svg>
+                </label>
+
+                <div class="flex flex-col">
+                    <span class="text-xs sm:text-sm font-bold text-slate-900 tracking-tight flex items-center gap-1.5">
+                        <span class="h-2 w-2 rounded-full bg-brand-600"></span>
+                        <span>CÔTE D'IVOIRE TERMINAL (CIT)</span>
+                    </span>
+                    <span class="text-[10px] text-slate-500 font-medium hidden sm:inline">
+                        Terminal à Conteneurs · Port Autonome d'Abidjan
+                    </span>
+                </div>
+            </div>
+
+            <!-- Top Right Navigation & Status -->
+            <div class="flex items-center gap-2.5 sm:gap-3.5">
+                <!-- Horloge Portuaire UTC -->
+                <div class="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-100 text-slate-600 text-xs font-mono border border-slate-200/60">
+                    <svg class="h-3.5 w-3.5 text-slate-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
+                    <span>UTC @(DateTime.UtcNow.ToString("HH:mm"))</span>
+                </div>
+
+                <!-- Indicateur Santé Système Dynamique -->
+                @if (_failedAlertsCount > 0)
+                {
+                    <a href="executions" class="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 border border-rose-200 text-xs font-semibold hover:bg-rose-100 transition-colors shadow-xs">
+                        <span class="h-2 w-2 rounded-full bg-rose-500 animate-pulse"></span>
+                        <span>@_failedAlertsCount incident(s) 24h</span>
+                    </a>
+                }
+                else
+                {
+                    <div class="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-semibold shadow-xs">
+                        <span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+                        <span>Système nominal</span>
+                    </div>
+                }
+
+                <!-- Centre d'Alertes & Notifications (Cloche) -->
+                <details class="kmk-dropdown relative">
+                    <summary class="list-none relative p-2 rounded-xl text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer select-none focus:outline-none"
+                            title="Centre d'alertes opérationnelles">
+                        <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" />
+                        </svg>
+                        @if (_failedAlertsCount > 0)
+                        {
+                            <span class="absolute top-1 right-1 h-4 min-w-[16px] px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center animate-pulse">
+                                @_failedAlertsCount
+                            </span>
+                        }
+                    </summary>
+
+                    <!-- Dropdown Panneau d'Alertes -->
+                    <div class="absolute right-0 top-12 z-50 w-80 sm:w-96 bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
+                        <div class="px-4 py-3 bg-slate-900 text-white flex items-center justify-between">
+                            <div class="flex items-center gap-2">
+                                <span class="text-sm font-bold tracking-tight">Supervision Opérationnelle CIT</span>
+                                @if (_failedAlertsCount > 0)
+                                {
+                                    <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500 text-white">@_failedAlertsCount incident(s)</span>
+                                }
+                                else
+                                {
+                                    <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/30 text-emerald-300 border border-emerald-500/40">100% OK</span>
+                                }
+                            </div>
+                        </div>
+
+                        <div class="max-h-80 overflow-y-auto divide-y divide-slate-100">
+                            @if (_recentAlerts.Count == 0)
+                            {
+                                <div class="p-6 text-center text-xs text-slate-400">
+                                    Aucune activité d'alerte récente.
+                                </div>
+                            }
+                            else
+                            {
+                                @foreach (var alert in _recentAlerts)
+                                {
+                                    var isFail = alert.Status == JobStatus.Echec;
+                                    <a href="executions/@alert.Id"
+                                       class="p-3 flex items-start gap-2.5 hover:bg-slate-50 transition-colors block">
+                                        <div class="h-7 w-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5 @(isFail ? "bg-rose-50 text-rose-600 border border-rose-100" : "bg-emerald-50 text-emerald-600 border border-emerald-100")">
+                                            @if (isFail)
+                                            {
+                                                <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" /></svg>
+                                            }
+                                            else
+                                            {
+                                                <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>
+                                            }
+                                        </div>
+                                        <div class="flex-1 min-w-0">
+                                            <div class="flex items-center justify-between gap-1">
+                                                <span class="text-xs font-bold text-slate-900 truncate">@(alert.Job?.Name ?? "Job inconnu")</span>
+                                                <span class="text-[10px] text-slate-400 font-mono shrink-0">@alert.StartedAt.ToLocalTime().ToString("HH:mm")</span>
+                                            </div>
+                                            <p class="text-[11px] @(isFail ? "text-rose-600 font-medium" : "text-slate-500") truncate">
+                                                @(isFail ? (!string.IsNullOrEmpty(alert.Message) ? alert.Message : "Échec d'exécution") : "Transfert achevé avec succès")
+                                            </p>
+                                        </div>
+                                    </a>
+                                }
+                            }
+                        </div>
+
+                        <div class="p-2.5 bg-slate-50 border-t border-slate-100 flex items-center justify-between text-xs font-semibold">
+                            <a href="executions" class="text-brand-600 hover:text-brand-800">
+                                Voir tout l'historique →
+                            </a>
+                            <button type="button" @onclick="LoadAlertsAsync" class="text-slate-500 hover:text-slate-800 flex items-center gap-1 text-[11px] cursor-pointer">
+                                <svg class="h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
+                                Actualiser
+                            </button>
+                        </div>
+                    </div>
+                </details>
+
+                <!-- Explorateur Distant -->
+                <AuthorizeView Roles="Administrateur,Developpeur,Superviseur,Exploitant">
+                    <a href="explorer" class="kmk-btn-secondary text-xs py-1.5 px-3 flex items-center gap-1.5 shadow-xs">
+                        <svg class="h-3.5 w-3.5 text-brand-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z" /></svg>
+                        <span class="hidden sm:inline">Explorateur distant</span>
+                    </a>
+                </AuthorizeView>
+
+                <!-- Profil Utilisateur & Dropdown -->
+                <AuthorizeView>
+                    <Authorized>
+                        @{
+                            var rawName = !string.IsNullOrWhiteSpace(_displayName) ? _displayName : (context.User.Identity?.Name ?? "Utilisateur");
+                            var shortName = UserNameFormatter.FormatShortName(rawName, 20);
+                            var email = context.User.Identity?.Name ?? "";
+                            var role = context.User.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.Role)?.Value ?? "Utilisateur";
+                        }
+                        <details class="kmk-dropdown relative pl-2.5 border-l border-slate-200 group">
+                            <summary class="list-none flex items-center gap-2.5 p-1 -m-1 rounded-xl hover:bg-slate-100/80 transition-colors cursor-pointer select-none focus:outline-none"
+                                     title="Compte : @rawName (@email)">
+                                <span class="h-8 w-8 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-sm shrink-0"
+                                      style="background-image: linear-gradient(135deg, var(--color-brand-500), var(--color-brand-700));">
+                                    @_initials
+                                </span>
+                                <div class="hidden xl:flex flex-col text-left min-w-0">
+                                    <span class="text-xs font-bold text-slate-800 leading-tight truncate max-w-[150px]" title="@rawName">
+                                        @shortName
+                                    </span>
+                                    <span class="text-[10px] text-slate-400 leading-tight truncate max-w-[150px]" title="@email">
+                                        @email
+                                    </span>
+                                </div>
+                                <svg class="h-3.5 w-3.5 text-slate-400 transition-transform duration-200 group-open:rotate-180 group-open:text-brand-600"
+                                     xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+                                </svg>
+                            </summary>
+
+                            <!-- Menu Déroulant Profil & Déconnexion -->
+                            <div class="absolute right-0 top-12 z-50 w-72 bg-white rounded-2xl shadow-xl border border-slate-200 py-1.5 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
+                                <!-- En-tête profil du dropdown -->
+                                <div class="px-4 py-3 bg-slate-50 border-b border-slate-100 flex items-center gap-3">
+                                    <span class="h-10 w-10 rounded-full flex items-center justify-center text-sm font-bold text-white shadow-sm shrink-0"
+                                          style="background-image: linear-gradient(135deg, var(--color-brand-500), var(--color-brand-700));">
+                                        @_initials
+                                    </span>
+                                    <div class="flex-1 min-w-0">
+                                        <div class="text-xs font-bold text-slate-900 truncate" title="@rawName">
+                                            @rawName
+                                        </div>
+                                        <div class="text-[11px] text-slate-500 truncate" title="@email">
+                                            @email
+                                        </div>
+                                        <div class="mt-1">
+                                            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-100">
+                                                @role
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Navigation Mon Profil & Sécurité -->
+                                <div class="py-1">
+                                    <a href="Account/Manage"
+                                       class="flex items-center gap-2.5 px-4 py-2.5 text-xs font-medium text-slate-700 hover:bg-slate-50 hover:text-brand-600 transition-colors">
+                                        <svg class="h-4 w-4 text-slate-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
+                                        </svg>
+                                        <span>Mon profil &amp; Coordonnées</span>
+                                    </a>
+
+                                    <a href="Account/Manage/ChangePassword"
+                                       class="flex items-center gap-2.5 px-4 py-2.5 text-xs font-medium text-slate-700 hover:bg-slate-50 hover:text-brand-600 transition-colors">
+                                        <svg class="h-4 w-4 text-slate-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z" />
+                                        </svg>
+                                        <span>Sécurité &amp; Mot de passe</span>
+                                    </a>
+                                </div>
+
+                                <div class="border-t border-slate-100 my-1"></div>
+
+                                <!-- Formulaire de Déconnexion -->
+                                <form action="Account/Logout" method="post" class="p-1">
+                                    <AntiforgeryToken />
+                                    <input type="hidden" name="ReturnUrl" value="" />
+                                    <button type="submit"
+                                            class="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 rounded-xl transition-colors text-left cursor-pointer">
+                                        <svg class="h-4 w-4 text-rose-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15M12 9l3 3m0 0-3 3m3-3H2.25" />
+                                        </svg>
+                                        <span>Déconnexion</span>
+                                    </button>
+                                </form>
+                            </div>
+                        </details>
+                    </Authorized>
+                    <NotAuthorized>
+                        <a href="Account/Login" class="kmk-btn-primary text-xs py-1.5 px-3 shadow-xs">
+                            Connexion
+                        </a>
+                    </NotAuthorized>
+                </AuthorizeView>
+            </div>
         </header>
 
         <main class="flex-1 px-4 py-6 sm:px-6 lg:px-8 max-w-7xl w-full mx-auto">
@@ -24,3 +254,83 @@
     <a href="." class="reload underline ml-1">Recharger</a>
     <span class="dismiss cursor-pointer ml-2">✕</span>
 </div>
+
+@code {
+    [CascadingParameter]
+    private Task<AuthenticationState>? AuthStateTask { get; set; }
+
+    private string? _cachedUserId;
+    private string _displayName = "";
+    private string _initials = "U";
+
+    // Alert & Notification Center
+    private int _failedAlertsCount = 0;
+    private List<JobExecution> _recentAlerts = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAlertsAsync();
+    }
+
+    private async Task LoadAlertsAsync()
+    {
+        try
+        {
+            var cutoff = DateTime.UtcNow.AddHours(-24);
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var list = await db.JobExecutions
+                .AsNoTracking()
+                .Include(e => e.Job)
+                .Where(e => e.StartedAt >= cutoff)
+                .OrderByDescending(e => e.StartedAt)
+                .Take(10)
+                .ToListAsync();
+
+            _failedAlertsCount = list.Count(e => e.Status == JobStatus.Echec);
+            _recentAlerts = list;
+        }
+        catch
+        {
+            // Silently fallback if DB busy
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (AuthStateTask != null)
+        {
+            var state = await AuthStateTask;
+            var principal = state.User;
+            if (principal.Identity?.IsAuthenticated == true)
+            {
+                var claimName = principal.FindFirst("DisplayName")?.Value;
+                if (!string.IsNullOrWhiteSpace(claimName))
+                {
+                    _displayName = claimName;
+                    _initials = GetInitials(claimName);
+                }
+                else
+                {
+                    var currentId = principal.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+                    if (currentId != _cachedUserId)
+                    {
+                        _cachedUserId = currentId;
+                        var appUser = await UserManager.GetUserAsync(principal);
+                        if (!string.IsNullOrWhiteSpace(appUser?.DisplayName))
+                        {
+                            _displayName = appUser.DisplayName;
+                            _initials = GetInitials(appUser.DisplayName);
+                        }
+                        else
+                        {
+                            _displayName = principal.Identity.Name ?? "Utilisateur";
+                            _initials = GetInitials(_displayName);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private static string GetInitials(string name) => UserNameFormatter.GetInitials(name);
+}

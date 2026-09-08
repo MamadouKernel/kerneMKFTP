@@ -88,7 +88,7 @@ public class NotificationDispatcher
         await client.ConnectAsync(_smtp.Host, _smtp.Port, _smtp.UseTls ? SecureSocketOptions.StartTls : SecureSocketOptions.None);
         if (!string.IsNullOrEmpty(_smtp.Username))
         {
-            await client.AuthenticateAsync(_smtp.Username, _smtp.Password);
+            await client.AuthenticateAsync(_smtp.Username, _smtp.Password ?? string.Empty);
         }
         await client.SendAsync(message);
         await client.DisconnectAsync(true);

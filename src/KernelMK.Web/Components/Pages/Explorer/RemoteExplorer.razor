@@ -1,0 +1,737 @@
+@page "/explorer"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = "Administrateur,Developpeur,Superviseur,Exploitant")]
+@using Microsoft.EntityFrameworkCore
+@using KernelMK.Core
+@using KernelMK.Core.Entities
+@using KernelMK.Data.Security
+@using KernelMK.Engine.Execution
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject RemoteFileBrowserService BrowserService
+@inject CredentialProtector Protector
+@inject IJSRuntime JS
+
+<PageTitle>Explorateur Distant · kernelMK</PageTitle>
+
+<div class="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+    <div>
+        <h1 class="flex items-center gap-2.5">
+            <span class="h-9 w-9 rounded-xl bg-brand-50 text-brand-600 flex items-center justify-center shadow-sm">
+                <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15a4.5 4.5 0 0 0 4.5 4.5H18a3.75 3.75 0 0 0 1.332-7.257 3 3 0 0 0-3.758-3.848A5.25 5.25 0 0 0 6 9.75a4.5 4.5 0 0 0-3.75 5.25Z" />
+                </svg>
+            </span>
+            Explorateur Distant
+        </h1>
+        <p class="text-sm text-slate-500 mt-1">Parcourez, téléchargez et gérez vos fichiers SFTP, FTP et SMB en direct.</p>
+    </div>
+</div>
+
+<!-- Barre de connexion -->
+<div class="kmk-card mb-6">
+    <div class="kmk-card-body flex flex-wrap items-end gap-3">
+        <div class="flex-1 min-w-[240px]">
+            <label class="kmk-label">Serveur / Identifiant enregistré</label>
+            <select class="kmk-select" @bind="_selectedCredId">
+                <option value="">Sélectionnez un serveur...</option>
+                @foreach (var c in _credentials)
+                {
+                    <option value="@c.Id">@c.Name (@c.Type) · @c.Host</option>
+                }
+            </select>
+        </div>
+
+        <div>
+            <label class="kmk-label">Protocole</label>
+            <select class="kmk-select" @bind="_protocol">
+                <option value="@StepType.TransfertSftp">SFTP (port 22)</option>
+                <option value="@StepType.TransfertFtps">FTPS (TLS explicite)</option>
+                <option value="@StepType.TransfertFtp">FTP standard (port 21)</option>
+                <option value="@StepType.TransfertSmb">Partage SMB</option>
+            </select>
+        </div>
+
+        <div>
+            @if (!_isConnected)
+            {
+                <button type="button" class="kmk-btn-primary" disabled="@(_loading || _selectedCredId is null)" @onclick="ConnectAsync">
+                    @if (_loading)
+                    {
+                        <svg class="animate-spin h-4 w-4 mr-1 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg>
+                        <span>Connexion...</span>
+                    }
+                    else
+                    {
+                        <span>⚡ Se connecter</span>
+                    }
+                </button>
+            }
+            else
+            {
+                <button type="button" class="kmk-btn-secondary" @onclick="Disconnect">Déconnexion</button>
+            }
+        </div>
+    </div>
+</div>
+
+@if (!string.IsNullOrWhiteSpace(_errorMessage))
+{
+    <div class="mb-6 p-4 rounded-xl bg-red-50 border border-red-200 text-sm text-red-800 flex items-start gap-3 shadow-sm">
+        <span class="text-red-600 font-bold text-base">⚠️</span>
+        <div class="flex-1">
+            <div class="font-semibold">Erreur de navigation distante</div>
+            <div class="text-red-700 mt-0.5">@_errorMessage</div>
+        </div>
+        <button class="text-red-500 hover:text-red-700 text-xs font-semibold" @onclick="() => _errorMessage = null">✕</button>
+    </div>
+}
+
+@if (_isConnected)
+{
+    <!-- Explorateur de fichiers principal -->
+    <div class="kmk-card">
+        <!-- Barre d'outils & Breadcrumb -->
+        <div class="kmk-card-header flex flex-wrap items-center justify-between gap-3 bg-slate-50/50">
+            <!-- Fil d'Ariane -->
+            <div class="flex items-center gap-1.5 text-xs overflow-x-auto py-1">
+                <button type="button" class="text-brand-600 hover:underline font-semibold flex items-center gap-1" @onclick='() => NavigateTo("/")'>
+                    <span>🏠</span> <span>/</span>
+                </button>
+                @foreach (var crumb in GetBreadcrumbs())
+                {
+                    <span class="text-slate-400">/</span>
+                    <button type="button" class="text-brand-600 hover:underline font-medium" @onclick="() => NavigateTo(crumb.Path)">
+                        @crumb.Name
+                    </button>
+                }
+            </div>
+
+            <!-- Actions de barre d'outils -->
+            <div class="flex items-center gap-2">
+                <button type="button" class="kmk-btn-secondary kmk-btn-sm" disabled="@(_currentPath == "/" || _currentPath == "")" @onclick="NavigateUp">
+                    ⬆️ Dossier parent
+                </button>
+
+                <button type="button" class="kmk-btn-secondary kmk-btn-sm" @onclick="RefreshAsync">
+                    🔄 Actualiser
+                </button>
+
+                <button type="button" class="kmk-btn-secondary kmk-btn-sm" @onclick="() => _showNewFolderModal = true">
+                    📁 Nouveau dossier
+                </button>
+
+                <!-- Bouton Upload -->
+                <label class="kmk-btn-primary kmk-btn-sm cursor-pointer inline-flex items-center gap-1.5">
+                    <svg class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
+                    </svg>
+                    <span>Envoyer un fichier</span>
+                    <InputFile OnChange="UploadFileAsync" class="hidden" />
+                </label>
+            </div>
+        </div>
+
+        @if (_isUploading)
+        {
+            <div class="p-3 bg-brand-50 border-b border-brand-100 flex items-center gap-2 text-xs text-brand-800">
+                <svg class="animate-spin h-3.5 w-3.5 text-brand-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg>
+                <span>Téléversement du fichier en cours vers le serveur distant...</span>
+            </div>
+        }
+
+        <!-- Zone Drag & Drop de dépôt de fichiers -->
+        <div class="m-4 relative rounded-xl border-2 border-dashed border-indigo-200 bg-indigo-50/25 hover:bg-indigo-50/60 transition-all p-4 text-center flex flex-col items-center justify-center gap-1.5 group cursor-pointer">
+            <InputFile OnChange="UploadFileAsync" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" multiple />
+            <div class="h-8 w-8 rounded-lg bg-white text-indigo-600 shadow-xs flex items-center justify-center group-hover:scale-110 transition-transform">
+                <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
+                </svg>
+            </div>
+            <div class="text-xs font-semibold text-slate-800">
+                Glissez-déposez des fichiers ici ou <span class="text-brand-600 underline">parcourez votre poste</span> pour téléverser
+            </div>
+            <div class="text-[11px] text-slate-400 font-mono">
+                Dépôt direct vers @_currentPath (Fichiers EDI, XML, CSV, TXT jusqu'à 100 Mo)
+            </div>
+        </div>
+
+        <!-- Grille des fichiers -->
+        <div class="overflow-x-auto">
+            <table>
+                <thead>
+                    <tr>
+                        <th class="w-10"></th>
+                        <th>Nom</th>
+                        <th>Taille</th>
+                        <th>Dernière modification</th>
+                        <th class="text-right">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var item in _items)
+                    {
+                        <tr class="hover:bg-slate-50 transition-colors">
+                            <td class="text-center text-lg">
+                                @if (item.IsDirectory)
+                                {
+                                    <span>📁</span>
+                                }
+                                else
+                                {
+                                    <span>@GetFileIcon(item.Extension)</span>
+                                }
+                            </td>
+                            <td>
+                                @if (item.IsDirectory)
+                                {
+                                    <button type="button" class="font-semibold text-brand-600 hover:text-brand-800 text-left hover:underline" @onclick="() => NavigateTo(item.FullPath)">
+                                        @item.Name
+                                    </button>
+                                }
+                                else
+                                {
+                                    <span class="font-medium text-slate-800">@item.Name</span>
+                                }
+                            </td>
+                            <td class="text-slate-500 font-mono text-xs">@item.FormattedSize</td>
+                            <td class="text-slate-500 text-xs">@item.LastModified.ToString("g")</td>
+                            <td class="text-right space-x-1.5 whitespace-nowrap">
+                                @if (!item.IsDirectory)
+                                {
+                                    <button type="button" class="kmk-btn-secondary kmk-btn-sm" title="Aperçu instantané" @onclick="() => PreviewFileAsync(item)">
+                                        👁️ Aperçu
+                                    </button>
+                                    <button type="button" class="kmk-btn-secondary kmk-btn-sm" title="Télécharger sur votre poste" @onclick="() => DownloadFileAsync(item)">
+                                        ⬇️ Télécharger
+                                    </button>
+                                }
+                                <button type="button" class="kmk-btn-danger kmk-btn-sm" title="Supprimer définitivement" @onclick="() => ConfirmDelete(item)">
+                                    🗑️
+                                </button>
+                            </td>
+                        </tr>
+                    }
+                    @if (_items.Count == 0 && !_loading)
+                    {
+                        <tr>
+                            <td colspan="5" class="py-12 text-center text-slate-400">
+                                <div class="text-3xl mb-2">📂</div>
+                                <p class="text-sm">Ce répertoire distant est vide.</p>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+else
+{
+    <!-- Message invitant à la connexion -->
+    <div class="kmk-card">
+        <div class="kmk-card-body flex flex-col items-center text-center py-16 px-6">
+            <div class="h-16 w-16 rounded-2xl bg-brand-50 text-brand-600 flex items-center justify-center mb-4 text-3xl shadow-sm">
+                ☁️
+            </div>
+            <h3 class="text-base font-bold text-slate-800 mb-1">Prêt pour la navigation à distance</h3>
+            <p class="text-sm text-slate-500 max-w-md mb-6">
+                Sélectionnez votre serveur (ex: votre stockage Azure SFTP) dans la liste ci-dessus, puis cliquez sur <strong>Se connecter</strong> pour explorer les fichiers et dossiers en direct comme dans WinSCP.
+            </p>
+        </div>
+    </div>
+}
+
+<!-- Modal d'aperçu de fichier & Visionneuse EDI Portuaire -->
+@if (_showPreviewModal)
+{
+    var isEdi = _previewItem?.Name.EndsWith(".edi", StringComparison.OrdinalIgnoreCase) == true
+                || _previewItem?.Name.EndsWith(".edi.txt", StringComparison.OrdinalIgnoreCase) == true
+                || _previewContent.Contains("UNB+")
+                || _previewContent.Contains("UNA:");
+
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
+        <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <!-- Modal Header -->
+            <div class="px-5 py-3.5 bg-slate-900 text-white flex flex-wrap items-center justify-between gap-3 shrink-0">
+                <div class="flex items-center gap-2.5">
+                    <span class="text-xl">@(isEdi ? "🚢" : "📄")</span>
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <span class="font-bold text-sm text-white">@_previewItem?.Name</span>
+                            <span class="px-2 py-0.5 rounded-full text-[10px] font-mono bg-slate-800 text-slate-300 border border-slate-700">@_previewItem?.FormattedSize</span>
+                            @if (isEdi)
+                            {
+                                <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                                    Format Portuaire EDIFACT
+                                </span>
+                            }
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex items-center gap-2">
+                    @if (isEdi)
+                    {
+                        <button type="button" class="px-2.5 py-1 rounded-lg text-xs font-medium transition-colors @(_formatEdi ? "bg-indigo-600 text-white" : "bg-slate-800 text-slate-300")"
+                                @onclick="() => _formatEdi = !_formatEdi">
+                            @(_formatEdi ? "✓ Segments Formatés" : "Texte Brut")
+                        </button>
+                    }
+
+                    <button type="button" class="kmk-btn-secondary !bg-slate-800 !text-slate-200 !border-slate-700 hover:!bg-slate-700 text-xs py-1 px-2.5 flex items-center gap-1.5"
+                            @onclick="CopyPreviewAsync">
+                        @if (_copiedToClipboard)
+                        {
+                            <span class="text-emerald-400 font-bold">✓ Copié !</span>
+                        }
+                        else
+                        {
+                            <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
+                            </svg>
+                            <span>Copier</span>
+                        }
+                    </button>
+
+                    @if (_previewItem is not null)
+                    {
+                        <button type="button" class="kmk-btn-secondary !bg-slate-800 !text-slate-200 !border-slate-700 hover:!bg-slate-700 text-xs py-1 px-2.5 flex items-center gap-1"
+                                @onclick="() => DownloadFileAsync(_previewItem)">
+                            ⬇️ Télécharger
+                        </button>
+                    }
+
+                    <button type="button" class="text-slate-400 hover:text-white text-lg font-bold ml-1" @onclick="() => _showPreviewModal = false">✕</button>
+                </div>
+            </div>
+
+            <!-- Barre de recherche interne au fichier -->
+            <div class="px-4 py-2 bg-slate-950/90 border-b border-slate-800 flex items-center gap-2">
+                <svg class="h-3.5 w-3.5 text-slate-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
+                </svg>
+                <input class="bg-transparent text-slate-200 text-xs placeholder:text-slate-600 focus:outline-none flex-1 font-mono"
+                       placeholder="Filtrer ou rechercher un segment dans le fichier (ex: BGM, NAD, CNT, conteneur...)"
+                       @bind="_previewSearch" @bind:event="oninput" />
+                @if (!string.IsNullOrEmpty(_previewSearch))
+                {
+                    <button type="button" class="text-slate-500 hover:text-slate-300 text-xs" @onclick="() => _previewSearch = string.Empty">✕</button>
+                }
+            </div>
+
+            <!-- Viewer Container with Line Numbers & Segment Highlighting -->
+            <div class="p-4 overflow-y-auto flex-1 bg-slate-950 text-slate-100 font-mono text-xs select-text max-h-[65vh]">
+                @if (_loadingPreview)
+                {
+                    <div class="flex items-center justify-center py-16 text-slate-400 gap-2">
+                        <svg class="animate-spin h-5 w-5 text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg>
+                        <span>Chargement et analyse du contenu distant...</span>
+                    </div>
+                }
+                else
+                {
+                    var lines = GetPreviewLines();
+                    <table class="w-full font-mono text-xs border-collapse">
+                        <tbody>
+                            @for (int i = 0; i < lines.Count; i++)
+                            {
+                                var lineNum = i + 1;
+                                var line = lines[i];
+                                var isMatch = !string.IsNullOrWhiteSpace(_previewSearch) && line.Contains(_previewSearch, StringComparison.OrdinalIgnoreCase);
+                                var isEdiTag = line.Length >= 3 && char.IsLetter(line[0]) && char.IsLetter(line[1]) && char.IsLetter(line[2]);
+                                var tag = isEdiTag ? line.Substring(0, 3) : "";
+
+                                <tr class="@(isMatch ? "bg-amber-950/60 text-amber-200 font-semibold" : "hover:bg-slate-900/80") transition-colors">
+                                    <td class="w-12 text-right pr-4 text-slate-600 select-none border-r border-slate-800/80 py-0.5 align-top">
+                                        @lineNum
+                                    </td>
+                                    <td class="pl-4 py-0.5 whitespace-pre-wrap break-all">
+                                        @if (isEdiTag)
+                                        {
+                                            <span class="font-bold text-amber-400">@tag</span><span class="text-slate-300">@(line.Substring(3))</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="text-slate-300">@line</span>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            </div>
+
+            <!-- Footer -->
+            <div class="px-5 py-3 border-t border-slate-100 flex items-center justify-between bg-slate-50 shrink-0">
+                <span class="text-xs text-slate-500 font-mono">
+                    @(GetPreviewLines().Count) ligne(s) / segment(s) analysé(s)
+                </span>
+                <button type="button" class="kmk-btn-secondary kmk-btn-sm" @onclick="() => _showPreviewModal = false">Fermer</button>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Modal Nouveau dossier -->
+@if (_showNewFolderModal)
+{
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+        <div class="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-md p-5">
+            <h4 class="mb-3">Créer un nouveau répertoire</h4>
+            <label class="kmk-label">Nom du dossier</label>
+            <input class="kmk-input mb-4" placeholder="ex: archives ou factures" @bind="_newFolderName" />
+            <div class="flex justify-end gap-2">
+                <button type="button" class="kmk-btn-secondary" @onclick="() => _showNewFolderModal = false">Annuler</button>
+                <button type="button" class="kmk-btn-primary" disabled="@string.IsNullOrWhiteSpace(_newFolderName)" @onclick="CreateFolderAsync">Créer</button>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Modal Confirmation Suppression -->
+@if (_itemToDelete is not null)
+{
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+        <div class="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-md p-5">
+            <h4 class="text-red-600 mb-2">Confirmer la suppression</h4>
+            <p class="text-sm text-slate-600 mb-4">
+                Êtes-vous sûr de vouloir supprimer définitivement <strong>@_itemToDelete.Name</strong> du serveur distant ? Cette action est irréversible.
+            </p>
+            <div class="flex justify-end gap-2">
+                <button type="button" class="kmk-btn-secondary" @onclick="() => _itemToDelete = null">Annuler</button>
+                <button type="button" class="kmk-btn-danger" @onclick="DeleteConfirmedAsync">Supprimer</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<Credential> _credentials = new();
+    private Guid? _selectedCredId;
+    private StepType _protocol = StepType.TransfertSftp;
+
+    private bool _isConnected;
+    private bool _loading;
+    private bool _isUploading;
+    private string? _errorMessage;
+
+    private string _currentPath = "/";
+    private List<RemoteItemInfo> _items = new();
+
+    // Modale aperçu
+    private bool _showPreviewModal;
+    private bool _loadingPreview;
+    private RemoteItemInfo? _previewItem;
+    private string _previewContent = "";
+    private bool _copiedToClipboard;
+    private bool _formatEdi = true;
+    private string _previewSearch = "";
+
+    // Modale nouveau dossier
+    private bool _showNewFolderModal;
+    private string _newFolderName = "";
+
+    // Modale suppression
+    private RemoteItemInfo? _itemToDelete;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _credentials = await db.Credentials.OrderBy(c => c.Name).ToListAsync();
+        if (_credentials.Count > 0)
+        {
+            var sftpCred = _credentials.FirstOrDefault(c => c.Type == CredentialType.FtpSftp) ?? _credentials.First();
+            _selectedCredId = sftpCred.Id;
+        }
+    }
+
+    private Credential? CurrentCredential => _selectedCredId is null ? null : _credentials.FirstOrDefault(c => c.Id == _selectedCredId);
+
+    private async Task ConnectAsync()
+    {
+        var cred = CurrentCredential;
+        if (cred is null || string.IsNullOrWhiteSpace(cred.Host))
+        {
+            _errorMessage = "Veuillez choisir un identifiant avec un hôte configuré.";
+            return;
+        }
+
+        _loading = true;
+        _errorMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            var secret = Protector.Unprotect(cred.EncryptedSecret);
+            var port = cred.Port is > 0 ? cred.Port.Value : (_protocol == StepType.TransfertSftp ? 22 : 21);
+
+            _items = await BrowserService.ListItemsAsync(_protocol, cred.Host, port, cred.Username ?? "anonymous", secret, _currentPath);
+            _isConnected = true;
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Échec de connexion au serveur ({cred.Host}) : {ex.Message}";
+            _isConnected = false;
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void Disconnect()
+    {
+        _isConnected = false;
+        _items.Clear();
+        _currentPath = "/";
+    }
+
+    private async Task NavigateTo(string path)
+    {
+        _currentPath = string.IsNullOrWhiteSpace(path) ? "/" : path;
+        await RefreshAsync();
+    }
+
+    private async Task NavigateUp()
+    {
+        if (_currentPath == "/" || string.IsNullOrWhiteSpace(_currentPath)) return;
+        var trimmed = _currentPath.TrimEnd('/');
+        var lastSlash = trimmed.LastIndexOf('/');
+        var parent = lastSlash <= 0 ? "/" : trimmed.Substring(0, lastSlash);
+        await NavigateTo(parent);
+    }
+
+    private async Task RefreshAsync()
+    {
+        var cred = CurrentCredential;
+        if (cred is null) return;
+
+        _loading = true;
+        _errorMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            var host = cred.Host ?? "";
+            if (string.IsNullOrWhiteSpace(host))
+            {
+                _errorMessage = "L'adresse du serveur (hôte) n'est pas renseignée sur cet identifiant.";
+                return;
+            }
+
+            var secret = Protector.Unprotect(cred.EncryptedSecret);
+            var port = cred.Port is > 0 ? cred.Port.Value : (_protocol == StepType.TransfertSftp ? 22 : 21);
+            _items = await BrowserService.ListItemsAsync(_protocol, host, port, cred.Username ?? "anonymous", secret, _currentPath);
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task DownloadFileAsync(RemoteItemInfo item)
+    {
+        var cred = CurrentCredential;
+        if (cred is null) return;
+        var host = cred.Host ?? "";
+        if (string.IsNullOrWhiteSpace(host)) return;
+
+        try
+        {
+            var secret = Protector.Unprotect(cred.EncryptedSecret);
+            var port = cred.Port is > 0 ? cred.Port.Value : (_protocol == StepType.TransfertSftp ? 22 : 21);
+            var bytes = await BrowserService.DownloadFileBytesAsync(_protocol, host, port, cred.Username ?? "anonymous", secret, item.FullPath);
+
+            await JS.InvokeVoidAsync("kernelMK.downloadFile", item.Name, "application/octet-stream", Convert.ToBase64String(bytes));
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Erreur lors du téléchargement : {ex.Message}";
+        }
+    }
+
+    private async Task PreviewFileAsync(RemoteItemInfo item)
+    {
+        var cred = CurrentCredential;
+        if (cred is null) return;
+        var host = cred.Host ?? "";
+        if (string.IsNullOrWhiteSpace(host)) return;
+
+        _previewItem = item;
+        _previewContent = "";
+        _loadingPreview = true;
+        _showPreviewModal = true;
+        StateHasChanged();
+
+        try
+        {
+            var secret = Protector.Unprotect(cred.EncryptedSecret);
+            var port = cred.Port is > 0 ? cred.Port.Value : (_protocol == StepType.TransfertSftp ? 22 : 21);
+            _previewContent = await BrowserService.GetFilePreviewAsync(_protocol, host, port, cred.Username ?? "anonymous", secret, item.FullPath);
+        }
+        catch (Exception ex)
+        {
+            _previewContent = $"Impossible de lire l'aperçu du fichier : {ex.Message}";
+        }
+        finally
+        {
+            _loadingPreview = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task UploadFileAsync(InputFileChangeEventArgs e)
+    {
+        var cred = CurrentCredential;
+        if (cred is null) return;
+        var host = cred.Host ?? "";
+        if (string.IsNullOrWhiteSpace(host)) return;
+
+        _isUploading = true;
+        _errorMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            var secret = Protector.Unprotect(cred.EncryptedSecret);
+            var port = cred.Port is > 0 ? cred.Port.Value : (_protocol == StepType.TransfertSftp ? 22 : 21);
+
+            var files = e.GetMultipleFiles(maximumFileCount: 30);
+            foreach (var file in files)
+            {
+                await using var stream = file.OpenReadStream(maxAllowedSize: 100 * 1024 * 1024); // 100 Mo max
+                await BrowserService.UploadFileStreamAsync(_protocol, host, port, cred.Username ?? "anonymous", secret, _currentPath, file.Name, stream);
+            }
+
+            await RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Erreur lors de l'envoi du fichier : {ex.Message}";
+        }
+        finally
+        {
+            _isUploading = false;
+            StateHasChanged();
+        }
+    }
+
+    private List<string> GetPreviewLines()
+    {
+        if (string.IsNullOrEmpty(_previewContent)) return new();
+
+        string content = _previewContent;
+
+        if (_formatEdi && content.Contains('\''))
+        {
+            var segments = content.Split('\'', StringSplitOptions.RemoveEmptyEntries);
+            return segments
+                .Select(s => s.Trim())
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Select(s => s + "'")
+                .ToList();
+        }
+
+        return content.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None).ToList();
+    }
+
+    private async Task CopyPreviewAsync()
+    {
+        if (string.IsNullOrEmpty(_previewContent)) return;
+        await JS.InvokeVoidAsync("kernelMK.copyToClipboard", _previewContent);
+        _copiedToClipboard = true;
+        StateHasChanged();
+        await Task.Delay(2000);
+        _copiedToClipboard = false;
+        StateHasChanged();
+    }
+
+    private void ConfirmDelete(RemoteItemInfo item)
+    {
+        _itemToDelete = item;
+    }
+
+    private async Task DeleteConfirmedAsync()
+    {
+        if (_itemToDelete is null) return;
+        var cred = CurrentCredential;
+        if (cred is null) return;
+        var host = cred.Host ?? "";
+        if (string.IsNullOrWhiteSpace(host)) return;
+
+        try
+        {
+            var secret = Protector.Unprotect(cred.EncryptedSecret);
+            var port = cred.Port is > 0 ? cred.Port.Value : (_protocol == StepType.TransfertSftp ? 22 : 21);
+            await BrowserService.DeleteItemAsync(_protocol, host, port, cred.Username ?? "anonymous", secret, _itemToDelete.FullPath, _itemToDelete.IsDirectory);
+
+            _itemToDelete = null;
+            await RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Erreur lors de la suppression : {ex.Message}";
+        }
+    }
+
+    private async Task CreateFolderAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_newFolderName)) return;
+        var cred = CurrentCredential;
+        if (cred is null) return;
+        var host = cred.Host ?? "";
+        if (string.IsNullOrWhiteSpace(host)) return;
+
+        try
+        {
+            var secret = Protector.Unprotect(cred.EncryptedSecret);
+            var port = cred.Port is > 0 ? cred.Port.Value : (_protocol == StepType.TransfertSftp ? 22 : 21);
+            var newPath = _currentPath.TrimEnd('/') + "/" + _newFolderName.Trim();
+            await BrowserService.CreateDirectoryAsync(_protocol, host, port, cred.Username ?? "anonymous", secret, newPath);
+
+            _showNewFolderModal = false;
+            _newFolderName = "";
+            await RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Erreur lors de la création du dossier : {ex.Message}";
+        }
+    }
+
+    private record Breadcrumb(string Name, string Path);
+
+    private List<Breadcrumb> GetBreadcrumbs()
+    {
+        var list = new List<Breadcrumb>();
+        if (string.IsNullOrWhiteSpace(_currentPath) || _currentPath == "/") return list;
+
+        var parts = _currentPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var current = "";
+        foreach (var p in parts)
+        {
+            current += "/" + p;
+            list.Add(new Breadcrumb(p, current));
+        }
+        return list;
+    }
+
+    private static string GetFileIcon(string? ext) => ext switch
+    {
+        ".edi" => "📦",
+        ".csv" or ".xlsx" or ".xls" => "📊",
+        ".json" or ".xml" or ".yaml" or ".yml" => "⚙️",
+        ".txt" or ".log" => "📝",
+        ".zip" or ".tar" or ".gz" or ".7z" => "🗜️",
+        ".pdf" => "📕",
+        ".png" or ".jpg" or ".jpeg" => "🖼️",
+        _ => "📄"
+    };
+}

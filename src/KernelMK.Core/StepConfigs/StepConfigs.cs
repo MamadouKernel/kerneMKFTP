@@ -41,7 +41,11 @@ public class TransferStepConfig
     public bool UseTls { get; set; } = true;
     public bool ArchiveAfterTransfer { get; set; } = true;
     public string? ArchiveDirectory { get; set; }
+    /// <summary>En mode téléchargement (Upload=false), supprime le fichier distant après récupération réussie pour éviter de le re-télécharger.</summary>
+    public bool DeleteRemoteAfterDownload { get; set; } = false;
     public string? SmbShare { get; set; }
+    /// <summary>Armateur ou partenaire associé (ex: MSC, CMA CGM, MAERSK, HAPAG-LLOYD, etc.).</summary>
+    public string? Armateur { get; set; }
 
     /// <summary>
     /// Si renseigné, active le mode multi-fichiers : LocalPath et RemotePath sont alors traités comme des

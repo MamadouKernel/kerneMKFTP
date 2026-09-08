@@ -37,16 +37,30 @@ public class TransferStepExecutor : IStepExecutor
         var username = context.ResolvedCredential?.Username ?? "anonymous";
         var secret = context.ResolvedCredential?.Secret ?? string.Empty;
 
+        var host = !string.IsNullOrWhiteSpace(config.Host)
+            ? config.Host
+            : (context.ResolvedCredential?.Host ?? string.Empty);
+
+        var defaultPort = context.Step.Type == StepType.TransfertSftp ? 22 : 21;
+        var port = config.Port > 0
+            ? config.Port
+            : (context.ResolvedCredential?.Port is > 0 ? context.ResolvedCredential.Value.Port.Value : defaultPort);
+
+        if (context.Step.Type != StepType.TransfertSmb && string.IsNullOrWhiteSpace(host))
+        {
+            return StepExecutionResult.Fail("Aucun hôte spécifié. Veuillez renseigner l'hôte dans la configuration de l'étape ou associer un Credential contenant l'adresse du serveur.");
+        }
+
         try
         {
             switch (context.Step.Type)
             {
                 case StepType.TransfertSftp:
-                    return await ExecuteSftpAsync(config, username, secret, context.CancellationToken);
+                    return await ExecuteSftpAsync(config, host, port, username, secret, context.CancellationToken);
 
                 case StepType.TransfertFtp:
                 case StepType.TransfertFtps:
-                    return await ExecuteFtpAsync(config, username, secret, context.Step.Type == StepType.TransfertFtps, context.CancellationToken);
+                    return await ExecuteFtpAsync(config, host, port, username, secret, context.Step.Type == StepType.TransfertFtps, context.CancellationToken);
 
                 case StepType.TransfertSmb:
                     return ExecuteSmbCopy(config, context.ResolvedCredential);
@@ -61,17 +75,16 @@ public class TransferStepExecutor : IStepExecutor
         }
     }
 
-    private async Task<StepExecutionResult> ExecuteSftpAsync(TransferStepConfig config, string username, string secret, CancellationToken ct)
+    private async Task<StepExecutionResult> ExecuteSftpAsync(TransferStepConfig config, string host, int port, string username, string secret, CancellationToken ct)
     {
-        var port = config.Port <= 0 ? 22 : config.Port;
-        using var client = new SftpClient(config.Host, port, username, secret);
+        using var client = new SftpClient(host, port, username, secret);
 
         // Vérification de la clé d'hôte (confiance à la première connexion, protection anti-usurpation).
         string? hostKeyError = null;
         client.HostKeyReceived += (_, e) =>
         {
             var fingerprint = Convert.ToHexString(SHA256.HashData(e.HostKey));
-            var verdict = VerifyHostKeyAsync(config.Host, port, fingerprint, ct).GetAwaiter().GetResult();
+            var verdict = VerifyHostKeyAsync(host, port, fingerprint, ct).GetAwaiter().GetResult();
             if (!verdict.Trusted)
             {
                 hostKeyError = verdict.ErrorMessage;
@@ -107,8 +120,10 @@ public class TransferStepExecutor : IStepExecutor
                                  .Where(f => FilePatternMatcher.IsMatch(Path.GetFileName(f), config.Filter)))
                     {
                         var remoteFile = CombineRemotePath(config.RemotePath, Path.GetFileName(file));
-                        await using var stream = File.OpenRead(file);
-                        await Task.Run(() => client.UploadFile(stream, remoteFile, true), ct);
+                        await using (var stream = File.OpenRead(file))
+                        {
+                            await Task.Run(() => client.UploadFile(stream, remoteFile, true), ct);
+                        }
                         transferred.Add(file);
                         ArchiveIfRequested(config, file);
                     }
@@ -121,9 +136,16 @@ public class TransferStepExecutor : IStepExecutor
                     foreach (var rf in remoteFiles)
                     {
                         var localFile = Path.Combine(config.LocalPath, rf.Name);
-                        await using var stream = File.Create(localFile);
-                        await Task.Run(() => client.DownloadFile(rf.FullName, stream), ct);
+                        await using (var stream = File.Create(localFile))
+                        {
+                            await Task.Run(() => client.DownloadFile(rf.FullName, stream), ct);
+                        }
                         transferred.Add(localFile);
+
+                        if (config.DeleteRemoteAfterDownload)
+                        {
+                            await Task.Run(() => client.DeleteFile(rf.FullName), ct);
+                        }
                     }
                 }
 
@@ -133,28 +155,38 @@ public class TransferStepExecutor : IStepExecutor
                 }
 
                 return StepExecutionResult.Ok(
-                    $"{transferred.Count} fichier(s) transféré(s) via SFTP vers/depuis {config.Host}.",
+                    $"{transferred.Count} fichier(s) transféré(s) via SFTP vers/depuis {host}.",
                     filesProcessedCsv: string.Join(";", transferred));
             }
 
             if (config.Upload)
             {
-                await using var stream = File.OpenRead(config.LocalPath);
-                await Task.Run(() => client.UploadFile(stream, config.RemotePath, true), ct);
+                await using (var stream = File.OpenRead(config.LocalPath))
+                {
+                    await Task.Run(() => client.UploadFile(stream, config.RemotePath, true), ct);
+                }
 
                 if (!client.Exists(config.RemotePath))
                 {
                     return StepExecutionResult.Fail("Le fichier distant n'a pas été trouvé après transfert (vérification échouée).");
                 }
+
+                ArchiveIfRequested(config, config.LocalPath);
             }
             else
             {
-                await using var stream = File.Create(config.LocalPath);
-                await Task.Run(() => client.DownloadFile(config.RemotePath, stream), ct);
+                await using (var stream = File.Create(config.LocalPath))
+                {
+                    await Task.Run(() => client.DownloadFile(config.RemotePath, stream), ct);
+                }
+
+                if (config.DeleteRemoteAfterDownload)
+                {
+                    await Task.Run(() => client.DeleteFile(config.RemotePath), ct);
+                }
             }
 
-            ArchiveIfRequested(config, config.LocalPath);
-            return StepExecutionResult.Ok($"Transfert SFTP réussi vers/depuis {config.Host}.", filesProcessedCsv: config.LocalPath);
+            return StepExecutionResult.Ok($"Transfert SFTP réussi vers/depuis {host}.", filesProcessedCsv: config.LocalPath);
         }
         finally
         {
@@ -197,12 +229,13 @@ public class TransferStepExecutor : IStepExecutor
             "ou le serveur a été réinstallé — un administrateur doit alors supprimer l'entrée mémorisée pour ce serveur).");
     }
 
-    private static async Task<StepExecutionResult> ExecuteFtpAsync(TransferStepConfig config, string username, string secret, bool useTls, CancellationToken ct)
+    private static async Task<StepExecutionResult> ExecuteFtpAsync(TransferStepConfig config, string host, int port, string username, string secret, bool useTls, CancellationToken ct)
     {
-        using var client = new AsyncFtpClient(config.Host, username, secret, config.Port <= 0 ? 21 : config.Port);
+        using var client = new AsyncFtpClient(host, username, secret, port);
         if (useTls || config.UseTls)
         {
             client.Config.EncryptionMode = FtpEncryptionMode.Explicit;
+            client.Config.ValidateAnyCertificate = true;
         }
 
         await client.Connect(ct);
@@ -242,6 +275,11 @@ public class TransferStepExecutor : IStepExecutor
                             return StepExecutionResult.Fail($"Échec de la récupération FTP pour '{rf.Name}' (statut != Success).");
                         }
                         transferred.Add(localFile);
+
+                        if (config.DeleteRemoteAfterDownload)
+                        {
+                            await client.DeleteFile(rf.FullName, ct);
+                        }
                     }
                 }
 
@@ -251,7 +289,7 @@ public class TransferStepExecutor : IStepExecutor
                 }
 
                 return StepExecutionResult.Ok(
-                    $"{transferred.Count} fichier(s) transféré(s) via FTP{(useTls ? "S" : "")} vers/depuis {config.Host}.",
+                    $"{transferred.Count} fichier(s) transféré(s) via FTP{(useTls ? "S" : "")} vers/depuis {host}.",
                     filesProcessedCsv: string.Join(";", transferred));
             }
 
@@ -262,6 +300,7 @@ public class TransferStepExecutor : IStepExecutor
                 {
                     return StepExecutionResult.Fail("Échec du transfert FTP (statut != Success).");
                 }
+                ArchiveIfRequested(config, config.LocalPath);
             }
             else
             {
@@ -270,10 +309,14 @@ public class TransferStepExecutor : IStepExecutor
                 {
                     return StepExecutionResult.Fail("Échec de la récupération FTP (statut != Success).");
                 }
+
+                if (config.DeleteRemoteAfterDownload)
+                {
+                    await client.DeleteFile(config.RemotePath, ct);
+                }
             }
 
-            ArchiveIfRequested(config, config.LocalPath);
-            return StepExecutionResult.Ok($"Transfert FTP{(useTls ? "S" : "")} réussi vers/depuis {config.Host}.", filesProcessedCsv: config.LocalPath);
+            return StepExecutionResult.Ok($"Transfert FTP{(useTls ? "S" : "")} réussi vers/depuis {host}.", filesProcessedCsv: config.LocalPath);
         }
         finally
         {
@@ -289,7 +332,7 @@ public class TransferStepExecutor : IStepExecutor
     /// pas un compte de service. Sans credential (ou pour un lecteur déjà mappé), l'identité du
     /// processus est utilisée directement, comme un lecteur réseau déjà connecté.
     /// </summary>
-    private static StepExecutionResult ExecuteSmbCopy(TransferStepConfig config, (string? Username, string? Secret)? credential)
+    private static StepExecutionResult ExecuteSmbCopy(TransferStepConfig config, (string? Username, string? Secret, string? Host, int? Port)? credential)
     {
         var shareOrPath = config.SmbShare ?? config.RemotePath;
 
@@ -320,6 +363,11 @@ public class TransferStepExecutor : IStepExecutor
                     var dest = Path.Combine(config.LocalPath, Path.GetFileName(file));
                     File.Copy(file, dest, true);
                     transferred.Add(dest);
+
+                    if (config.DeleteRemoteAfterDownload)
+                    {
+                        try { File.Delete(file); } catch { }
+                    }
                 }
             }
 
@@ -338,23 +386,54 @@ public class TransferStepExecutor : IStepExecutor
         if (config.Upload)
         {
             File.Copy(config.LocalPath, destination, true);
+            ArchiveIfRequested(config, config.LocalPath);
         }
         else
         {
             File.Copy(destination, config.LocalPath, true);
+            if (config.DeleteRemoteAfterDownload)
+            {
+                try { File.Delete(destination); } catch { }
+            }
         }
 
-        ArchiveIfRequested(config, config.LocalPath);
         return StepExecutionResult.Ok("Copie réseau SMB réussie.", filesProcessedCsv: destination);
     }
 
+    /// <summary>
+    /// Déplace (coupe) le fichier local vers le dossier d'archives après un transfert réussi
+    /// afin d'éviter qu'il ne soit retransféré lors de la prochaine exécution.
+    /// </summary>
     private static void ArchiveIfRequested(TransferStepConfig config, string localFilePath)
     {
         if (!config.ArchiveAfterTransfer || string.IsNullOrWhiteSpace(config.ArchiveDirectory) || !config.Upload) return;
         if (!File.Exists(localFilePath)) return;
 
-        Directory.CreateDirectory(config.ArchiveDirectory);
-        var archivePath = Path.Combine(config.ArchiveDirectory, Path.GetFileName(localFilePath));
-        File.Copy(localFilePath, archivePath, true);
+        try
+        {
+            Directory.CreateDirectory(config.ArchiveDirectory);
+            var archivePath = Path.Combine(config.ArchiveDirectory, Path.GetFileName(localFilePath));
+
+            if (File.Exists(archivePath))
+            {
+                File.Delete(archivePath);
+            }
+
+            File.Move(localFilePath, archivePath);
+        }
+        catch
+        {
+            try
+            {
+                // Repli si partition différente sous Windows (C: vers D: etc.)
+                var archivePath = Path.Combine(config.ArchiveDirectory, Path.GetFileName(localFilePath));
+                File.Copy(localFilePath, archivePath, true);
+                File.Delete(localFilePath);
+            }
+            catch
+            {
+                // Ne bloque pas l'exécution du job si l'archivage rencontre un verrou temporaire
+            }
+        }
     }
 }
