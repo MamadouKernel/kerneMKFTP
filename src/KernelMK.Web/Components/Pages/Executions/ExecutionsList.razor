@@ -166,6 +166,7 @@ else
                     <th class="min-w-[140px]">Déclencheur</th>
                     <th class="min-w-[150px]">Date &amp; Heure (Début)</th>
                     <th class="min-w-[100px]">Durée</th>
+                    <th class="min-w-[90px]">Fichiers</th>
                     <th class="min-w-[90px]">Code retour</th>
                     <th class="text-right min-w-[150px] pr-5">Actions</th>
                 </tr>
@@ -235,6 +236,25 @@ else
                         <!-- Durée -->
                         <td class="text-xs font-mono text-slate-600">
                             @(e.Duration?.ToString(@"hh\:mm\:ss") ?? (isRunning ? "Calcul en cours..." : "-"))
+                        </td>
+
+                        <!-- Fichiers -->
+                        <td>
+                            @{
+                                var filesCount = e.StepLogs
+                                    .Where(l => !string.IsNullOrEmpty(l.FilesProcessedCsv))
+                                    .Sum(l => l.FilesProcessedCsv!.Split(new[] { ';', ',' }, StringSplitOptions.RemoveEmptyEntries).Length);
+                            }
+                            @if (filesCount > 0)
+                            {
+                                <span class="px-2 py-0.5 rounded bg-sky-50 text-sky-700 font-semibold text-xs border border-sky-100 inline-flex items-center gap-1">
+                                    📁 @filesCount
+                                </span>
+                            }
+                            else
+                            {
+                                <span class="text-slate-400 text-xs">-</span>
+                            }
                         </td>
 
                         <!-- Code retour -->
@@ -344,6 +364,7 @@ else
         _jobs = await db.Jobs.OrderBy(j => j.Name).ToListAsync();
         _executions = await db.JobExecutions
             .Include(e => e.Job)
+            .Include(e => e.StepLogs)
             .OrderByDescending(e => e.StartedAt)
             .Take(500)
             .ToListAsync();

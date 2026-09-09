@@ -56,113 +56,8 @@
                     </div>
                 }
 
-                <!-- Centre d'Alertes & Notifications (Cloche) -->
-                <div class="relative">
-                    <button type="button"
-                            @onclick="ToggleNotifications"
-                            class="relative p-2 rounded-xl text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer select-none focus:outline-none flex items-center justify-center border border-transparent hover:border-slate-200"
-                            title="Centre de notifications">
-                        <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" />
-                        </svg>
-                        @if (_unreadCount > 0)
-                        {
-                            <span class="absolute top-1 right-1 h-4 min-w-[16px] px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center animate-pulse shadow-sm">
-                                @(_unreadCount > 9 ? "9+" : _unreadCount.ToString())
-                            </span>
-                        }
-                    </button>
-
-                    @if (_showNotifications)
-                    {
-                        <!-- Arrière-plan pour fermer en cliquant en dehors -->
-                        <div class="fixed inset-0 z-40" @onclick="CloseNotifications"></div>
-
-                        <!-- Panneau de Notifications -->
-                        <div class="absolute right-0 top-12 z-50 w-80 sm:w-96 bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
-                            <div class="px-4 py-3 bg-slate-900 text-white flex items-center justify-between">
-                                <div class="flex items-center gap-2">
-                                    <span class="text-sm font-bold tracking-tight">Notifications</span>
-                                    @if (_unreadCount > 0)
-                                    {
-                                        <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500 text-white shadow-xs">@_unreadCount non lue(s)</span>
-                                    }
-                                    else
-                                    {
-                                        <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/30 text-emerald-300 border border-emerald-500/40">À jour</span>
-                                    }
-                                </div>
-                                <div class="flex items-center gap-2">
-                                    @if (_unreadCount > 0)
-                                    {
-                                        <button type="button" @onclick="MarkAllReadAsync" class="text-[11px] font-semibold text-brand-300 hover:text-white flex items-center gap-1 cursor-pointer bg-white/10 hover:bg-white/20 px-2 py-1 rounded-lg transition-colors">
-                                            <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>
-                                            Tout marquer lu
-                                        </button>
-                                    }
-                                    <button type="button" @onclick="CloseNotifications" class="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/10" title="Fermer">
-                                        <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>
-                                    </button>
-                                </div>
-                            </div>
-
-                            <div class="max-h-80 overflow-y-auto divide-y divide-slate-100">
-                                @if (_recentAlerts.Count == 0)
-                                {
-                                    <div class="p-6 text-center text-xs text-slate-400">
-                                        Aucune activité récente.
-                                    </div>
-                                }
-                                else
-                                {
-                                    @foreach (var alert in _recentAlerts)
-                                    {
-                                        var isFail = alert.Status == JobStatus.Echec;
-                                        var isUnread = alert.StartedAt > _notificationsReadAt;
-                                        <button type="button"
-                                                @onclick="() => OpenNotificationDetail(alert)"
-                                                class="w-full text-left p-3 flex items-start gap-2.5 hover:bg-slate-50 transition-colors block relative cursor-pointer @(isUnread ? "bg-brand-50/40" : "")">
-                                            @if (isUnread)
-                                            {
-                                                <span class="absolute left-1.5 top-1/2 -translate-y-1/2 h-2 w-2 rounded-full bg-brand-600"></span>
-                                            }
-                                            <div class="h-7 w-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5 @(isFail ? "bg-rose-50 text-rose-600 border border-rose-100" : "bg-emerald-50 text-emerald-600 border border-emerald-100")">
-                                                @if (isFail)
-                                                {
-                                                    <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" /></svg>
-                                                }
-                                                else
-                                                {
-                                                    <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>
-                                                }
-                                            </div>
-                                            <div class="flex-1 min-w-0 pl-1">
-                                                <div class="flex items-center justify-between gap-1">
-                                                    <span class="text-xs @(isUnread ? "font-bold text-brand-900" : "font-semibold text-slate-900") truncate">@(alert.Job?.Name ?? "Job")</span>
-                                                    <span class="text-[10px] text-slate-400 font-mono shrink-0">@alert.StartedAt.ToLocalTime().ToString("dd/MM HH:mm")</span>
-                                                </div>
-                                                <p class="text-[11px] @(isFail ? "text-rose-600 font-medium" : "text-slate-500") line-clamp-2 mt-0.5">
-                                                    @(isFail ? (!string.IsNullOrEmpty(alert.Message) ? alert.Message : "Échec d'exécution") : (!string.IsNullOrEmpty(alert.Message) ? alert.Message : "Transfert achevé avec succès"))
-                                                </p>
-                                                <span class="text-[10px] text-brand-600 font-medium hover:underline mt-1 inline-block">Lire le contenu →</span>
-                                            </div>
-                                        </button>
-                                    }
-                                }
-                            </div>
-
-                            <div class="p-2.5 bg-slate-50 border-t border-slate-100 flex items-center justify-between text-xs font-semibold">
-                                <a href="executions" @onclick="CloseNotifications" class="text-brand-600 hover:text-brand-800">
-                                    Voir tout l'historique →
-                                </a>
-                                <button type="button" @onclick="LoadAlertsAsync" class="text-slate-500 hover:text-slate-800 flex items-center gap-1 text-[11px] cursor-pointer">
-                                    <svg class="h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
-                                    Actualiser
-                                </button>
-                            </div>
-                        </div>
-                    }
-                </div>
+                <!-- Centre d'Alertes & Notifications (Cloche Interactive) -->
+                <NotificationCenter />
 
 
                 <!-- Explorateur Distant -->
@@ -277,80 +172,6 @@
     </div>
 </div>
 
-@if (_selectedAlert != null)
-{
-    <div class="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-        <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-lg w-full overflow-hidden animate-in zoom-in-95 duration-150">
-            <!-- En-tête modal -->
-            <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between @(_selectedAlert.Status == JobStatus.Echec ? "bg-rose-50/70" : "bg-emerald-50/70")">
-                <div class="flex items-center gap-3">
-                    <span class="h-9 w-9 rounded-xl flex items-center justify-center text-base @(_selectedAlert.Status == JobStatus.Echec ? "bg-rose-100 text-rose-700" : "bg-emerald-100 text-emerald-700")">
-                        @(_selectedAlert.Status == JobStatus.Echec ? "⚠️" : "✓")
-                    </span>
-                    <div>
-                        <h3 class="text-sm font-bold text-slate-900">@(_selectedAlert.Job?.Name ?? "Compte-rendu d'exécution")</h3>
-                        <p class="text-xs text-slate-500">@_selectedAlert.StartedAt.ToLocalTime().ToString("dd/MM/yyyy 'à' HH:mm:ss")</p>
-                    </div>
-                </div>
-                <button type="button" @onclick="CloseNotificationDetail" class="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors">
-                    <svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>
-                </button>
-            </div>
-
-            <!-- Corps modal -->
-            <div class="p-5 space-y-4">
-                <!-- Métriques clés -->
-                <div class="grid grid-cols-3 gap-2">
-                    <div class="p-2.5 rounded-xl bg-slate-50 border border-slate-100 text-center">
-                        <span class="text-[10px] uppercase font-bold text-slate-400 block">Statut</span>
-                        <span class="text-xs font-bold @(_selectedAlert.Status == JobStatus.Echec ? "text-rose-600" : "text-emerald-600")">
-                            @_selectedAlert.Status
-                        </span>
-                    </div>
-                    <div class="p-2.5 rounded-xl bg-slate-50 border border-slate-100 text-center">
-                        <span class="text-[10px] uppercase font-bold text-slate-400 block">Durée</span>
-                        <span class="text-xs font-semibold text-slate-700">
-                            @(_selectedAlert.Duration.HasValue ? $"{_selectedAlert.Duration.Value.TotalSeconds:F1} s" : "-")
-                        </span>
-                    </div>
-                    <div class="p-2.5 rounded-xl bg-slate-50 border border-slate-100 text-center">
-                        <span class="text-[10px] uppercase font-bold text-slate-400 block">Déclencheur</span>
-                        <span class="text-xs font-semibold text-slate-700">
-                            @_selectedAlert.TriggeredBy
-                        </span>
-                    </div>
-                </div>
-
-                <!-- Message de la notification -->
-                <div>
-                    <label class="text-xs font-bold text-slate-700 block mb-1.5">Détail du message</label>
-                    <div class="p-3.5 rounded-xl text-xs font-mono whitespace-pre-wrap break-all @(_selectedAlert.Status == JobStatus.Echec ? "bg-rose-50/80 border border-rose-200 text-rose-900" : "bg-slate-50 border border-slate-200 text-slate-800") max-h-52 overflow-y-auto">
-                        @(!string.IsNullOrEmpty(_selectedAlert.Message) ? _selectedAlert.Message : "Transfert exécuté avec succès. Aucun avertissement ou erreur relevé.")
-                    </div>
-                </div>
-            </div>
-
-            <!-- Pied modal -->
-            <div class="px-5 py-3.5 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
-                <a href="executions/@_selectedAlert.Id" @onclick="CloseNotificationDetail" class="kmk-btn-primary text-xs py-2 px-3 flex items-center gap-1.5 shadow-sm">
-                    <span>Voir l'exécution complète</span>
-                    <svg class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd" /></svg>
-                </a>
-                <button type="button" class="kmk-btn-secondary text-xs py-2 px-3" @onclick="CloseNotificationDetail">
-                    Fermer
-                </button>
-            </div>
-        </div>
-    </div>
-}
-
-<div id="blazor-error-ui" data-nosnippet
-     class="hidden fixed bottom-4 right-4 z-50 rounded-lg bg-slate-900 text-white text-sm px-4 py-3 shadow-lg">
-    Une erreur inattendue s'est produite.
-    <a href="." class="reload underline ml-1">Recharger</a>
-    <span class="dismiss cursor-pointer ml-2">✕</span>
-</div>
-
 @code {
     [CascadingParameter]
     private Task<AuthenticationState>? AuthStateTask { get; set; }
@@ -359,95 +180,26 @@
     private string _displayName = "";
     private string _initials = "U";
     private ApplicationUser? _currentAppUser;
-
-    // Alert & Notification Center
-    private bool _showNotifications = false;
-    private JobExecution? _selectedAlert;
     private int _failedAlertsCount = 0;
-    private int _unreadCount = 0;
-    private DateTime _notificationsReadAt = DateTime.MinValue;
-    private List<JobExecution> _recentAlerts = new();
-
-    private void ToggleNotifications() => _showNotifications = !_showNotifications;
-    private void CloseNotifications() => _showNotifications = false;
-
-    private void OpenNotificationDetail(JobExecution alert)
-    {
-        _selectedAlert = alert;
-        _showNotifications = false;
-    }
-
-    private void CloseNotificationDetail()
-    {
-        _selectedAlert = null;
-    }
 
     protected override async Task OnInitializedAsync()
     {
-        await LoadAlertsAsync();
+        await LoadHealthStatusAsync();
     }
 
-    private async Task LoadAlertsAsync()
+    private async Task LoadHealthStatusAsync()
     {
         try
         {
             var cutoff = DateTime.UtcNow.AddHours(-24);
             await using var db = await DbFactory.CreateDbContextAsync();
-            var list = await db.JobExecutions
-                .AsNoTracking()
-                .Include(e => e.Job)
-                .Where(e => e.StartedAt >= cutoff)
-                .OrderByDescending(e => e.StartedAt)
-                .Take(10)
-                .ToListAsync();
-
-            _failedAlertsCount = list.Count(e => e.Status == JobStatus.Echec);
-            _recentAlerts = list;
-            RecomputeUnread();
+            _failedAlertsCount = await db.JobExecutions
+                .CountAsync(e => e.StartedAt >= cutoff && e.Status == JobStatus.Echec);
         }
         catch
         {
             // Silently fallback if DB busy
         }
-    }
-
-    private void RecomputeUnread()
-    {
-        _notificationsReadAt = _currentAppUser?.NotificationsReadAt ?? DateTime.MinValue;
-        _unreadCount = _recentAlerts.Count(a => a.StartedAt > _notificationsReadAt);
-    }
-
-    private async Task MarkAllReadAsync()
-    {
-        var now = DateTime.UtcNow;
-        _notificationsReadAt = now;
-        _unreadCount = 0;
-
-        if (_currentAppUser != null)
-        {
-            _currentAppUser.NotificationsReadAt = now;
-        }
-
-        try
-        {
-            if (!string.IsNullOrEmpty(_cachedUserId))
-            {
-                await using var db = await DbFactory.CreateDbContextAsync();
-                var user = await db.Users.FindAsync(_cachedUserId);
-                if (user != null)
-                {
-                    user.NotificationsReadAt = now;
-                    await db.SaveChangesAsync();
-                }
-            }
-        }
-        catch
-        {
-            // fallback
-        }
-
-        RecomputeUnread();
-        StateHasChanged();
     }
 
     protected override async Task OnParametersSetAsync()
@@ -497,8 +249,6 @@
                             _initials = GetInitials(_displayName);
                         }
                     }
-
-                    RecomputeUnread();
                 }
             }
         }

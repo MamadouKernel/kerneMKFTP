@@ -75,8 +75,37 @@ public class TransferStepExecutor : IStepExecutor
         }
         catch (Exception ex)
         {
-            return StepExecutionResult.Fail(ex.Message);
+            return StepExecutionResult.Fail(FormatDetailedException(ex));
         }
+    }
+
+    private static string FormatDetailedException(Exception ex)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"[ERREUR D'EXÉCUTION] : {ex.Message}");
+
+        var current = ex.InnerException;
+        int depth = 1;
+        while (current != null && depth <= 5)
+        {
+            sb.AppendLine($"[CAUSE PROFONDE #{depth}] ({current.GetType().Name}) : {current.Message}");
+            current = current.InnerException;
+            depth++;
+        }
+
+        if (ex is AggregateException agg)
+        {
+            foreach (var inner in agg.Flatten().InnerExceptions)
+            {
+                sb.AppendLine($"[SOUS-EXCEPTION] ({inner.GetType().Name}) : {inner.Message}");
+            }
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("[TRACE TECHNIQUE DÉTAILLÉE]");
+        sb.AppendLine(ex.ToString());
+
+        return sb.ToString();
     }
 
     private async Task<StepExecutionResult> ExecuteSftpAsync(TransferStepConfig config, string host, int port, string username, string secret, CredentialAuthType authType, string? passphrase, CancellationToken ct)
@@ -250,6 +279,11 @@ public class TransferStepExecutor : IStepExecutor
     private static async Task<StepExecutionResult> ExecuteFtpAsync(TransferStepConfig config, string host, int port, string username, string secret, bool useTls, CancellationToken ct)
     {
         using var client = new AsyncFtpClient(host, username, secret, port);
+        client.Config.ConnectTimeout = 15000;
+        client.Config.DataConnectionConnectTimeout = 20000;
+        client.Config.ReadTimeout = 30000;
+        client.Config.DataConnectionType = FtpDataConnectionType.AutoPassive;
+
         if (useTls || config.UseTls)
         {
             client.Config.EncryptionMode = FtpEncryptionMode.Explicit;
@@ -289,10 +323,10 @@ public class TransferStepExecutor : IStepExecutor
                                  .Where(f => FilePatternMatcher.IsMatch(Path.GetFileName(f), config.Filter)))
                     {
                         var remoteFile = CombineRemotePath(config.RemotePath, Path.GetFileName(file));
-                        var status = await client.UploadFile(file, remoteFile, FtpRemoteExists.Overwrite, true, token: ct);
+                        var status = await UploadWithFallbackAsync(client, file, remoteFile, ct);
                         if (status != FtpStatus.Success)
                         {
-                            return StepExecutionResult.Fail($"Échec du transfert FTP pour '{Path.GetFileName(file)}' (statut != Success).");
+                            return StepExecutionResult.Fail($"Échec du transfert FTP pour '{Path.GetFileName(file)}' : {client.LastReply.Code} {client.LastReply.Message} (statut : {status}).");
                         }
                         transferred.Add(file);
                         ArchiveIfRequested(config, file);
@@ -309,7 +343,7 @@ public class TransferStepExecutor : IStepExecutor
                         var status = await client.DownloadFile(localFile, rf.FullName, FtpLocalExists.Overwrite, token: ct);
                         if (status != FtpStatus.Success)
                         {
-                            return StepExecutionResult.Fail($"Échec de la récupération FTP pour '{rf.Name}' (statut != Success).");
+                            return StepExecutionResult.Fail($"Échec de la récupération FTP pour '{rf.Name}' : {client.LastReply.Code} {client.LastReply.Message} (statut : {status}).");
                         }
                         transferred.Add(localFile);
 
@@ -337,10 +371,10 @@ public class TransferStepExecutor : IStepExecutor
                     return StepExecutionResult.Fail($"Le fichier local source '{config.LocalPath}' est introuvable.");
                 }
 
-                var status = await client.UploadFile(config.LocalPath, config.RemotePath, FtpRemoteExists.Overwrite, true, token: ct);
+                var status = await UploadWithFallbackAsync(client, config.LocalPath, config.RemotePath, ct);
                 if (status != FtpStatus.Success)
                 {
-                    return StepExecutionResult.Fail("Échec du transfert FTP (statut != Success).");
+                    return StepExecutionResult.Fail($"Échec du transfert FTP : {client.LastReply.Code} {client.LastReply.Message} (statut : {status}).");
                 }
                 ArchiveIfRequested(config, config.LocalPath);
             }
@@ -363,6 +397,29 @@ public class TransferStepExecutor : IStepExecutor
         finally
         {
             await client.Disconnect(ct);
+        }
+    }
+
+    private static async Task<FtpStatus> UploadWithFallbackAsync(AsyncFtpClient client, string localPath, string remotePath, CancellationToken ct)
+    {
+        try
+        {
+            return await client.UploadFile(localPath, remotePath, FtpRemoteExists.Overwrite, true, token: ct);
+        }
+        catch (Exception) when (client.Config.DataConnectionEncryption)
+        {
+            // Repli automatique : si le serveur FTPS refuse le chiffrement du canal de données (PROT P),
+            // on tente le canal de données standard clair (PROT C)
+            client.Config.DataConnectionEncryption = false;
+            try
+            {
+                return await client.UploadFile(localPath, remotePath, FtpRemoteExists.Overwrite, true, token: ct);
+            }
+            catch
+            {
+                client.Config.DataConnectionEncryption = true;
+                throw;
+            }
         }
     }
 

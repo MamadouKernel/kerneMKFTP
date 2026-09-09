@@ -996,7 +996,7 @@
 
     private static string DetectArmateur(params string?[] candidates)
     {
-        var known = new[] { "MSC", "CMA CGM", "CMA-CGM", "MAERSK", "HAPAG-LLOYD", "HAPAG", "COSCO", "ONE", "GRIMALDI", "PIL", "ARKAS", "BOLUDA" };
+        var known = new[] { "GUCE", "MSC", "CMA CGM", "CMA-CGM", "MAERSK", "HAPAG-LLOYD", "HAPAG", "COSCO", "ONE", "GRIMALDI", "PIL", "ARKAS", "BOLUDA" };
         foreach (var text in candidates)
         {
             if (string.IsNullOrWhiteSpace(text)) continue;

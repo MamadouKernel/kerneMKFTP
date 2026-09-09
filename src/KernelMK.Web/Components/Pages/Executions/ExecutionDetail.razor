@@ -249,6 +249,71 @@ else
                 <span class="text-xs text-slate-400 block mb-1">Message d'état</span>
                 <span class="font-medium text-slate-700 truncate block" title="@_execution.Message">@(_execution.Message ?? "Aucun message")</span>
             </div>
+            <div class="bg-slate-50 rounded-xl p-3.5 border border-slate-100 col-span-1 sm:col-span-2 lg:col-span-4 flex items-center justify-between">
+                <div>
+                    <span class="text-xs text-slate-400 block mb-0.5">Volume de fichiers échangés</span>
+                    <span class="text-sm font-bold @(_totalFilesProcessed > 0 ? "text-sky-700" : "text-slate-600")">
+                        @(_totalFilesProcessed > 0 ? $"📁 {_totalFilesProcessed} fichier(s) traité(s)" : "Aucun fichier transmis (0)")
+                    </span>
+                </div>
+                @if (_totalFilesProcessed > 0)
+                {
+                    <span class="px-2.5 py-1 rounded-full text-xs font-bold bg-sky-100 text-sky-800 border border-sky-200">
+                        @_totalFilesProcessed fichier(s)
+                    </span>
+                }
+            </div>
+        </div>
+    </div>
+
+    <!-- Synthèse des Fichiers Échangés -->
+    <div class="kmk-card mb-6">
+        <div class="kmk-card-header flex items-center justify-between">
+            <div class="flex items-center gap-2">
+                <svg class="h-5 w-5 text-sky-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+                </svg>
+                <span>Fichiers traités dans cette exécution</span>
+            </div>
+            <span class="text-xs font-semibold px-2.5 py-0.5 rounded-full @(_totalFilesProcessed > 0 ? "bg-sky-100 text-sky-800" : "bg-slate-100 text-slate-500")">
+                @_totalFilesProcessed fichier(s) au total
+            </span>
+        </div>
+        <div class="kmk-card-body p-4">
+            @if (_allProcessedFiles.Count == 0)
+            {
+                <div class="p-6 text-center text-xs text-slate-400">
+                    Aucun fichier n'a été transmis ou généré lors de cette exécution (soit le job n'effectue pas de transfert de fichier, soit une erreur est survenue avant la phase de transmission).
+                </div>
+            }
+            else
+            {
+                <div class="divide-y divide-slate-100 max-h-80 overflow-y-auto">
+                    @foreach (var file in _allProcessedFiles)
+                    {
+                        <div class="py-2.5 px-3 flex items-center justify-between hover:bg-slate-50 rounded-lg transition-colors">
+                            <div class="flex items-center gap-3 min-w-0">
+                                <span class="h-8 w-8 rounded-lg bg-sky-50 text-sky-600 flex items-center justify-center shrink-0 border border-sky-100 font-mono text-xs">
+                                    EDI
+                                </span>
+                                <div class="min-w-0">
+                                    <div class="text-xs font-bold text-slate-800 truncate" title="@file.FullPath">
+                                        @file.FileName
+                                    </div>
+                                    <div class="text-[11px] text-slate-400 font-mono truncate" title="@file.FullPath">
+                                        @file.FullPath
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="flex items-center gap-2 shrink-0 ml-3">
+                                <span class="text-[10px] font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200">
+                                    Étape #@file.StepOrder (@file.StepName)
+                                </span>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
         </div>
     </div>
 
@@ -287,8 +352,9 @@ else
                     <div class="flex items-center gap-3">
                         @if (!string.IsNullOrEmpty(log.FilesProcessedCsv))
                         {
+                            var count = log.FilesProcessedCsv.Split(new[] { ';', ',' }, StringSplitOptions.RemoveEmptyEntries).Length;
                             <span class="px-2 py-0.5 text-xs font-semibold rounded bg-sky-50 text-sky-700 border border-sky-200">
-                                📁 @log.FilesProcessedCsv.Split(',', StringSplitOptions.RemoveEmptyEntries).Length fichier(s)
+                                📁 @count fichier(s)
                             </span>
                         }
                         <span class="text-xs font-medium text-slate-500">
@@ -309,7 +375,7 @@ else
                             <div>
                                 <label class="text-xs font-bold uppercase tracking-wider text-slate-500 block mb-1">Fichiers traités</label>
                                 <div class="flex flex-wrap gap-1.5">
-                                    @foreach (var file in log.FilesProcessedCsv.Split(',', StringSplitOptions.RemoveEmptyEntries))
+                                    @foreach (var file in log.FilesProcessedCsv.Split(new[] { ';', ',' }, StringSplitOptions.RemoveEmptyEntries))
                                     {
                                         <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-slate-100 text-slate-700 font-mono text-xs border border-slate-200">
                                             <svg class="h-3 w-3 text-slate-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" /></svg>
@@ -384,6 +450,10 @@ else
     private bool _copiedToast = false;
     private DiagnosticResult? _diagnostic;
 
+    private record ProcessedFileInfo(string FileName, string FullPath, int StepOrder, string StepName);
+    private List<ProcessedFileInfo> _allProcessedFiles = new();
+    private int _totalFilesProcessed => _allProcessedFiles.Count;
+
     protected override async Task OnInitializedAsync()
     {
         await LoadAsync();
@@ -403,6 +473,28 @@ else
                 .OrderBy(l => l.Order)
                 .ThenBy(l => l.AttemptNumber)
                 .ToList();
+
+            _allProcessedFiles.Clear();
+            foreach (var s in _stepLogs)
+            {
+                if (!string.IsNullOrWhiteSpace(s.FilesProcessedCsv))
+                {
+                    var paths = s.FilesProcessedCsv.Split(new[] { ';', ',' }, StringSplitOptions.RemoveEmptyEntries);
+                    foreach (var p in paths)
+                    {
+                        var clean = p.Trim();
+                        if (!string.IsNullOrEmpty(clean))
+                        {
+                            _allProcessedFiles.Add(new ProcessedFileInfo(
+                                Path.GetFileName(clean),
+                                clean,
+                                s.Order,
+                                s.StepName
+                            ));
+                        }
+                    }
+                }
+            }
 
             var failedStep = _stepLogs.FirstOrDefault(s => s.Status == StepExecutionStatus.Echec);
             _selectedStepId = failedStep?.Id ?? _stepLogs.LastOrDefault()?.Id;
@@ -482,14 +574,73 @@ else
     // Diagnostic intelligent de l'exécution
     private DiagnosticResult? AnalyzeExecution(JobExecution execution, List<StepExecutionLog> steps)
     {
-        if (execution.Status != JobStatus.Echec && !steps.Any(s => s.Status == StepExecutionStatus.Echec))
+        if (execution.Status != JobStatus.Echec && execution.Status != JobStatus.Annule && !steps.Any(s => s.Status == StepExecutionStatus.Echec))
         {
             return null;
         }
 
         var allErrors = string.Join(" ", steps.Select(s => s.ErrorOutput ?? "") + " " + (execution.Message ?? ""));
 
-        // 1. Host vide / non défini
+        // 0. Concurrence & Déclenchement simultané bloqué
+        if (allErrors.Contains("concurrence non autorisée", StringComparison.OrdinalIgnoreCase) ||
+            allErrors.Contains("déjà en cours", StringComparison.OrdinalIgnoreCase))
+        {
+            return new DiagnosticResult
+            {
+                Category = "Planification & Concurrence",
+                Severity = DiagnosticSeverity.Warning,
+                Title = "Exécution simultanée bloquée (Job déjà en cours)",
+                Explanation = "Le déclencheur automatique ou manuel a été ignoré parce qu'une exécution de ce job était déjà en cours sur le serveur. Par sécurité, kernelMK empêche les exécutions concurrentes sur un même job pour éviter les transferts de fichiers en doublon.",
+                Recommendation = "Si les transferts sont longs, espacez la fréquence de planification dans l'onglet 'Jobs'. Si vous souhaitez autoriser l'exécution en parallèle, cochez l'option 'Autoriser l'exécution simultanée' dans les paramètres du job.",
+                ActionLinks = new()
+                {
+                    new("Modifier les paramètres du job", $"jobs/{execution.JobId}/edit")
+                }
+            };
+        }
+
+        // 1. Échec d'envoi FTPS / Canal de données / Ports passifs
+        if (allErrors.Contains("Error while uploading the file to the server", StringComparison.OrdinalIgnoreCase) ||
+            allErrors.Contains("FtpException", StringComparison.OrdinalIgnoreCase) ||
+            allErrors.Contains("425 Can't open data connection", StringComparison.OrdinalIgnoreCase))
+        {
+            return new DiagnosticResult
+            {
+                Category = "Canal de Données FTPS / Réseau",
+                Severity = DiagnosticSeverity.Critical,
+                Title = "Échec de transfert sur le canal de données FTPS (Mode Passif PASV)",
+                Explanation = "La connexion de contrôle au serveur FTP s'est établie avec succès, mais le transfert de fichier a échoué lors de l'ouverture du socket de données. Cela arrive quand les ports de données passifs (PASV) sont bloqués par un pare-feu ou quand le chiffrement TLS du canal de données (PROT P) est refusé par le serveur distant.",
+                Recommendation = "1. Vérifiez que les ports passifs du serveur GUCE sont bien autorisés en sortie sur le pare-feu du serveur CIT. 2. Le système applique désormais un repli automatique vers PROT C. 3. Testez l'accès et le dépôt direct via l'Explorateur distant.",
+                ActionLinks = new()
+                {
+                    new("Ouvrir l'Explorateur distant", "explorer"),
+                    new("Modifier le job", $"jobs/{execution.JobId}/edit")
+                }
+            };
+        }
+
+        // 2. Timeout ou tâche annulée
+        if (allErrors.Contains("task was canceled", StringComparison.OrdinalIgnoreCase) ||
+            allErrors.Contains("OperationCanceledException", StringComparison.OrdinalIgnoreCase) ||
+            allErrors.Contains("Timeout dépassé", StringComparison.OrdinalIgnoreCase) ||
+            steps.Any(s => s.Status == StepExecutionStatus.Timeout))
+        {
+            return new DiagnosticResult
+            {
+                Category = "Délai Dépassé (Timeout)",
+                Severity = DiagnosticSeverity.Critical,
+                Title = "Dépassement du délai d'attente maximum (Timeout)",
+                Explanation = "L'étape a dépassé le délai alloué (par exemple 600 secondes / 10 minutes) sans que le serveur distant n'achève la réponse ou le transfert de fichier.",
+                Recommendation = "Vérifiez que la liaison réseau entre le serveur CIT et le serveur distant est opérationnelle et que le serveur distant ne bloque pas les sockets. Vous pouvez également augmenter le délai de timeout de l'étape si le fichier est volumineux.",
+                ActionLinks = new()
+                {
+                    new("Ajuster le délai du job", $"jobs/{execution.JobId}/edit"),
+                    new("Tester le serveur dans Credentials", "credentials")
+                }
+            };
+        }
+
+        // 3. Host vide / non défini
         if (allErrors.Contains("Parameter 'host' cannot be empty", StringComparison.OrdinalIgnoreCase) ||
             allErrors.Contains("host' cannot be empty", StringComparison.OrdinalIgnoreCase) ||
             allErrors.Contains("ArgumentException: Parameter 'host'", StringComparison.OrdinalIgnoreCase))
@@ -500,7 +651,7 @@ else
                 Severity = DiagnosticSeverity.Critical,
                 Title = "Paramètre d'hôte (Host) manquant ou non renseigné",
                 Explanation = "Le client de transfert (SFTP/FTP) a échoué car aucune adresse de serveur distant n'a été transmise.",
-                Recommendation = "Assurez-vous qu'un Credential avec un nom d'hôte valide (ex: 'stgmamsftp.blob.core.windows.net') est bien sélectionné sur l'étape du job, ou renseignez manuellement l'hôte distant dans la configuration de l'étape.",
+                Recommendation = "Assurez-vous qu'un Credential avec un nom d'hôte valide (ex: 'files01.guce.gouv.ci') est bien sélectionné sur l'étape du job, ou renseignez manuellement l'hôte distant dans la configuration de l'étape.",
                 ActionLinks = new()
                 {
                     new("Modifier le job", $"jobs/{execution.JobId}/edit"),
@@ -509,7 +660,7 @@ else
             };
         }
 
-        // 2. Erreur d'authentification SSH / SFTP / FTP
+        // 4. Erreur d'authentification SSH / SFTP / FTP
         if (allErrors.Contains("SshAuthenticationException", StringComparison.OrdinalIgnoreCase) ||
             allErrors.Contains("Permission denied (publickey,password)", StringComparison.OrdinalIgnoreCase) ||
             allErrors.Contains("Authentication failed", StringComparison.OrdinalIgnoreCase) ||
@@ -522,7 +673,7 @@ else
                 Severity = DiagnosticSeverity.Critical,
                 Title = "Échec d'authentification sur le serveur distant",
                 Explanation = "Le serveur a refusé les identifiants de connexion (nom d'utilisateur, mot de passe ou clé SSH privée).",
-                Recommendation = "Pour Azure Blob SFTP, le nom d'utilisateur doit être au format '<compte_stockage>.<conteneur>.<utilisateur>'. Vérifiez les identifiants configurés dans vos Credentials et lancez un test de connexion en direct.",
+                Recommendation = "Vérifiez les identifiants configurés dans vos Credentials et lancez un test de connexion en direct pour vérifier le mot de passe ou la clé.",
                 ActionLinks = new()
                 {
                     new("Tester la connexion dans Credentials", "credentials"),
@@ -531,7 +682,7 @@ else
             };
         }
 
-        // 3. Timeout / Réseau / Port fermé
+        // 5. Timeout / Réseau / Port fermé
         if (allErrors.Contains("SocketException", StringComparison.OrdinalIgnoreCase) ||
             allErrors.Contains("timed out", StringComparison.OrdinalIgnoreCase) ||
             allErrors.Contains("No such host is known", StringComparison.OrdinalIgnoreCase) ||
@@ -543,8 +694,8 @@ else
                 Category = "Connectivité & Pare-feu",
                 Severity = DiagnosticSeverity.Critical,
                 Title = "Délai de connexion dépassé (Timeout / Port inaccessible)",
-                Explanation = "kernelMK n'a pas pu joindre le serveur distant sur le port spécifié (généralement le port 22 pour SFTP ou 21 pour FTP).",
-                Recommendation = "Si vous utilisez Azure Storage SFTP, assurez-vous que votre adresse IP publique actuelle est autorisée dans les règles de pare-feu du compte de stockage Azure. Vérifiez également que le serveur distant est en ligne et accessible.",
+                Explanation = "kernelMK n'a pas pu joindre le serveur distant sur le port spécifié (ex: port 22 pour SFTP ou port 990 pour FTPS).",
+                Recommendation = "Vérifiez que le serveur distant est bien en ligne, que l'adresse IP / le nom de domaine est résolu, et que les règles de pare-feu autorisent le trafic sortant vers ce port.",
                 ActionLinks = new()
                 {
                     new("Tester le serveur dans Credentials", "credentials"),
