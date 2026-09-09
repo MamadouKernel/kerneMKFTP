@@ -16,6 +16,7 @@
 @inject NavigationManager Nav
 @inject ConnectionTestService TestService
 @inject CredentialProtector Protector
+@inject KernelMK.Engine.Notifications.NotificationDispatcher NotificationDispatcher
 
 <PageTitle>@(IsNew ? "Nouveau job" : "Modifier le job") · kernelMK</PageTitle>
 
@@ -416,24 +417,28 @@ else
 
                             @if (trigger.Type is TriggerType.Horaire or TriggerType.Cron)
                             {
-                                <div class="col-span-2">
-                                    <label class="kmk-label">Expression Cron (avec secondes)</label>
-                                    <input class="kmk-input" placeholder="0 0 22 * * *" @bind="trigger.CronExpression" />
-                                </div>
                                 <div>
-                                    <label class="kmk-label">Ou intervalle (s)</label>
-                                    <input type="number" class="kmk-input" @bind="trigger.IntervalSeconds" />
+                                    <label class="kmk-label">Intervalle (secondes)</label>
+                                    <input type="number" class="kmk-input" placeholder="3600" @bind="trigger.IntervalSeconds" />
+                                    <p class="text-[11px] text-slate-500 mt-1">Ex: 3600 (1h), 900 (15 min), 300 (5 min)</p>
+                                </div>
+                                <div class="col-span-2">
+                                    <label class="kmk-label">Ou Expression Cron (6 champs)</label>
+                                    <input class="kmk-input font-mono text-xs" placeholder="0 0 22 * * *" @bind="trigger.CronExpression" />
+                                    <p class="text-[11px] text-slate-500 mt-1">Ex: <code>0 0 22 * * *</code> (22h00), <code>0 */15 * * * *</code> (toutes les 15 min)</p>
                                 </div>
                             }
                             else if (trigger.Type == TriggerType.Calendrier)
                             {
                                 <div>
                                     <label class="kmk-label">Jours (Mon,Tue,...)</label>
-                                    <input class="kmk-input" @bind="trigger.DaysOfWeekCsv" />
+                                    <input class="kmk-input" placeholder="Mon,Tue,Wed,Thu,Fri" @bind="trigger.DaysOfWeekCsv" />
+                                    <p class="text-[11px] text-slate-500 mt-1">Ex: Mon,Tue,Wed,Thu,Fri</p>
                                 </div>
                                 <div>
                                     <label class="kmk-label">Heure d'exécution</label>
                                     <input type="time" class="kmk-input" value="@WindowStartString(trigger)" @onchange="e => SetWindowStart(trigger, e.Value?.ToString())" />
+                                    <p class="text-[11px] text-slate-500 mt-1">Heure fixe du lancement</p>
                                 </div>
                                 <div class="flex items-end pb-2">
                                     <label class="flex items-center gap-2 text-sm text-slate-700">
@@ -447,20 +452,23 @@ else
                                         Exclure jours fériés
                                     </label>
                                 </div>
-                                <div class="col-span-2">
+                                <div class="col-span-2 sm:col-span-4">
                                     <label class="kmk-label">Jours fériés (yyyy-MM-dd,...)</label>
-                                    <input class="kmk-input" @bind="trigger.HolidayDatesCsv" />
+                                    <input class="kmk-input" placeholder="2026-01-01, 2026-05-01, 2026-08-07" @bind="trigger.HolidayDatesCsv" />
+                                    <p class="text-[11px] text-slate-500 mt-1">Dates au format AAAA-MM-JJ séparées par des virgules</p>
                                 </div>
                             }
                             else if (trigger.Type == TriggerType.EvenementDossier)
                             {
                                 <div class="col-span-2">
-                                    <label class="kmk-label">Dossier surveillé</label>
-                                    <input class="kmk-input" @bind="trigger.FolderPath" />
+                                    <label class="kmk-label">Dossier surveillé (File Watcher)</label>
+                                    <input class="kmk-input font-mono text-xs" placeholder="K:\EDI\GUCE\OUT\ ou C:\SFTP\Outbox" @bind="trigger.FolderPath" />
+                                    <p class="text-[11px] text-slate-500 mt-1">Chemin absolu du dossier local ou réseau partagé</p>
                                 </div>
                                 <div>
-                                    <label class="kmk-label">Filtre (ex: *.csv)</label>
-                                    <input class="kmk-input" @bind="trigger.FolderFilter" />
+                                    <label class="kmk-label">Filtre fichiers</label>
+                                    <input class="kmk-input font-mono text-xs" placeholder="*.edi ou *.xml" @bind="trigger.FolderFilter" />
+                                    <p class="text-[11px] text-slate-500 mt-1">Ex: *.edi, *.xml, *.csv, *.*</p>
                                 </div>
                                 <div>
                                     <label class="kmk-label">Événement</label>
@@ -470,13 +478,15 @@ else
                                             <option value="@ev">@ev</option>
                                         }
                                     </select>
+                                    <p class="text-[11px] text-slate-500 mt-1">Arrivée = dès qu'un fichier est prêt</p>
                                 </div>
                             }
                             else if (trigger.Type == TriggerType.Api)
                             {
                                 <div class="col-span-3">
-                                    <label class="kmk-label">Jeton webhook (URL : /api/triggers/{jeton})</label>
-                                    <input class="kmk-input" @bind="trigger.WebhookToken" />
+                                    <label class="kmk-label">Jeton d'authentification API (Webhook)</label>
+                                    <input class="kmk-input font-mono text-xs" placeholder="token-secret-guce-cit" @bind="trigger.WebhookToken" />
+                                    <p class="text-[11px] text-slate-500 mt-1">URL de déclenchement : <code>POST http://[serveur]:5000/api/triggers/@(string.IsNullOrWhiteSpace(trigger.WebhookToken) ? "{jeton}" : trigger.WebhookToken)</code></p>
                                 </div>
                             }
 
@@ -525,34 +535,105 @@ else
         </div>
 
         <div class="kmk-card mb-5">
-            <div class="kmk-card-header">
-                <span>Notifications</span>
-                <button type="button" class="kmk-btn-primary kmk-btn-sm" @onclick="AddNotificationRule">+ Ajouter une règle</button>
+            <div class="kmk-card-header flex justify-between items-center">
+                <div class="flex items-center gap-2">
+                    <svg class="h-5 w-5 text-brand-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" /></svg>
+                    <span>Règles de Notifications & Alertes</span>
+                </div>
+                <button type="button" class="kmk-btn-primary kmk-btn-sm flex items-center gap-1.5" @onclick="AddNotificationRule">
+                    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+                    <span>+ Ajouter une règle</span>
+                </button>
             </div>
-            <div class="kmk-card-body space-y-2">
+            <div class="kmk-card-body space-y-4">
                 @foreach (var rule in _job.NotificationRules)
                 {
-                    <div class="grid grid-cols-2 sm:grid-cols-5 gap-2 items-center">
-                        <select class="kmk-select" @bind="rule.Event">
-                            @foreach (var ev in Enum.GetValues<NotificationEvent>())
-                            {
-                                <option value="@ev">@ev</option>
-                            }
-                        </select>
-                        <select class="kmk-select" @bind="rule.Channel">
-                            @foreach (var ch in Enum.GetValues<NotificationChannel>())
-                            {
-                                <option value="@ch">@ch</option>
-                            }
-                        </select>
-                        <input class="kmk-input" placeholder="destinataires (,)" @bind="rule.RecipientsCsv" />
-                        <input class="kmk-input" placeholder="URL webhook" @bind="rule.WebhookUrl" />
-                        <button type="button" class="kmk-btn-danger kmk-btn-sm justify-self-start" @onclick="() => _job.NotificationRules.Remove(rule)">✕</button>
+                    var testState = _ruleTestStates.GetValueOrDefault(rule.Id, (false, null, null));
+                    <div class="border border-slate-200 rounded-lg p-4 bg-slate-50/50 hover:bg-slate-50 transition-colors">
+                        <div class="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
+                            <div class="sm:col-span-3">
+                                <label class="kmk-label">Événement déclencheur</label>
+                                <select class="kmk-select text-xs font-semibold" @bind="rule.Event">
+                                    @foreach (var ev in Enum.GetValues<NotificationEvent>())
+                                    {
+                                        <option value="@ev">@ev</option>
+                                    }
+                                </select>
+                            </div>
+
+                            <div class="sm:col-span-2">
+                                <label class="kmk-label">Canal</label>
+                                <select class="kmk-select text-xs font-semibold" @bind="rule.Channel">
+                                    @foreach (var ch in Enum.GetValues<NotificationChannel>())
+                                    {
+                                        <option value="@ch">@ch</option>
+                                    }
+                                </select>
+                            </div>
+
+                            <div class="sm:col-span-4">
+                                @if (rule.Channel == NotificationChannel.Email)
+                                {
+                                    <label class="kmk-label">Destinataires e-mails (séparés par virgule)</label>
+                                    <input class="kmk-input text-xs" placeholder="m.konate@@cotedivoireterminal.com, support@@cit.ci" @bind="rule.RecipientsCsv" />
+                                }
+                                else if (rule.Channel == NotificationChannel.Teams)
+                                {
+                                    <label class="kmk-label">URL Webhook Microsoft Teams (Incoming Webhook)</label>
+                                    <input class="kmk-input text-xs font-mono" placeholder="https://cotedivoireterminal.webhook.office.com/..." @bind="rule.WebhookUrl" />
+                                }
+                                else
+                                {
+                                    <label class="kmk-label">URL Webhook HTTP (POST JSON)</label>
+                                    <input class="kmk-input text-xs font-mono" placeholder="https://supervision.cit/api/alertes" @bind="rule.WebhookUrl" />
+                                }
+                            </div>
+
+                            <div class="sm:col-span-3 flex items-center justify-end gap-2 pb-0.5">
+                                <button type="button" 
+                                        class="kmk-btn-secondary kmk-btn-sm text-xs font-medium flex items-center gap-1.5 shadow-xs" 
+                                        disabled="@testState.Testing"
+                                        @onclick="() => TestNotificationRuleAsync(rule)">
+                                    @if (testState.Testing)
+                                    {
+                                        <span class="inline-block animate-spin h-3.5 w-3.5 border-2 border-brand-500 border-t-transparent rounded-full"></span>
+                                        <span>Envoi...</span>
+                                    }
+                                    else
+                                    {
+                                        <svg class="h-3.5 w-3.5 text-brand-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 12 3.269 3.125A59.769 59.769 0 0 1 21.485 12 59.768 59.768 0 0 1 3.27 20.875L5.999 12Zm0 0h7.5" /></svg>
+                                        <span>Tester</span>
+                                    }
+                                </button>
+
+                                <label class="flex items-center gap-1.5 text-xs text-slate-700 cursor-pointer select-none px-2 py-1 bg-white border border-slate-200 rounded">
+                                    <input type="checkbox" class="kmk-checkbox h-3.5 w-3.5" @bind="rule.Enabled" />
+                                    <span>Actif</span>
+                                </label>
+
+                                <button type="button" class="kmk-btn-danger kmk-btn-sm text-xs px-2 py-1" title="Supprimer la règle" @onclick="() => _job.NotificationRules.Remove(rule)">✕</button>
+                            </div>
+                        </div>
+
+                        @if (testState.Success.HasValue)
+                        {
+                            <div class="mt-2.5 px-3 py-2 rounded-lg text-xs flex items-center gap-2 @(testState.Success.Value ? "bg-emerald-50 text-emerald-800 border border-emerald-200" : "bg-rose-50 text-rose-800 border border-rose-200")">
+                                @if (testState.Success.Value)
+                                {
+                                    <svg class="h-4 w-4 text-emerald-600 shrink-0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm3.857-9.809a.75.75 0 0 0-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 1 0-1.06 1.061l2.5 2.5a.75.75 0 0 0 1.137-.089l4-5.5Z" clip-rule="evenodd" /></svg>
+                                }
+                                else
+                                {
+                                    <svg class="h-4 w-4 text-rose-600 shrink-0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16ZM8.28 7.22a.75.75 0 0 0-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 1 0 1.06 1.06L10 11.06l1.72 1.72a.75.75 0 1 0 1.06-1.06L11.06 10l1.72-1.72a.75.75 0 0 0-1.06-1.06L10 8.94 8.28 7.22Z" clip-rule="evenodd" /></svg>
+                                }
+                                <span class="font-medium">@testState.Message</span>
+                            </div>
+                        }
                     </div>
                 }
                 @if (_job.NotificationRules.Count == 0)
                 {
-                    <p class="text-sm text-slate-400">Aucune notification configurée.</p>
+                    <p class="text-sm text-slate-400">Aucune notification configurée. Cliquez sur « + Ajouter une règle » pour être alerté par e-mail ou Teams.</p>
                 }
             </div>
         </div>
@@ -622,6 +703,18 @@ else
     }
 
     private void AddNotificationRule() => _job.NotificationRules.Add(new NotificationRule { Event = NotificationEvent.Echec, Channel = NotificationChannel.Email, Enabled = true });
+
+    private readonly Dictionary<Guid, (bool Testing, bool? Success, string? Message)> _ruleTestStates = new();
+
+    private async Task TestNotificationRuleAsync(NotificationRule rule)
+    {
+        _ruleTestStates[rule.Id] = (true, null, null);
+        StateHasChanged();
+
+        var result = await NotificationDispatcher.TestRuleAsync(rule, _job.Name ?? "Nouveau Job");
+        _ruleTestStates[rule.Id] = (false, result.Success, result.Message);
+        StateHasChanged();
+    }
 
     private string WindowStartString(JobTrigger trigger) => trigger.WindowStart?.ToString(@"hh\:mm") ?? "22:00";
 
