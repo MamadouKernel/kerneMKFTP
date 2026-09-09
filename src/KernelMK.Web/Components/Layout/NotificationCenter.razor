@@ -150,9 +150,12 @@
     <!-- Fenêtre Modale de Lecture Complète d'une Notification -->
     @if (_selectedAlert != null)
     {
-        <div class="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-            <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200 animate-in zoom-in-95 duration-150">
-                <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between @(_selectedAlert.Status == JobStatus.Echec ? "bg-rose-50" : _selectedAlert.Status == JobStatus.Annule ? "bg-slate-100" : "bg-emerald-50")">
+        <div style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; width: 100vw; height: 100vh; z-index: 99999; display: flex; align-items: center; justify-content: center; background-color: rgba(15, 23, 42, 0.75); padding: 1rem;"
+             @onclick="CloseNotificationDetail">
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border border-slate-200 flex flex-col animate-in zoom-in-95 duration-150"
+                 style="max-height: 88vh;"
+                 @onclick:stopPropagation="true">
+                <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between shrink-0 @(_selectedAlert.Status == JobStatus.Echec ? "bg-rose-50" : _selectedAlert.Status == JobStatus.Annule ? "bg-slate-100" : "bg-emerald-50")">
                     <div class="flex items-center gap-2.5">
                         <div class="h-8 w-8 rounded-xl flex items-center justify-center @(_selectedAlert.Status == JobStatus.Echec ? "bg-rose-100 text-rose-700" : _selectedAlert.Status == JobStatus.Annule ? "bg-slate-200 text-slate-700" : "bg-emerald-100 text-emerald-700")">
                             @if (_selectedAlert.Status == JobStatus.Echec)

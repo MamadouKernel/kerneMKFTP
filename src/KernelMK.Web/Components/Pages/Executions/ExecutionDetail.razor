@@ -404,21 +404,72 @@ else
                             </div>
                         }
 
-                        <!-- Error Terminal -->
+                        <!-- Error Terminal & Fiche Diagnostic pour la Supervision -->
                         @if (!string.IsNullOrWhiteSpace(log.ErrorOutput))
                         {
-                            <div>
-                                <div class="flex items-center justify-between mb-1.5">
-                                    <label class="text-xs font-bold uppercase tracking-wider text-rose-600 flex items-center gap-1.5">
-                                        <span class="h-2 w-2 rounded-full bg-rose-500"></span>
-                                        Erreurs &amp; Traces d'exception
-                                    </label>
-                                    <button class="text-xs text-rose-600 hover:text-rose-800 font-medium"
-                                            @onclick="() => CopyToClipboard(log.ErrorOutput)">
-                                        Copier l'erreur
-                                    </button>
+                            var diag = GetStepDiagnostic(log.ErrorOutput);
+                            var isTraceOpen = _expandedTraces.Contains(log.Id);
+
+                            <div class="rounded-xl border border-rose-200 bg-rose-50/60 p-4 space-y-3.5 shadow-xs">
+                                <!-- En-tête du diagnostic supervision -->
+                                <div class="flex items-start gap-3">
+                                    <div class="h-9 w-9 rounded-xl bg-rose-600 text-white flex items-center justify-center shrink-0 font-bold shadow-sm text-base">
+                                        ⚠️
+                                    </div>
+                                    <div class="flex-1 min-w-0">
+                                        <div class="flex items-center justify-between gap-2">
+                                            <span class="text-[11px] font-bold uppercase tracking-wider text-rose-700 bg-rose-100/80 px-2 py-0.5 rounded-md">
+                                                Fiche Opérationnelle · Supervision CIT
+                                            </span>
+                                            <button type="button" class="text-xs text-rose-600 hover:text-rose-800 font-semibold"
+                                                    @onclick="() => CopyToClipboard(log.ErrorOutput)">
+                                                Copier l'erreur
+                                            </button>
+                                        </div>
+                                        <h4 class="text-sm font-bold text-slate-900 mt-1">@diag.Title</h4>
+                                        <p class="text-xs text-slate-700 mt-1 leading-relaxed">@diag.Meaning</p>
+                                    </div>
                                 </div>
-                                <pre class="bg-rose-950/40 text-rose-200 font-mono text-xs p-4 rounded-xl overflow-x-auto max-h-64 leading-relaxed border border-rose-900/50 shadow-inner">@log.ErrorOutput</pre>
+
+                                <!-- Grille Causes & Actions recommandées (compréhensibles sans développeur) -->
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                                    <div class="p-3 bg-white rounded-xl border border-rose-100 shadow-xs text-xs">
+                                        <span class="font-bold text-slate-800 flex items-center gap-1.5 mb-2 text-rose-700">
+                                            <span>🔍</span> Causes probables identifiées :
+                                        </span>
+                                        <ul class="list-disc list-inside space-y-1.5 text-slate-600 text-[11px] leading-relaxed">
+                                            @foreach (var cause in diag.Causes)
+                                            {
+                                                <li>@cause</li>
+                                            }
+                                        </ul>
+                                    </div>
+
+                                    <div class="p-3 bg-white rounded-xl border border-emerald-100 shadow-xs text-xs">
+                                        <span class="font-bold text-slate-800 flex items-center gap-1.5 mb-2 text-emerald-700">
+                                            <span>✅</span> Actions à mener (sans développeur) :
+                                        </span>
+                                        <ul class="list-disc list-inside space-y-1.5 text-slate-600 text-[11px] leading-relaxed">
+                                            @foreach (var action in diag.Actions)
+                                            {
+                                                <li>@action</li>
+                                            }
+                                        </ul>
+                                    </div>
+                                </div>
+
+                                <!-- Traces techniques pour développeur / support niveau 2 (Repliable) -->
+                                <div class="pt-2 border-t border-rose-200/60">
+                                    <button type="button" 
+                                            class="text-[11px] font-semibold text-slate-600 hover:text-slate-900 flex items-center gap-1.5 cursor-pointer select-none"
+                                            @onclick="() => ToggleTrace(log.Id)">
+                                        <span>@(isTraceOpen ? "▼ Masquer les traces techniques détaillées" : "▶ Voir les traces techniques détaillées (.NET Exception / Développeur)")</span>
+                                    </button>
+                                    @if (isTraceOpen)
+                                    {
+                                        <pre class="mt-2 bg-slate-950 text-rose-300 font-mono text-[11px] p-3.5 rounded-xl overflow-x-auto max-h-56 leading-relaxed border border-slate-800 shadow-inner">@log.ErrorOutput</pre>
+                                    }
+                                </div>
                             </div>
                         }
 
@@ -449,6 +500,13 @@ else
     private bool _loading = true;
     private bool _copiedToast = false;
     private DiagnosticResult? _diagnostic;
+    private HashSet<Guid> _expandedTraces = new();
+
+    private void ToggleTrace(Guid logId)
+    {
+        if (!_expandedTraces.Add(logId))
+            _expandedTraces.Remove(logId);
+    }
 
     private record ProcessedFileInfo(string FileName, string FullPath, int StepOrder, string StepName);
     private List<ProcessedFileInfo> _allProcessedFiles = new();
@@ -599,7 +657,33 @@ else
             };
         }
 
-        // 1. Échec d'envoi FTPS / Canal de données / Ports passifs
+        // 1. Timeout / Réseau / Port fermé (priorité haute car très fréquent sur FTPS/SFTP)
+        if (allErrors.Contains("timed out", StringComparison.OrdinalIgnoreCase) ||
+            allErrors.Contains("TimeoutException", StringComparison.OrdinalIgnoreCase) ||
+            allErrors.Contains("SocketException", StringComparison.OrdinalIgnoreCase) ||
+            allErrors.Contains("task was canceled", StringComparison.OrdinalIgnoreCase) ||
+            allErrors.Contains("OperationCanceledException", StringComparison.OrdinalIgnoreCase) ||
+            allErrors.Contains("No such host is known", StringComparison.OrdinalIgnoreCase) ||
+            allErrors.Contains("Connection refused", StringComparison.OrdinalIgnoreCase) ||
+            allErrors.Contains("A connection attempt failed", StringComparison.OrdinalIgnoreCase) ||
+            steps.Any(s => s.Status == StepExecutionStatus.Timeout))
+        {
+            return new DiagnosticResult
+            {
+                Category = "Connectivité & Pare-feu",
+                Severity = DiagnosticSeverity.Critical,
+                Title = "Serveur distant injoignable (Délai d'attente réseau dépassé - Timeout)",
+                Explanation = "kernelMK a tenté de joindre le serveur distant sur le port réseau configuré (ex: FTPS port 990 ou SFTP port 22), mais aucune réponse n'a été reçue dans le délai alloué (30 secondes).",
+                Recommendation = "1. Vérifiez que le serveur partenaire (ex: GUCE ou armateur) est bien en service. 2. Depuis le serveur CIT, ouvrez PowerShell et testez le port : Test-NetConnection -ComputerName [hôte] -Port [port]. 3. Si le test échoue, demandez au support réseau CIT d'autoriser le port sortant sur le pare-feu.",
+                ActionLinks = new()
+                {
+                    new("Tester le serveur dans Credentials", "credentials"),
+                    new("Ouvrir l'Explorateur distant", "explorer")
+                }
+            };
+        }
+
+        // 2. Échec d'envoi FTPS / Canal de données / Ports passifs
         if (allErrors.Contains("Error while uploading the file to the server", StringComparison.OrdinalIgnoreCase) ||
             allErrors.Contains("FtpException", StringComparison.OrdinalIgnoreCase) ||
             allErrors.Contains("425 Can't open data connection", StringComparison.OrdinalIgnoreCase))
@@ -615,27 +699,6 @@ else
                 {
                     new("Ouvrir l'Explorateur distant", "explorer"),
                     new("Modifier le job", $"jobs/{execution.JobId}/edit")
-                }
-            };
-        }
-
-        // 2. Timeout ou tâche annulée
-        if (allErrors.Contains("task was canceled", StringComparison.OrdinalIgnoreCase) ||
-            allErrors.Contains("OperationCanceledException", StringComparison.OrdinalIgnoreCase) ||
-            allErrors.Contains("Timeout dépassé", StringComparison.OrdinalIgnoreCase) ||
-            steps.Any(s => s.Status == StepExecutionStatus.Timeout))
-        {
-            return new DiagnosticResult
-            {
-                Category = "Délai Dépassé (Timeout)",
-                Severity = DiagnosticSeverity.Critical,
-                Title = "Dépassement du délai d'attente maximum (Timeout)",
-                Explanation = "L'étape a dépassé le délai alloué (par exemple 600 secondes / 10 minutes) sans que le serveur distant n'achève la réponse ou le transfert de fichier.",
-                Recommendation = "Vérifiez que la liaison réseau entre le serveur CIT et le serveur distant est opérationnelle et que le serveur distant ne bloque pas les sockets. Vous pouvez également augmenter le délai de timeout de l'étape si le fichier est volumineux.",
-                ActionLinks = new()
-                {
-                    new("Ajuster le délai du job", $"jobs/{execution.JobId}/edit"),
-                    new("Tester le serveur dans Credentials", "credentials")
                 }
             };
         }
@@ -775,6 +838,155 @@ else
                 new("Ouvrir l'Explorateur distant", "explorer")
             }
         };
+    }
+
+    private record StepDiagnostic(string Title, string Meaning, List<string> Causes, List<string> Actions);
+
+    private StepDiagnostic GetStepDiagnostic(string? errorOutput)
+    {
+        if (string.IsNullOrWhiteSpace(errorOutput))
+        {
+            return new StepDiagnostic(
+                "Anomalie non spécifiée",
+                "L'étape s'est terminée en échec sans message d'erreur textuel.",
+                new() { "Interruption inopinée du processus ou annulation manuelle." },
+                new() { "Vérifiez l'historique et relancez le job." });
+        }
+
+        var err = errorOutput;
+
+        // 1. Timeout de connexion
+        if (err.Contains("timed out", StringComparison.OrdinalIgnoreCase) ||
+            err.Contains("TimeoutException", StringComparison.OrdinalIgnoreCase) ||
+            err.Contains("A task was canceled", StringComparison.OrdinalIgnoreCase))
+        {
+            return new StepDiagnostic(
+                "Serveur distant injoignable (Délai d'attente dépassé - Timeout)",
+                "Le système a tenté de joindre le serveur distant, mais aucune réponse réseau n'a été reçue dans le délai imparti (30 secondes).",
+                new()
+                {
+                    "Le serveur distant (ex: GUCE ou armateur) est éteint, planté ou en maintenance.",
+                    "Le pare-feu (Firewall CIT ou pare-feu distant) bloque le port de connexion (port 990, 21 ou 22) ou les ports passifs FTPS.",
+                    "Coupure temporaire de la liaison Internet / fibre optique du terminal."
+                },
+                new()
+                {
+                    "Tester l'accessibilité du port depuis le serveur CIT dans PowerShell : Test-NetConnection -ComputerName [nom_serveur] -Port [port].",
+                    "Si TcpTestSucceeded = False : contacter l'équipe réseau CIT pour autoriser le port sortant dans le firewall.",
+                    "Vérifier auprès du partenaire (ex: GUCE) si sa passerelle FTP est opérationnelle."
+                });
+        }
+
+        // 2. Erreur d'authentification
+        if (err.Contains("Authentication failed", StringComparison.OrdinalIgnoreCase) ||
+            err.Contains("Permission denied", StringComparison.OrdinalIgnoreCase) ||
+            err.Contains("530", StringComparison.OrdinalIgnoreCase) ||
+            err.Contains("SshAuthenticationException", StringComparison.OrdinalIgnoreCase))
+        {
+            return new StepDiagnostic(
+                "Accès refusé par le serveur distant (Identifiant ou mot de passe erroné)",
+                "La liaison réseau fonctionne, mais le serveur distant a rejeté les identifiants de connexion fournis.",
+                new()
+                {
+                    "Le mot de passe du compte a été modifié par le partenaire (GUCE ou armateur) ou a expiré.",
+                    "Le nom d'utilisateur est mal orthographié ou le compte est verrouillé.",
+                    "Pour SFTP : la clé privée SSH a changé ou n'est plus autorisée."
+                },
+                new()
+                {
+                    "Ouvrir le menu 'Credentials' dans kernelMK.",
+                    "Mettre à jour le mot de passe ou la clé SSH fourni par le partenaire.",
+                    "Cliquer sur 'Tester la connexion' dans Credentials pour valider avant de relancer."
+                });
+        }
+
+        // 3. Répertoire ou fichier distant introuvable
+        if (err.Contains("550", StringComparison.OrdinalIgnoreCase) ||
+            err.Contains("SftpPathNotFoundException", StringComparison.OrdinalIgnoreCase) ||
+            err.Contains("No such file", StringComparison.OrdinalIgnoreCase) ||
+            err.Contains("not found", StringComparison.OrdinalIgnoreCase))
+        {
+            return new StepDiagnostic(
+                "Répertoire ou fichier distant introuvable",
+                "Le serveur distant est connecté, mais le chemin cible configuré n'existe pas ou n'est pas accessible.",
+                new()
+                {
+                    "Le nom du dossier distant est erroné (attention aux majuscules/minuscules et aux slashes '/').",
+                    "Le partenaire a modifié son arborescence de dossiers.",
+                    "Le compte utilisateur distant n'a pas les droits de lecture ou d'écriture dans ce dossier."
+                },
+                new()
+                {
+                    "Ouvrir l'Explorateur Distant pour naviguer dans l'arborescence réelle du serveur.",
+                    "Copier le chemin exact du dossier et le coller dans la configuration de l'étape du job."
+                });
+        }
+
+        // 4. Fichier local introuvable / Lecteur K: manquant
+        if (err.Contains("DirectoryNotFoundException", StringComparison.OrdinalIgnoreCase) ||
+            err.Contains("FileNotFoundException", StringComparison.OrdinalIgnoreCase) ||
+            err.Contains("Could not find a part of the path", StringComparison.OrdinalIgnoreCase))
+        {
+            return new StepDiagnostic(
+                "Dossier source local introuvable sur le serveur CIT",
+                "kernelMK ne trouve pas le dossier local configuré pour récupérer les fichiers à transmettre.",
+                new()
+                {
+                    "Le lecteur réseau partagé (ex: lettre K:\\) est déconnecté de la session Windows.",
+                    "Le dossier n'a pas encore été créé par le logiciel TOS Navis N4.",
+                    "Le compte système exécutant kernelMK n'a pas les permissions de lecture sur ce dossier."
+                },
+                new()
+                {
+                    "Vérifier sur le serveur que le dossier existe bien sur le disque.",
+                    "Pour les partages réseau, privilégier les chemins UNC (ex: \\\\serveur\\partage) plutôt que les lettres de lecteurs virtuelles (K:\\)."
+                });
+        }
+
+        // 5. Canal de données FTPS / Mode Passif
+        if (err.Contains("data connection", StringComparison.OrdinalIgnoreCase) ||
+            err.Contains("PASV", StringComparison.OrdinalIgnoreCase) ||
+            err.Contains("PROT P", StringComparison.OrdinalIgnoreCase))
+        {
+            return new StepDiagnostic(
+                "Blocage du canal de données FTPS (Ports passifs / Pare-feu)",
+                "La connexion de commande (port 990) a réussi, mais le transfert de fichier requiert l'ouverture de ports passifs secondaires qui ont été bloqués.",
+                new()
+                {
+                    "Le pare-feu CIT ou le pare-feu du partenaire bloque les ports dynamiques FTPS.",
+                    "Le serveur GUCE refuse le chiffrement du canal de données."
+                },
+                new()
+                {
+                    "Le mécanisme de repli automatique en canal clair a été activé pour contourner ce blocage.",
+                    "Demander au réseau CIT d'autoriser la plage des ports passifs du serveur GUCE."
+                });
+        }
+
+        // 6. Fichier verrouillé par un autre processus
+        if (err.Contains("used by another process", StringComparison.OrdinalIgnoreCase) ||
+            err.Contains("being used", StringComparison.OrdinalIgnoreCase))
+        {
+            return new StepDiagnostic(
+                "Fichier verrouillé par une autre application",
+                "Le fichier a été trouvé, mais une autre application est encore en train de l'écrire ou de le lire.",
+                new()
+                {
+                    "Le logiciel TOS Navis N4 n'a pas encore fini d'écrire le fichier EDI.",
+                    "Un utilisateur ou un script tiers a ouvert le fichier en mode exclusif."
+                },
+                new()
+                {
+                    "Attendre quelques instants que la génération se termine et relancer le job."
+                });
+        }
+
+        // Défaut
+        return new StepDiagnostic(
+            "Échec lors du traitement de l'étape",
+            "Une erreur s'est produite lors de l'exécution du transfert.",
+            new() { "Anomalie technique ou interruption de service." },
+            new() { "Consultez les détails ci-dessous ou contactez le support CIT." });
     }
 
     private class DiagnosticResult

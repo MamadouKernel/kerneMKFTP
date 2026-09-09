@@ -124,12 +124,16 @@ public class RemoteFileBrowserService
         string host, int port, string username, string secret, bool useTls, string remotePath, CancellationToken ct)
     {
         using var client = new AsyncFtpClient(host, username, secret, port);
-        client.Config.ConnectTimeout = 8000;
+        client.Config.ConnectTimeout = 7000;
+        client.Config.DataConnectionConnectTimeout = 8000;
+        client.Config.ReadTimeout = 10000;
+        client.Config.DataConnectionType = FtpDataConnectionType.AutoPassive;
+
         await ConnectFtpClientAsync(client, useTls, port, ct);
 
         try
         {
-            var items = await client.GetListing(remotePath, ct);
+            var items = await client.GetListing(remotePath, FtpListOption.Auto, ct);
             return items
                 .Where(f => f.Name != "." && f.Name != "..")
                 .Select(f => new RemoteItemInfo(
@@ -143,6 +147,31 @@ public class RemoteFileBrowserService
                 .OrderByDescending(f => f.IsDirectory)
                 .ThenBy(f => f.Name)
                 .ToList();
+        }
+        catch (Exception ex) when (useTls && client.Config.DataConnectionEncryption)
+        {
+            try
+            {
+                client.Config.DataConnectionEncryption = false;
+                var items = await client.GetListing(remotePath, FtpListOption.Auto, ct);
+                return items
+                    .Where(f => f.Name != "." && f.Name != "..")
+                    .Select(f => new RemoteItemInfo(
+                        Name: f.Name,
+                        FullPath: f.FullName,
+                        IsDirectory: f.Type == FtpObjectType.Directory,
+                        SizeBytes: f.Size,
+                        LastModified: f.Modified.ToLocalTime(),
+                        Extension: f.Type == FtpObjectType.Directory ? null : Path.GetExtension(f.Name).ToLowerInvariant()
+                    ))
+                    .OrderByDescending(f => f.IsDirectory)
+                    .ThenBy(f => f.Name)
+                    .ToList();
+            }
+            catch
+            {
+                throw ex;
+            }
         }
         finally
         {
