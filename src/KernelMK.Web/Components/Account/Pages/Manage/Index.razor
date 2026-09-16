@@ -99,7 +99,7 @@
             var updateResult = await UserManager.UpdateAsync(user);
             if (!updateResult.Succeeded)
             {
-                RedirectManager.RedirectToCurrentPageWithStatus($"Error: {string.Join(", ", updateResult.Errors.Select(e => e.Description))}", HttpContext);
+                RedirectManager.RedirectToCurrentPageWithStatus($"Error: {string.Join(", ", updateResult.Errors.Select(e => e.Description))}", HttpContext); // Le préfixe "Error:" est un marqueur technique lu par StatusMessage.razor (jamais affiché), le reste du texte reste en français.
                 return;
             }
             changed = true;
@@ -111,7 +111,7 @@
             var setPhoneResult = await UserManager.SetPhoneNumberAsync(user, newPhone);
             if (!setPhoneResult.Succeeded)
             {
-                RedirectManager.RedirectToCurrentPageWithStatus($"Error: {string.Join(", ", setPhoneResult.Errors.Select(e => e.Description))}", HttpContext);
+                RedirectManager.RedirectToCurrentPageWithStatus($"Error: {string.Join(", ", setPhoneResult.Errors.Select(e => e.Description))}", HttpContext); // "Error:" = marqueur technique (voir commentaire ci-dessus)
                 return;
             }
             changed = true;

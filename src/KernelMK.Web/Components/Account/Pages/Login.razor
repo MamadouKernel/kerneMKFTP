@@ -1,4 +1,5 @@
 @page "/Account/Login"
+@attribute [AllowAnonymous]
 @layout KernelMK.Web.Components.Layout.EmptyLayout
 
 @using System.ComponentModel.DataAnnotations
@@ -96,12 +97,18 @@
 
     public async Task LoginUser()
     {
-        // This doesn't count login failures towards account lockout
-        // To enable password failures to trigger account lockout, set lockoutOnFailure: true
-        var result = await SignInManager.PasswordSignInAsync(Input.Email, Input.Password, Input.RememberMe, lockoutOnFailure: false);
+        var result = await SignInManager.PasswordSignInAsync(Input.Email, Input.Password, Input.RememberMe, lockoutOnFailure: true);
         if (result.Succeeded)
         {
             var user = await UserManager.FindByEmailAsync(Input.Email);
+            if (user != null)
+            {
+                var now = DateTime.UtcNow;
+                user.FirstLoginAt ??= now;
+                user.LastLoginAt = now;
+                await UserManager.UpdateAsync(user);
+            }
+
             if (user != null && !await UserManager.GetTwoFactorEnabledAsync(user))
             {
                 Logger.LogInformation("Utilisateur {Email} sans 2FA. Redirection obligatoire vers la configuration 2FA.", Input.Email);
@@ -122,6 +129,11 @@
         {
             Logger.LogWarning("User account locked out.");
             RedirectManager.RedirectTo("Account/Lockout");
+        }
+        else if (result.IsNotAllowed)
+        {
+            Logger.LogWarning("Tentative de connexion sur un compte désactivé : {Email}.", Input.Email);
+            errorMessage = "Ce compte a été désactivé. Contactez un administrateur pour le réactiver.";
         }
         else
         {

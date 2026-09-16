@@ -38,7 +38,9 @@ internal static class IdentityComponentsEndpointRouteBuilderExtensions
 
             var properties = signInManager.ConfigureExternalAuthenticationProperties(provider, redirectUrl);
             return TypedResults.Challenge(properties, [provider]);
-        });
+        })
+        // Doit rester accessible avant authentification : c'est justement ce qui démarre le flux de connexion externe.
+        .AllowAnonymous();
 
         accountGroup.MapPost("/Logout", async (
             ClaimsPrincipal user,
@@ -47,7 +49,9 @@ internal static class IdentityComponentsEndpointRouteBuilderExtensions
         {
             await signInManager.SignOutAsync();
             return TypedResults.LocalRedirect($"~/{returnUrl}");
-        });
+        })
+        // Doit rester accessible même si la session a déjà expiré côté serveur, pour un nettoyage propre.
+        .AllowAnonymous();
 
         var manageGroup = accountGroup.MapGroup("/Manage").RequireAuthorization();
 

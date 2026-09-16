@@ -1,0 +1,732 @@
+@page "/cartographie-edi"
+@rendermode InteractiveServer
+@implements IDisposable
+@attribute [Authorize(Roles = "Administrateur,Superviseur,Exploitant,Developpeur,Auditeur")]
+@using Microsoft.EntityFrameworkCore
+@using KernelMK.Engine.Workflow
+@using System.Text.Json
+@using System.Text
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject IJobExecutionCoordinator ExecutionCoordinator
+@inject IJSRuntime JS
+
+<PageTitle>Cartographie EDI · kernelMK</PageTitle>
+
+<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
+    <div>
+        <h1 class="mb-1 flex items-center gap-2">
+            <span>🌊 Cartographie des échanges EDI</span>
+        </h1>
+        <p class="text-sm text-slate-500">
+            Vue par partenaire/armateur : quels messages EDIFACT (COPARN, CODECO, COARRI, MANIFEST) sont échangés, dans quel sens
+            (↑ génération vers le partenaire, ↓ analyse d'un message reçu de lui).
+        </p>
+    </div>
+    <div class="flex items-center gap-2.5 shrink-0 flex-wrap">
+        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+            <span class="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+            Temps réel (4s)
+        </span>
+        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200" title="Canaux physiques : SFTP (fichiers, transfert direct) et SMTP (email)">
+            <span class="h-2 w-2 rounded-full" style="background:#16a34a;"></span> Émission
+            <span class="h-2 w-2 rounded-full ml-1" style="background:#f59e0b;"></span> Réception
+        </span>
+        <div class="inline-flex rounded-lg border border-slate-200 overflow-hidden text-xs font-semibold">
+            <button type="button" @onclick="() => SetViewMode(false)" class="@(_view3D ? "bg-white text-slate-500" : "bg-brand-600 text-white") px-3 py-1.5 transition-colors">Vue 2D</button>
+            <button type="button" @onclick="() => SetViewMode(true)" class="@(_view3D ? "bg-brand-600 text-white" : "bg-white text-slate-500") px-3 py-1.5 transition-colors" title="Piste exploratoire : rendu 3D avec three.js">Vue 3D 🧪</button>
+        </div>
+    </div>
+</div>
+
+<EdiLifecycleDiagram />
+
+<div class="kmk-card p-3.5 mb-5 mt-6 flex flex-col md:flex-row md:items-end gap-3">
+    <div>
+        <h2 class="text-sm font-bold text-slate-800 mb-1">Historique des échanges EDI</h2>
+        <p class="text-xs text-slate-500">Ce que CIT a envoyé à chaque armateur, et ce qu'il en a reçu — cumulé sur la période choisie.</p>
+    </div>
+    <div class="ml-auto flex items-end gap-3">
+        <div>
+            <label class="kmk-label">Du</label>
+            <input type="date" class="kmk-input !py-2 text-xs" @bind="_historyDateFrom" @bind:after="LoadHistoryAsync" />
+        </div>
+        <div>
+            <label class="kmk-label">Au</label>
+            <input type="date" class="kmk-input !py-2 text-xs" @bind="_historyDateTo" @bind:after="LoadHistoryAsync" />
+        </div>
+        <button type="button" @onclick="ExportHistoryCsv" class="kmk-btn-secondary text-xs py-2 px-3 shadow-xs" disabled="@(_historyRows.Count == 0)">Exporter CSV</button>
+    </div>
+</div>
+
+@if (_historyLoading)
+{
+    <div class="kmk-card p-8 mb-6 flex items-center justify-center text-sm text-slate-500">Chargement de l'historique...</div>
+}
+else if (_historyRows.Count == 0)
+{
+    <div class="kmk-card p-8 mb-6 text-center text-slate-400">
+        <p class="text-sm">Aucun échange EDI (message EDIFACT ou transfert taggué armateur) sur la période sélectionnée.</p>
+    </div>
+}
+else
+{
+    <div class="kmk-table-container mb-6">
+        <table class="kmk-table">
+            <thead>
+                <tr>
+                    <th class="min-w-[160px]">Armateur / Partenaire</th>
+                    <th class="min-w-[140px]">Type de message</th>
+                    <th class="min-w-[100px]">Envoyés ↑</th>
+                    <th class="min-w-[170px]">Dernier envoi</th>
+                    <th class="min-w-[100px]">Reçus ↓</th>
+                    <th class="min-w-[170px]">Dernière réception</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var row in _historyRows)
+                {
+                    <tr>
+                        <td class="text-sm font-semibold text-slate-900">@row.Armateur</td>
+                        <td class="text-sm text-slate-700">@row.MessageType</td>
+                        <td class="text-sm font-bold text-emerald-600">@row.Envoyes</td>
+                        <td class="text-xs font-mono text-slate-600">@(row.DernierEnvoi.HasValue ? row.DernierEnvoi.Value.ToString("dd/MM/yyyy HH:mm:ss") : "—")</td>
+                        <td class="text-sm font-bold text-sky-600">@row.Recus</td>
+                        <td class="text-xs font-mono text-slate-600">@(row.DerniereReception.HasValue ? row.DerniereReception.Value.ToString("dd/MM/yyyy HH:mm:ss") : "—")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+    <p class="text-xs text-slate-400 mb-6 -mt-4">
+        « Envoyés » regroupe les messages EDIFACT générés (Opération = Générer) et les fichiers déposés par transfert (Upload) taggués de
+        cet armateur ; « Reçus » regroupe les messages analysés (Opération = Analyser) et les fichiers récupérés par transfert (Download).
+    </p>
+}
+
+@if (_loading)
+{
+    <div class="kmk-card p-12 flex flex-col items-center justify-center gap-3 text-sm text-slate-500">
+        <svg class="animate-spin h-6 w-6 text-brand-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+        </svg>
+        <span>Chargement de la cartographie EDI...</span>
+    </div>
+}
+else if (_nodes.Count == 0)
+{
+    <div class="kmk-card p-12 text-center text-slate-400">
+        <p class="text-sm">Aucun échange EDIFACT configuré pour le moment.</p>
+        <AuthorizeView Roles="Administrateur,Developpeur">
+            <a href="jobs/new" class="text-xs text-brand-600 font-semibold mt-2 inline-block">Créer un job avec une étape « Message EDIFACT » →</a>
+        </AuthorizeView>
+    </div>
+}
+else if (_view3D)
+{
+    <div class="kmk-card p-2 sm:p-3">
+        <div id="reseau3d-container" class="w-full h-[300px] sm:h-[420px] lg:h-[520px]" style="border-radius:0.75rem; overflow:hidden;"></div>
+        <p class="text-[11px] text-slate-400 mt-2 px-2">🧪 Vue exploratoire — les points dorés représentent un échange EDIFACT en cours, direction génération/analyse comprise.</p>
+    </div>
+}
+else
+{
+    <!-- Petit écran : liste verticale (le diagramme SVG large horizontal ne se lit pas bien sur mobile) -->
+    <div class="sm:hidden space-y-2">
+        @foreach (var node in _nodes)
+        {
+            var exchanges = _active.Where(a => a.PartnerCode == node.Code).ToList();
+            var isActive = exchanges.Count > 0;
+            var color = PartnerColor(node);
+            <div class="kmk-card p-3 flex items-start gap-3" style="@(isActive ? $"border-color:{color};background:{color}0d;" : "")">
+                <span class="h-9 w-9 rounded-full flex items-center justify-center shrink-0 text-white text-sm font-bold" style="background:@color;">🚢</span>
+                <div class="min-w-0 flex-1">
+                    <div class="font-bold text-sm text-slate-900 truncate">@(node.Label ?? node.Code)</div>
+                    <div class="text-xs text-slate-400 truncate">@string.Join(", ", node.Channels.OrderBy(c => c)) · @string.Join(", ", node.MessageTypes)</div>
+                    @if (isActive)
+                    {
+                        <div class="text-xs font-semibold mt-1 space-x-2">
+                            @foreach (var t in exchanges)
+                            {
+                                <span style="color:@(t.Outbound ? EmissionColor : ReceptionColor);">@(t.Outbound ? "↑" : "↓") @t.Channel @t.MessageType (@t.JobName)</span>
+                            }
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="text-xs text-slate-400 mt-1">Aucun échange en cours</div>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+
+    <div class="hidden sm:block kmk-card p-4 sm:p-6 overflow-x-auto" style="background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);">
+        <svg viewBox="@($"0 0 800 {SvgHeight}")" class="w-full" style="min-width: 620px; height: @(SvgHeight)px; max-height: 70vh;">
+            <defs>
+                <filter id="edi-glow" x="-60%" y="-60%" width="220%" height="220%">
+                    <feGaussianBlur stdDeviation="3.2" result="blur" />
+                    <feMerge>
+                        <feMergeNode in="blur" />
+                        <feMergeNode in="SourceGraphic" />
+                    </feMerge>
+                </filter>
+            </defs>
+
+            @foreach (var node in _nodes)
+            {
+                var y = GetNodeY(node);
+                var exchanges = _active.Where(a => a.PartnerCode == node.Code).ToList();
+                var isActive = exchanges.Count > 0;
+                var color = PartnerColor(node);
+
+                <!-- Ligne neutre : aucune flèche fixe, le sens réel (génération ↑ ou analyse ↓) est porté par
+                     le chevron animé ci-dessous, jamais présumé d'avance. -->
+                <line x1="90" y1="@HubY" x2="720" y2="@y"
+                      stroke="@(isActive ? color : "#e2e8f0")" stroke-width="@(isActive ? 3 : 1.5)"
+                      filter="@(isActive ? "url(#edi-glow)" : "")" />
+
+                @foreach (var t in exchanges)
+                {
+                    var pathD = t.Outbound ? $"M 90,{HubY} L 720,{y}" : $"M 720,{y} L 90,{HubY}";
+                    var arrowColor = t.Outbound ? EmissionColor : ReceptionColor;
+                    <path d="M -6,-4 L 6,0 L -6,4 Z" fill="@arrowColor" filter="url(#edi-glow)">
+                        <animateMotion dur="1.6s" repeatCount="indefinite" path="@pathD" rotate="auto" />
+                    </path>
+                }
+
+                <g transform="@($"translate(720,{y})")">
+                    <circle r="21" fill="@color" opacity="@(isActive ? 1 : 0.55)" />
+                    <g>
+                        @if (isActive)
+                        {
+                            <animateTransform attributeName="transform" type="translate" values="0 0; 0 -3; 0 0" dur="1.1s" repeatCount="indefinite" />
+                        }
+                        <text x="0" y="6" text-anchor="middle" font-size="18">🚢</text>
+                    </g>
+                    @SvgText(30, -4, node.Label ?? node.Code, fontSize: 13, fill: "#1e293b", fontWeight: "700")
+                    @SvgText(30, 13, $"[{string.Join("/", node.Channels.OrderBy(c => c))}] {string.Join(", ", node.MessageTypes)}", fontSize: 10.5, fill: "#94a3b8")
+                    @if (isActive)
+                    {
+                        var mixedDirections = exchanges.Select(t => t.Outbound).Distinct().Count() > 1;
+                        var exchangeColor = mixedDirections ? "#334155" : (exchanges[0].Outbound ? EmissionColor : ReceptionColor);
+                        @SvgText(30, 29,
+                                 string.Join(" · ", exchanges.Select(t => $"{(t.Outbound ? "↑" : "↓")} {t.Channel} {t.MessageType} ({t.JobName})")),
+                                 fontSize: 10.5, fill: exchangeColor, fontWeight: "600")
+                    }
+                </g>
+            }
+
+            <!-- Nœud central CIT (port autonome) -->
+            <g transform="@($"translate(60,{HubY})")">
+                <circle r="36" fill="#0f172a" />
+                <circle r="36" fill="none" stroke="#4f46e5" stroke-width="1.5" opacity="0.5">
+                    <animate attributeName="r" values="30;40;30" dur="2.4s" repeatCount="indefinite" />
+                    <animate attributeName="opacity" values="0.6;0;0.6" dur="2.4s" repeatCount="indefinite" />
+                </circle>
+                <text x="0" y="-6" text-anchor="middle" font-size="14">⚓</text>
+                <text x="0" y="10" text-anchor="middle" font-size="9" font-weight="700" fill="#fff">CIT</text>
+            </g>
+        </svg>
+    </div>
+
+    @if (_active.Count == 0)
+    {
+        <p class="text-xs text-slate-400 mt-3 text-center">Aucun échange EDIFACT en cours actuellement — les lignes s'animeront dès qu'un job générera ou analysera un message.</p>
+    }
+}
+
+@code {
+    private record PartnerNode(string Code, string? Label, List<string> MessageTypes, HashSet<string> Channels);
+    private record EdiExchange(Guid JobId, string JobName, string PartnerCode, bool Outbound, string MessageType, string Channel);
+    private record EdiFlowRow(string Armateur, string MessageType, int Envoyes, DateTime? DernierEnvoi, int Recus, DateTime? DerniereReception);
+
+    private List<PartnerNode> _nodes = new();
+    private List<EdiExchange> _active = new();
+    private List<EdiFlowRow> _historyRows = new();
+    private DateTime _historyDateFrom = DateTime.Today.AddDays(-30);
+    private DateTime _historyDateTo = DateTime.Today;
+    private bool _historyLoading = true;
+    private bool _loading = true;
+    private PeriodicTimer? _timer;
+    private CancellationTokenSource? _cts;
+
+    private const int RowHeight = 64;
+    private int SvgHeight => Math.Max(200, _nodes.Count * RowHeight + 40);
+    private int HubY => SvgHeight / 2;
+
+    /// <summary>Palette inspirée des couleurs de coques/conteneurs des grands armateurs — un nœud, une couleur, pour repérer les partenaires d'un coup d'œil.</summary>
+    private static readonly string[] PartnerPalette =
+    {
+        "#0F52BA", "#E4032E", "#F7B500", "#FF6600", "#00843D", "#6B21A8", "#0D9488", "#DB2777"
+    };
+
+    private string PartnerColor(PartnerNode node) => PartnerPalette[Math.Abs(_nodes.IndexOf(node)) % PartnerPalette.Length];
+
+    private static string FormatMessageType(EdifactMessageType t) => t.ToString().ToUpperInvariant();
+
+    private static string FormatTransferProtocol(StepType t) => t switch
+    {
+        StepType.TransfertSftp => "SFTP",
+        StepType.TransfertFtp => "FTP",
+        StepType.TransfertFtps => "FTPS",
+        StepType.TransfertSmb => "SMB",
+        StepType.TransfertHttp => "HTTP",
+        _ => t.ToString()
+    };
+
+    private static readonly HashSet<StepType> TransferTypes = new()
+    {
+        StepType.TransfertFtp, StepType.TransfertFtps, StepType.TransfertSftp, StepType.TransfertSmb, StepType.TransfertHttp
+    };
+
+    private static readonly HashSet<StepType> FileOpsTypes = new()
+    {
+        StepType.FichierCopier, StepType.FichierDeplacer, StepType.FichierRenommer, StepType.FichierDecompresser
+    };
+
+    private static bool IsUncPath(string? path) => !string.IsNullOrWhiteSpace(path) && path.StartsWith(@"\\", StringComparison.Ordinal);
+
+    /// <summary>Les deux canaux physiques par lesquels transitent les EDI (cf. cartographie de référence CIT) :
+    /// SFTP (fichiers, 10.88.146.50) et SMTP (email). Un même partenaire peut utiliser l'un, l'autre, ou les deux.</summary>
+    private const string ChannelSftp = "SFTP";
+    private const string ChannelSmtp = "SMTP";
+
+    /// <summary>Vert = émission (CIT → partenaire), orange = réception (partenaire → CIT) — reprend le code couleur du schéma de référence fourni par l'utilisateur.</summary>
+    private const string EmissionColor = "#16a34a";
+    private const string ReceptionColor = "#f59e0b";
+
+    /// <summary>Voir JobPipelineDiagram/ReseauPage : contournement RZ1023 pour &lt;text&gt; imbriqué à 2 niveaux dans @foreach/@if.</summary>
+    private static MarkupString SvgText(double x, double y, string text, double fontSize = 12, string fill = "#1e293b", string fontWeight = "400")
+    {
+        var escaped = System.Net.WebUtility.HtmlEncode(text);
+        return new MarkupString($"<text x=\"{x}\" y=\"{y}\" font-size=\"{fontSize}\" fill=\"{fill}\" font-weight=\"{fontWeight}\">{escaped}</text>");
+    }
+
+    private int GetNodeY(PartnerNode node)
+    {
+        var index = _nodes.IndexOf(node);
+        return 40 + index * RowHeight + RowHeight / 2;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        _loading = false;
+
+        await LoadHistoryAsync();
+
+        _cts = new CancellationTokenSource();
+        _timer = new PeriodicTimer(TimeSpan.FromSeconds(4));
+        _ = RefreshLoopAsync(_cts.Token);
+    }
+
+    private async Task RefreshLoopAsync(CancellationToken ct)
+    {
+        try
+        {
+            while (_timer is not null && await _timer.WaitForNextTickAsync(ct))
+            {
+                await LoadAsync();
+                await InvokeAsync(StateHasChanged);
+                if (_view3D)
+                {
+                    await InvokeAsync(() => Push3DDataAsync(init: false));
+                }
+            }
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    private bool _view3D = false;
+    private bool _pending3DInit = false;
+
+    private void SetViewMode(bool is3D)
+    {
+        if (_view3D == is3D) return;
+        _view3D = is3D;
+        if (!is3D)
+        {
+            _ = JS.InvokeVoidAsync("kernelMK.reseau3d.dispose");
+        }
+        else
+        {
+            _pending3DInit = true;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_pending3DInit && _view3D)
+        {
+            _pending3DInit = false;
+            await Push3DDataAsync(init: true);
+        }
+    }
+
+    private async Task Push3DDataAsync(bool init)
+    {
+        var nodesPayload = _nodes.Select(n => new
+        {
+            host = n.Code,
+            name = (n.Label is not null ? n.Label + " — " : "") + string.Join(", ", n.MessageTypes)
+        }).ToList();
+        var activesPayload = _active.Select(a => new
+        {
+            host = a.PartnerCode,
+            upload = a.Outbound,
+            jobName = $"{a.MessageType} ({a.JobName})"
+        }).ToList();
+        try
+        {
+            if (init)
+                await JS.InvokeVoidAsync("kernelMK.reseau3d.init", "reseau3d-container", nodesPayload, activesPayload);
+            else
+                await JS.InvokeVoidAsync("kernelMK.reseau3d.update", nodesPayload, activesPayload);
+        }
+        catch (JSDisconnectedException) { }
+    }
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        var jobs = await db.Jobs.Include(j => j.Steps).ToListAsync();
+        var partnerAgg = new Dictionary<string, (string? Label, HashSet<string> Types, HashSet<string> Channels)>();
+
+        void AddPartnerType(string key, string? label, string typeLabel, string channel)
+        {
+            if (!partnerAgg.TryGetValue(key, out var entry))
+            {
+                entry = (label, new HashSet<string>(), new HashSet<string>());
+                partnerAgg[key] = entry;
+            }
+            else if (label is not null && entry.Label is null)
+            {
+                entry = (label, entry.Types, entry.Channels);
+                partnerAgg[key] = entry;
+            }
+            entry.Types.Add(typeLabel);
+            entry.Channels.Add(channel);
+        }
+
+        foreach (var job in jobs)
+        {
+            // Un job "intégration partenaire" mélange typiquement une étape de transfert (Armateur renseigné)
+            // et/ou une étape EdifactMessage (codes SenderId/ReceiverId) — on couvre les deux cas, car en
+            // pratique beaucoup de jobs se contentent de transférer un fichier EDI déjà formé sans jamais passer
+            // par une étape EdifactMessage dédiée (qui sert surtout à générer ou décoder le contenu du message).
+            string? jobArmateur = null;
+            foreach (var s in job.Steps)
+            {
+                if (!TransferTypes.Contains(s.Type)) continue;
+                try
+                {
+                    var tcfg = JsonSerializer.Deserialize<TransferStepConfig>(s.ConfigJson);
+                    if (!string.IsNullOrWhiteSpace(tcfg?.Armateur))
+                    {
+                        AddPartnerType(tcfg.Armateur, null, FormatTransferProtocol(s.Type), ChannelSftp);
+                        jobArmateur ??= tcfg.Armateur;
+                    }
+                }
+                catch { }
+            }
+
+            // Étape Fichier (Copier/Déplacer/Renommer/Décompresser) taguée d'un armateur, avec un côté UNC —
+            // même principe que le transfert SFTP/FTP/SMB, pour les partenaires qui déposent/relèvent leurs EDI
+            // sur un partage réseau plutôt que par un protocole de transfert dédié.
+            foreach (var s in job.Steps.Where(s => FileOpsTypes.Contains(s.Type)))
+            {
+                try
+                {
+                    var fcfg = JsonSerializer.Deserialize<FileOpStepConfig>(s.ConfigJson);
+                    if (fcfg is null || string.IsNullOrWhiteSpace(fcfg.Armateur)) continue;
+                    if (!IsUncPath(fcfg.SourcePath) && !IsUncPath(fcfg.DestinationPath)) continue;
+
+                    AddPartnerType(fcfg.Armateur, null, "Fichier", ChannelSftp);
+                    jobArmateur ??= fcfg.Armateur;
+                }
+                catch { }
+            }
+
+            foreach (var step in job.Steps.Where(s => s.Type == StepType.EdifactMessage))
+            {
+                EdifactStepConfig? ecfg;
+                try { ecfg = JsonSerializer.Deserialize<EdifactStepConfig>(step.ConfigJson); }
+                catch { continue; }
+                if (ecfg is null) continue;
+
+                var partnerCode = ecfg.Operation == EdifactOperation.Generer ? ecfg.ReceiverId : ecfg.SenderId;
+                if (string.IsNullOrWhiteSpace(partnerCode)) continue;
+
+                var key = jobArmateur ?? partnerCode;
+                AddPartnerType(key, jobArmateur, FormatMessageType(ecfg.MessageType), ChannelSftp);
+            }
+
+            // Canal SMTP : envoi (EmailSmtp) ou relève (ReceptionEmailImap) taguée d'un armateur — voir
+            // EmailStepConfig.Armateur / EmailReceptionStepConfig.Armateur, ajoutés pour que ce canal (distinct
+            // du canal SFTP) apparaisse dans la cartographie au même titre que les transferts de fichiers.
+            foreach (var s in job.Steps.Where(s => s.Type == StepType.EmailSmtp))
+            {
+                try
+                {
+                    var mcfg = JsonSerializer.Deserialize<EmailStepConfig>(s.ConfigJson);
+                    if (!string.IsNullOrWhiteSpace(mcfg?.Armateur))
+                    {
+                        AddPartnerType(mcfg.Armateur, null, "SMTP", ChannelSmtp);
+                        jobArmateur ??= mcfg.Armateur;
+                    }
+                }
+                catch { }
+            }
+            foreach (var s in job.Steps.Where(s => s.Type == StepType.ReceptionEmailImap))
+            {
+                try
+                {
+                    var mrcfg = JsonSerializer.Deserialize<EmailReceptionStepConfig>(s.ConfigJson);
+                    if (!string.IsNullOrWhiteSpace(mrcfg?.Armateur))
+                    {
+                        AddPartnerType(mrcfg.Armateur, null, "IMAP", ChannelSmtp);
+                        jobArmateur ??= mrcfg.Armateur;
+                    }
+                }
+                catch { }
+            }
+        }
+
+        _nodes = partnerAgg
+            .Select(kv => new PartnerNode(kv.Key, kv.Value.Label, kv.Value.Types.OrderBy(t => t).ToList(), kv.Value.Channels))
+            .OrderBy(n => n.Label ?? n.Code)
+            .ToList();
+
+        var runningJobIds = ExecutionCoordinator.GetRunningJobIds();
+        var active = new List<EdiExchange>();
+
+        if (runningJobIds.Count > 0)
+        {
+            var executions = await db.JobExecutions
+                .Include(e => e.Job!).ThenInclude(j => j.Steps)
+                .Include(e => e.StepLogs)
+                .Where(e => runningJobIds.Contains(e.JobId) && e.Status == JobStatus.EnCours)
+                .ToListAsync();
+
+            foreach (var exec in executions)
+            {
+                if (exec.Job is null) continue;
+
+                var currentLog = exec.StepLogs
+                    .Where(l => l.Status == StepExecutionStatus.EnCours)
+                    .OrderByDescending(l => l.AttemptNumber)
+                    .FirstOrDefault();
+                if (currentLog is null) continue;
+
+                var step = exec.Job.Steps.FirstOrDefault(s => s.Id == currentLog.JobStepId);
+                if (step is null) continue;
+
+                try
+                {
+                    if (step.Type == StepType.EdifactMessage)
+                    {
+                        var ecfg = JsonSerializer.Deserialize<EdifactStepConfig>(step.ConfigJson);
+                        if (ecfg is null) continue;
+
+                        var outbound = ecfg.Operation == EdifactOperation.Generer;
+                        var partnerCode = outbound ? ecfg.ReceiverId : ecfg.SenderId;
+                        if (string.IsNullOrWhiteSpace(partnerCode)) continue;
+
+                        active.Add(new EdiExchange(exec.JobId, exec.Job.Name, partnerCode, outbound, FormatMessageType(ecfg.MessageType), ChannelSftp));
+                    }
+                    else if (TransferTypes.Contains(step.Type))
+                    {
+                        var tcfg = JsonSerializer.Deserialize<TransferStepConfig>(step.ConfigJson);
+                        if (string.IsNullOrWhiteSpace(tcfg?.Armateur)) continue;
+
+                        active.Add(new EdiExchange(exec.JobId, exec.Job.Name, tcfg.Armateur, tcfg.Upload, FormatTransferProtocol(step.Type), ChannelSftp));
+                    }
+                    else if (FileOpsTypes.Contains(step.Type))
+                    {
+                        var fcfg = JsonSerializer.Deserialize<FileOpStepConfig>(step.ConfigJson);
+                        if (fcfg is null || string.IsNullOrWhiteSpace(fcfg.Armateur)) continue;
+
+                        var outbound = IsUncPath(fcfg.DestinationPath);
+                        if (!outbound && !IsUncPath(fcfg.SourcePath)) continue;
+
+                        active.Add(new EdiExchange(exec.JobId, exec.Job.Name, fcfg.Armateur, outbound, "Fichier", ChannelSftp));
+                    }
+                    else if (step.Type == StepType.EmailSmtp)
+                    {
+                        var mcfg = JsonSerializer.Deserialize<EmailStepConfig>(step.ConfigJson);
+                        if (string.IsNullOrWhiteSpace(mcfg?.Armateur)) continue;
+
+                        active.Add(new EdiExchange(exec.JobId, exec.Job.Name, mcfg.Armateur, true, "SMTP", ChannelSmtp));
+                    }
+                    else if (step.Type == StepType.ReceptionEmailImap)
+                    {
+                        var mrcfg = JsonSerializer.Deserialize<EmailReceptionStepConfig>(step.ConfigJson);
+                        if (string.IsNullOrWhiteSpace(mrcfg?.Armateur)) continue;
+
+                        active.Add(new EdiExchange(exec.JobId, exec.Job.Name, mrcfg.Armateur, false, "IMAP", ChannelSmtp));
+                    }
+                }
+                catch
+                {
+                    // Configuration invalide/incomplète : on ignore simplement l'affichage de cette ligne.
+                }
+            }
+        }
+
+        _active = active;
+    }
+
+    /// <summary>
+    /// Historique cumulé (contrairement au diagramme temps réel ci-dessus) : pour chaque armateur et chaque
+    /// type de message, combien ont été envoyés par CIT et combien reçus, sur la période sélectionnée. Compte
+    /// à la fois les étapes "Message EDIFACT" (Générer/Analyser) et les transferts de fichiers taggués d'un
+    /// armateur (Upload/Download) — même double source que le diagramme temps réel, pour rester cohérent avec
+    /// ce qui y est affiché en direct.
+    /// </summary>
+    private async Task ExportHistoryCsv()
+    {
+        var sb = new StringBuilder();
+        sb.Append('﻿');
+        sb.AppendLine("Armateur;Type de message;Envoyés;Dernier envoi;Reçus;Dernière réception");
+        foreach (var row in _historyRows)
+        {
+            sb.AppendLine(string.Join(';',
+                EscapeCsvField(row.Armateur),
+                EscapeCsvField(row.MessageType),
+                row.Envoyes,
+                row.DernierEnvoi?.ToString("dd/MM/yyyy HH:mm:ss") ?? "",
+                row.Recus,
+                row.DerniereReception?.ToString("dd/MM/yyyy HH:mm:ss") ?? ""));
+        }
+
+        var bytes = Encoding.UTF8.GetBytes(sb.ToString());
+        var base64 = Convert.ToBase64String(bytes);
+        var fileName = $"cartographie-edi-{DateTime.Now:yyyyMMdd-HHmm}.csv";
+        await JS.InvokeVoidAsync("kernelMK.downloadFile", fileName, "text/csv;charset=utf-8", base64);
+    }
+
+    private static string EscapeCsvField(string value)
+    {
+        // Neutralise un premier caractère =+-@ (protection contre l'injection de formule Excel/LibreOffice) et
+        // encadre le champ de guillemets s'il contient un séparateur, un guillemet ou un retour à la ligne.
+        if (value.Length > 0 && "=+-@".Contains(value[0])) value = "'" + value;
+        if (value.Contains(';') || value.Contains('"') || value.Contains('\n') || value.Contains('\r'))
+        {
+            value = "\"" + value.Replace("\"", "\"\"") + "\"";
+        }
+        return value;
+    }
+
+    private async Task LoadHistoryAsync()
+    {
+        _historyLoading = true;
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        var fromUtc = DateTime.SpecifyKind(_historyDateFrom.Date, DateTimeKind.Utc);
+        var toUtc = DateTime.SpecifyKind(_historyDateTo.Date.AddDays(1), DateTimeKind.Utc);
+
+        var jobs = await db.Jobs.Include(j => j.Steps).ToListAsync();
+
+        // Même résolution du "partenaire" que dans LoadAsync : une étape de transfert avec Armateur renseigné
+        // fait foi ; à défaut, une étape Message EDIFACT retombe sur son propre SenderId/ReceiverId.
+        var stepInfo = new Dictionary<Guid, (string Armateur, bool Outbound, string MessageType, bool CountsByFile)>();
+
+        foreach (var job in jobs)
+        {
+            string? jobArmateur = null;
+            foreach (var s in job.Steps.Where(s => TransferTypes.Contains(s.Type)))
+            {
+                try
+                {
+                    var tcfg = JsonSerializer.Deserialize<TransferStepConfig>(s.ConfigJson);
+                    if (!string.IsNullOrWhiteSpace(tcfg?.Armateur))
+                    {
+                        stepInfo[s.Id] = (tcfg.Armateur, tcfg.Upload, FormatTransferProtocol(s.Type), true);
+                        jobArmateur ??= tcfg.Armateur;
+                    }
+                }
+                catch { }
+            }
+
+            foreach (var s in job.Steps.Where(s => FileOpsTypes.Contains(s.Type)))
+            {
+                try
+                {
+                    var fcfg = JsonSerializer.Deserialize<FileOpStepConfig>(s.ConfigJson);
+                    if (fcfg is null || string.IsNullOrWhiteSpace(fcfg.Armateur)) continue;
+
+                    var outbound = IsUncPath(fcfg.DestinationPath);
+                    if (!outbound && !IsUncPath(fcfg.SourcePath)) continue;
+
+                    stepInfo[s.Id] = (fcfg.Armateur, outbound, "Fichier", true);
+                    jobArmateur ??= fcfg.Armateur;
+                }
+                catch { }
+            }
+
+            foreach (var s in job.Steps.Where(s => s.Type == StepType.EdifactMessage))
+            {
+                try
+                {
+                    var ecfg = JsonSerializer.Deserialize<EdifactStepConfig>(s.ConfigJson);
+                    if (ecfg is null) continue;
+
+                    var outbound = ecfg.Operation == EdifactOperation.Generer;
+                    var partnerCode = outbound ? ecfg.ReceiverId : ecfg.SenderId;
+                    var armateur = jobArmateur ?? partnerCode;
+                    if (string.IsNullOrWhiteSpace(armateur)) continue;
+
+                    stepInfo[s.Id] = (armateur, outbound, FormatMessageType(ecfg.MessageType), false);
+                }
+                catch { }
+            }
+        }
+
+        var logs = await db.StepExecutionLogs
+            .Where(l => l.Status == StepExecutionStatus.Succes && l.StartedAt >= fromUtc && l.StartedAt < toUtc)
+            .ToListAsync();
+
+        var agg = new Dictionary<(string Armateur, string MessageType), (int Envoyes, DateTime? DernierEnvoi, int Recus, DateTime? DerniereReception)>();
+
+        foreach (var log in logs)
+        {
+            if (!stepInfo.TryGetValue(log.JobStepId, out var info)) continue;
+
+            // Pour un transfert, on ne compte que s'il y a réellement eu des fichiers déplacés (même convention
+            // que le Rapport des flux) ; pour un message EDIFACT, chaque exécution réussie compte pour 1 message.
+            var count = info.CountsByFile
+                ? (string.IsNullOrEmpty(log.FilesProcessedCsv) ? 0 : log.FilesProcessedCsv.Split(new[] { ';', ',' }, StringSplitOptions.RemoveEmptyEntries).Length)
+                : 1;
+            if (count == 0) continue;
+
+            var when = (log.FinishedAt ?? log.StartedAt).ToLocalTime();
+            var key = (info.Armateur, info.MessageType);
+            agg.TryGetValue(key, out var entry);
+
+            agg[key] = info.Outbound
+                ? (entry.Envoyes + count, entry.DernierEnvoi is null || when > entry.DernierEnvoi ? when : entry.DernierEnvoi, entry.Recus, entry.DerniereReception)
+                : (entry.Envoyes, entry.DernierEnvoi, entry.Recus + count, entry.DerniereReception is null || when > entry.DerniereReception ? when : entry.DerniereReception);
+        }
+
+        _historyRows = agg
+            .Select(kv => new EdiFlowRow(kv.Key.Armateur, kv.Key.MessageType, kv.Value.Envoyes, kv.Value.DernierEnvoi, kv.Value.Recus, kv.Value.DerniereReception))
+            .OrderBy(r => r.Armateur).ThenBy(r => r.MessageType)
+            .ToList();
+
+        _historyLoading = false;
+    }
+
+    public void Dispose()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
+        _timer?.Dispose();
+        if (_view3D)
+        {
+            try { _ = JS.InvokeVoidAsync("kernelMK.reseau3d.dispose"); }
+            catch (JSDisconnectedException) { }
+        }
+    }
+}

@@ -149,6 +149,66 @@ Pour écouter sur le port standard HTTP `80` ou un autre port (ex: `8080`) :
 }
 ```
 
+### Activer HTTPS (fortement recommandé)
+
+⚠️ **Par défaut, kernelMK écoute en HTTP non chiffré.** Sur le réseau CIT, cela signifie que les
+identifiants de connexion, le cookie de session et les codes 2FA transitent en clair et peuvent être
+interceptés par toute personne ayant accès au même segment réseau. Activer HTTPS avant toute mise en
+production réelle.
+
+Le serveur CIT n'ayant pas de nom de domaine public, un certificat **Let's Encrypt/Certbot n'est pas
+utilisable** (Certbot doit pouvoir vérifier la propriété d'un domaine, ce qu'une IP privée interne ne
+permet pas). On utilise donc un certificat **auto-signé**, valable en interne :
+
+1. Générer le certificat (une seule fois, en indiquant l'IP ou le nom du serveur) :
+   ```powershell
+   .\scripts\create-tls-cert.ps1 -DnsNames "192.168.1.50"
+   ```
+   Produit `certs\KernelMK-Server.pfx` (privé) et `certs\KernelMK-Server.cer` (public).
+
+2. Définir le mot de passe du certificat comme variable d'environnement (jamais en clair dans
+   `appsettings.json`) — par exemple pour le Service Windows :
+   ```powershell
+   [Environment]::SetEnvironmentVariable("Kestrel__Endpoints__Https__Certificate__Password", "VOTRE_MOT_DE_PASSE", "Machine")
+   ```
+
+3. Ajouter l'endpoint HTTPS dans `appsettings.json` :
+   ```json
+   {
+     "Kestrel": {
+       "Endpoints": {
+         "Http": { "Url": "http://*:5000" },
+         "Https": {
+           "Url": "https://*:5001",
+           "Certificate": {
+             "Path": "certs/KernelMK-Server.pfx"
+           }
+         }
+       }
+     }
+   }
+   ```
+
+4. Ouvrir le port HTTPS dans le pare-feu Windows :
+   ```powershell
+   New-NetFirewallRule -DisplayName "CIT kernelMK (Port 5001 HTTPS)" -Direction Inbound -LocalPort 5001 -Protocol TCP -Action Allow
+   ```
+
+5. Redémarrer le service (`Restart-Service KernelMK`). Les connexions HTTP sur le port 5000 sont
+   automatiquement redirigées vers HTTPS.
+
+6. Sur **chaque poste client**, installer une seule fois le certificat public pour éviter
+   l'avertissement « connexion non sécurisée » du navigateur :
+   ```powershell
+   Import-Certificate -FilePath "certs\KernelMK-Server.cer" -CertStoreLocation Cert:\LocalMachine\Root
+   ```
+   (PowerShell administrateur sur le poste cible, ou double-clic sur le `.cer` → Installer le certificat
+   → Ordinateur local → Autorités de certification racines de confiance.)
+
+> 💡 Si CIT dispose un jour d'un vrai nom de domaine avec accès DNS pour ce serveur, Certbot en mode
+> DNS-01 devient possible et remplace avantageusement le certificat auto-signé (renouvellement
+> automatique, aucune installation manuelle sur les postes clients).
+
 ### Paramétrer les Alertes Email (SMTP)
 ```json
 {
@@ -163,6 +223,76 @@ Pour écouter sur le port standard HTTP `80` ou un autre port (ex: `8080`) :
 }
 ```
 
+> 🔒 **Éviter le mot de passe en clair dans appsettings.json** : depuis le serveur, exécuter
+> `KernelMK.exe --protect-smtp-password "VOTRE_MOT_DE_PASSE"` (dans le même dossier que l'exécutable,
+> pour utiliser le même trousseau de clés `keys\`). La commande affiche une valeur du type
+> `protected:CfDJ8...` à coller telle quelle dans `"Password"` — kernelMK la déchiffre automatiquement
+> au démarrage. Un mot de passe sans ce préfixe continue de fonctionner en clair (rétro-compatibilité),
+> mais la forme protégée est recommandée pour tout déploiement en production.
+
+### Configurer l'authentification Microsoft 365 (OAuth2) pour l'email
+
+Depuis 2022-2023, Microsoft a désactivé l'authentification SMTP/IMAP par simple mot de passe (Basic Auth) sur
+la plupart des tenants Microsoft 365 — un compte email hébergé sur M365 (Exchange Online) nécessite désormais
+l'authentification moderne (OAuth2). kernelMK supporte ce mode aussi bien pour les credentials email (étapes
+"Email SMTP"/"Réception Email IMAP") que pour ses propres alertes internes (échec de job, etc.).
+
+**1. Enregistrer une application dans Entra ID (Azure AD)** — dans le portail Azure, section *Entra ID →
+Inscriptions d'applications → Nouvelle inscription* :
+- Type de compte : "Comptes dans cet annuaire d'organisation uniquement".
+- Une fois créée, note l'**Id d'application (client)** et l'**Id de l'annuaire (tenant)**.
+- Onglet *Certificats et secrets* → génère un **nouveau secret client** (note sa valeur immédiatement, elle
+  n'est plus visible ensuite) — c'est ce secret qui remplace le mot de passe.
+- Onglet *Autorisations d'API* → *Ajouter une autorisation* → *API utilisées par mon organisation* → rechercher
+  **"Office 365 Exchange Online"** → *Autorisations d'application* → cocher `IMAP.AccessAsApp` et
+  `SMTP.SendAsApp` → **Accorder le consentement administrateur** (obligatoire, un admin M365 doit valider).
+
+**2. Autoriser OAuth pour la boîte mail concernée** (PowerShell, module ExchangeOnlineManagement, en tant
+qu'admin M365) :
+```powershell
+Connect-ExchangeOnline
+Set-CASMailbox -Identity "flux-edi@cit-ci.onmicrosoft.com" -SmtpClientAuthenticationDisabled $false
+```
+
+**3. Configurer dans kernelMK** — deux emplacements possibles selon le besoin :
+- **Pour une étape de job** (envoi/réception email dans un job) : créer un credential de type "Compte Email
+  (IMAP)" ou "SMTP", authentification **"OAuth2 Microsoft 365"**, renseigner ClientId/TenantId + le secret
+  client dans le champ "Client secret".
+- **Pour les alertes internes** de kernelMK (notifications de job en échec) : dans `appsettings.json`, section
+  `"Smtp"`, mettre `"UseOAuth2Microsoft365": true` et renseigner `OAuth2ClientId`/`OAuth2TenantId` ; le champ
+  `"Password"` contient alors le secret client (protégeable via `--protect-smtp-password`, comme un mot de
+  passe classique).
+
+### Activer les Notifications Push (alertes navigateur)
+
+kernelMK peut envoyer des notifications système (Windows/Chrome/Edge) directement sur les appareils des
+utilisateurs qui l'activent, même onglet fermé — utile pour être alerté d'un job manquant, d'une anomalie
+de durée ou d'un échec sans avoir à garder l'application ouverte. Chaque utilisateur active/désactive lui-même
+cette option via le bouton 🔔 dans l'en-tête de l'application ; aucune configuration par utilisateur n'est
+nécessaire côté serveur, seule la clé serveur (VAPID) doit être générée une fois :
+
+```
+KernelMK.exe --generate-vapid-keys
+```
+
+La commande affiche une clé publique en clair et une clé privée déjà protégée (`protected:CfDJ8...`, même
+trousseau `keys\` que `--protect-smtp-password`) à coller telles quelles dans `appsettings.json` :
+
+```json
+{
+  "Vapid": {
+    "Subject": "mailto:support@cit.ci",
+    "PublicKey": "BFI...",
+    "PrivateKey": "protected:CfDJ8..."
+  }
+}
+```
+
+Tant que `PublicKey`/`PrivateKey` sont vides, les notifications push restent silencieusement désactivées
+(aucune erreur) — les autres canaux (email, Teams, webhook) continuent de fonctionner normalement. Le site
+doit être servi en HTTPS pour que le navigateur autorise l'abonnement (déjà le cas en production, voir
+section précédente sur le certificat).
+
 ---
 
 ## 9. Sauvegarde et Maintenance
@@ -171,8 +301,9 @@ Tous les éléments d'état de l'application sont stockés dans le sous-dossier 
 - `App_Data\automation-platform.db` : Base de données SQLite (utilisateurs, rôles, configurations des jobs SFTP, historiques d'exécution, logs d'audit).
 - `App_Data\logs\` : Journaux applicatifs horodatés (conservation automatique sur 30 jours glissants).
 - `keys\` : Clés de protection des données et des cookies d'authentification.
+- `certs\` : Certificat TLS (si HTTPS activé, voir section 8) — contient la clé privée du serveur, à protéger comme `keys\`.
 
-> 💡 **Procédure de sauvegarde recommandée** : Sauvegarder régulièrement le dossier `App_Data\` et le dossier `keys\`.
+> 💡 **Procédure de sauvegarde recommandée** : Sauvegarder régulièrement les dossiers `App_Data\`, `keys\` et `certs\`.
 
 ---
 

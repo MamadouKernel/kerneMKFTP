@@ -24,7 +24,7 @@
             {
                 <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200 shadow-sm">
                     <span class="h-2 w-2 rounded-full bg-rose-500 animate-pulse"></span>
-                    @_failedCount incident(s) détecté(s) (24h)
+                    @_failedCount incident(s) détecté(s) (@PeriodLabel)
                 </span>
             }
             else if (_totalJobs == 0)
@@ -52,10 +52,17 @@
             <!-- Badge Live Auto-Refresh -->
             <button type="button" @onclick="ToggleAutoRefresh"
                     class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium border transition-colors @(_autoRefresh ? "bg-indigo-50 text-indigo-700 border-indigo-200" : "bg-slate-100 text-slate-500 border-slate-200")"
-                    title="Cliquer pour activer/désactiver le rafraîchissement temps réel (toutes les 5s)">
+                    title="Cliquer pour activer/désactiver le rafraîchissement temps réel (toutes les 15s)">
                 <span class="h-2 w-2 rounded-full @(_autoRefresh ? "bg-indigo-600 animate-ping" : "bg-slate-400")"></span>
-                <span>@(_autoRefresh ? "Temps réel actif (5s)" : "Temps réel en pause")</span>
+                <span>@(_autoRefresh ? "Temps réel actif (15s)" : "Temps réel en pause")</span>
             </button>
+
+            <!-- Sélecteur de période -->
+            <div class="inline-flex rounded-lg border border-slate-200 overflow-hidden text-xs font-semibold">
+                <button type="button" @onclick="() => SetPeriod(24)" class="@(_periodHours == 24 ? "bg-brand-600 text-white" : "bg-white text-slate-500") px-2.5 py-1 transition-colors">24h</button>
+                <button type="button" @onclick="() => SetPeriod(168)" class="@(_periodHours == 168 ? "bg-brand-600 text-white" : "bg-white text-slate-500") px-2.5 py-1 transition-colors">7j</button>
+                <button type="button" @onclick="() => SetPeriod(720)" class="@(_periodHours == 720 ? "bg-brand-600 text-white" : "bg-white text-slate-500") px-2.5 py-1 transition-colors">30j</button>
+            </div>
         </div>
         <p class="text-xs sm:text-sm text-slate-500 mt-1">Côte d'Ivoire Terminal · Port d'Abidjan · Supervision des flux EDI &amp; transferts SFTP</p>
     </div>
@@ -99,6 +106,75 @@
         <button class="text-xs font-semibold text-amber-900 underline" @onclick="LoadDashboardAsync">Réessayer</button>
     </div>
 }
+
+<!-- Diagnostic Global : y a-t-il une anomalie, et de quel côté ? -->
+<div class="mb-6 rounded-xl border @(_citSideCount + _armateurSideCount + _indetermineSideCount == 0 ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-white") p-4 shadow-sm">
+    @if (_citSideCount + _armateurSideCount + _indetermineSideCount == 0)
+    {
+        <div class="flex items-center gap-3">
+            <span class="h-9 w-9 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center text-lg flex-shrink-0">✓</span>
+            <div>
+                <div class="font-bold text-emerald-800 text-sm">Aucune anomalie détectée (@PeriodLabel)</div>
+                <p class="text-xs text-emerald-700/80 mt-0.5">Tous les flux CIT ⇄ armateurs fonctionnent normalement. Aucun incident côté infrastructure locale ni côté partenaires.</p>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="flex items-center gap-2 mb-3">
+            <span class="h-9 w-9 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center text-lg flex-shrink-0">⚠</span>
+            <div>
+                <div class="font-bold text-slate-900 text-sm">Diagnostic global des anomalies (@PeriodLabel)</div>
+                <p class="text-xs text-slate-500 mt-0.5">Répartition des incidents par origine probable — voir « Derniers incidents &amp; Diagnostics » ci-dessous pour le détail par job.</p>
+            </div>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div class="rounded-lg border border-orange-200 bg-orange-50 px-3 py-2.5">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <div class="text-xs font-semibold text-orange-700">🏭 Côté CIT (infrastructure locale)</div>
+                        <p class="text-[11px] text-orange-600/80 mt-0.5">Lecteur réseau, dossier local, partage SMB, fichier verrouillé.</p>
+                    </div>
+                    <span class="text-xl font-bold text-orange-700">@_citSideCount</span>
+                </div>
+                @if (_citSideDetails.Count > 0)
+                {
+                    <div class="flex flex-wrap gap-1 mt-2 pt-2 border-t border-orange-200/60">
+                        @foreach (var d in _citSideDetails)
+                        {
+                            <span class="px-1.5 py-0.5 rounded bg-orange-100 text-orange-800 text-[10px] font-semibold">@d.Label (@d.Count)</span>
+                        }
+                    </div>
+                }
+            </div>
+            <div class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <div class="text-xs font-semibold text-amber-700">🚢 Côté partenaire / armateur</div>
+                        <p class="text-[11px] text-amber-600/80 mt-0.5">Identifiants rejetés, chemin distant introuvable.</p>
+                    </div>
+                    <span class="text-xl font-bold text-amber-700">@_armateurSideCount</span>
+                </div>
+                @if (_armateurSideDetails.Count > 0)
+                {
+                    <div class="flex flex-wrap gap-1 mt-2 pt-2 border-t border-amber-200/60">
+                        @foreach (var d in _armateurSideDetails)
+                        {
+                            <span class="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-semibold">@d.Label (@d.Count)</span>
+                        }
+                    </div>
+                }
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 flex items-center justify-between">
+                <div>
+                    <div class="text-xs font-semibold text-slate-600">🌐 Indéterminé (réseau)</div>
+                    <p class="text-[11px] text-slate-500 mt-0.5">Timeout, coupure réseau — origine incertaine.</p>
+                </div>
+                <span class="text-xl font-bold text-slate-600">@_indetermineSideCount</span>
+            </div>
+        </div>
+    }
+</div>
 
 <!-- High-Impact KPI Cards -->
 <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
@@ -164,11 +240,11 @@
         <span class="text-xs text-slate-400 mt-1 block">
             @if (_successRate.HasValue)
             {
-                <span>@_successCount / @(_successCount + _failedCount) succès (24h)</span>
+                <span>@_successCount / @(_successCount + _failedCount) succès (@PeriodLabel)</span>
             }
             else
             {
-                <span>En attente de flux (24h)</span>
+                <span>En attente de flux (@PeriodLabel)</span>
             }
         </span>
     </div>
@@ -176,7 +252,7 @@
     <!-- Fichiers Traités (24h) -->
     <div class="kmk-stat-card">
         <div class="flex items-center justify-between">
-            <span class="kmk-stat-label">Fichiers (24h)</span>
+            <span class="kmk-stat-label">Fichiers (@PeriodLabel)</span>
             <span class="kmk-stat-icon bg-sky-50 text-sky-600">
                 <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75M3.75 6.75h16.5M3.75 6.75v10.5A2.25 2.25 0 0 0 6 19.5h12a2.25 2.25 0 0 0 2.25-2.25V6.75m-16.5 0A2.25 2.25 0 0 1 6 4.5h12a2.25 2.25 0 0 1 2.25 2.25" /></svg>
             </span>
@@ -200,7 +276,7 @@
     <!-- Échecs (24h) -->
     <div class="kmk-stat-card">
         <div class="flex items-center justify-between">
-            <span class="kmk-stat-label">Incidents (24h)</span>
+            <span class="kmk-stat-label">Incidents (@PeriodLabel)</span>
             <span class="kmk-stat-icon @(_failedCount > 0 ? "bg-rose-100 text-rose-600" : "bg-slate-100 text-slate-400")">
                 <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" /></svg>
             </span>
@@ -372,6 +448,7 @@
                 <thead>
                     <tr class="border-b border-slate-100 bg-slate-50/70 text-slate-600">
                         <th class="px-5 py-3">Armateur / Ligne Maritime</th>
+                        <th class="py-3">Activité</th>
                         <th class="py-3">Fichiers Envoyés (📤 Upload)</th>
                         <th class="py-3">Fichiers Récupérés (📥 Download)</th>
                         <th class="py-3">Total Échangé</th>
@@ -380,7 +457,7 @@
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-slate-100">
-                    @foreach (var arm in _armateurStats)
+                    @foreach (var arm in PagedArmateurStats)
                     {
                         var total = arm.TotalFichiers > 0 ? arm.TotalFichiers : 1;
                         var pctEnvoye = (arm.FichiersEnvoyes * 100) / total;
@@ -397,6 +474,12 @@
                                         <div class="text-[11px] text-slate-400">@arm.TotalExecutions exécution(s) enregistrée(s)</div>
                                     </div>
                                 </div>
+                            </td>
+                            <td class="py-3">
+                                @{ var (silenceLabel, silenceClass) = FormatSilence(arm.DernierEchange); }
+                                <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold @silenceClass">
+                                    @silenceLabel
+                                </span>
                             </td>
                             <td class="py-3">
                                 <div class="flex items-center gap-2">
@@ -443,6 +526,7 @@
                     }
                 </tbody>
             </table>
+            <Pagination @bind-CurrentPage="_armateurPage" @bind-PageSize="_armateurPageSize" TotalItems="_armateurStats.Count" />
         }
     </div>
 </div>
@@ -480,7 +564,7 @@
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-slate-100">
-                    @foreach (var ex in _recentExecutions)
+                    @foreach (var ex in PagedRecentExecutions)
                     {
                         <tr class="hover:bg-slate-50/80 transition-colors">
                             <td class="px-5 py-3 font-semibold text-slate-900">
@@ -544,6 +628,7 @@
                     }
                 </tbody>
             </table>
+            <Pagination @bind-CurrentPage="_recentExecPage" @bind-PageSize="_recentExecPageSize" TotalItems="_recentExecutions.Count" />
         }
     </div>
 </div>
@@ -580,7 +665,7 @@
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-slate-100">
-                            @foreach (var t in _upcoming)
+                            @foreach (var t in PagedUpcoming)
                             {
                                 var timeRemaining = t.NextRunAt.HasValue ? t.NextRunAt.Value - DateTime.UtcNow : TimeSpan.Zero;
                                 <tr class="hover:bg-slate-50/80 transition-colors">
@@ -615,6 +700,7 @@
                             }
                         </tbody>
                     </table>
+                    <Pagination @bind-CurrentPage="_upcomingPage" @bind-PageSize="_upcomingPageSize" TotalItems="_upcoming.Count" />
                 }
             </div>
         </div>
@@ -645,7 +731,7 @@
                 else
                 {
                     <div class="divide-y divide-slate-100">
-                        @foreach (var cred in _remoteCredentials)
+                        @foreach (var cred in PagedRemoteCredentials)
                         {
                             <div class="p-4 flex items-center justify-between hover:bg-slate-50/70 transition-colors">
                                 <div class="flex items-center gap-3">
@@ -673,8 +759,117 @@
                             </div>
                         }
                     </div>
+                    <Pagination @bind-CurrentPage="_credentialsPage" @bind-PageSize="_credentialsPageSize" TotalItems="_remoteCredentials.Count" />
                 }
             </div>
+        </div>
+    </div>
+</div>
+
+<!-- Nouveaux indicateurs : jobs jamais lancés, alertes proactives, fiabilité par partenaire -->
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+    <!-- Jobs jamais exécutés -->
+    <div class="kmk-card flex flex-col">
+        <div class="kmk-card-header flex items-center justify-between">
+            <div class="flex items-center gap-2">
+                <svg class="h-4 w-4 text-slate-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" /></svg>
+                <span>Jobs jamais exécutés</span>
+            </div>
+            <span class="text-xs text-slate-400">@_neverRunJobs.Count</span>
+        </div>
+        <div class="kmk-card-body p-0 overflow-y-auto" style="max-height: 260px;">
+            @if (_neverRunJobs.Count == 0)
+            {
+                <div class="p-6 text-center text-slate-400 text-xs">Tous les jobs ont déjà été exécutés au moins une fois.</div>
+            }
+            else
+            {
+                <div class="divide-y divide-slate-100">
+                    @foreach (var j in PagedNeverRunJobs)
+                    {
+                        <div class="px-4 py-2.5 flex items-center justify-between gap-2">
+                            <AuthorizeView Roles="Administrateur,Developpeur" Context="neverRunCtx">
+                                <Authorized><a href="@($"jobs/{j.Id}/edit")" class="text-sm font-semibold text-slate-800 hover:text-brand-600 truncate">@j.Name</a></Authorized>
+                                <NotAuthorized><span class="text-sm font-semibold text-slate-800 truncate">@j.Name</span></NotAuthorized>
+                            </AuthorizeView>
+                            <span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 border border-slate-200 shrink-0">@(j.Enabled ? "Actif" : "En pause")</span>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+        @if (_neverRunJobs.Count > 0)
+        {
+            <Pagination @bind-CurrentPage="_neverRunPage" @bind-PageSize="_neverRunPageSize" TotalItems="_neverRunJobs.Count" />
+        }
+    </div>
+
+    <!-- Alertes proactives récentes -->
+    <div class="kmk-card flex flex-col">
+        <div class="kmk-card-header flex items-center justify-between">
+            <div class="flex items-center gap-2">
+                <svg class="h-4 w-4 text-indigo-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" /></svg>
+                <span>Alertes proactives récentes</span>
+            </div>
+        </div>
+        <div class="kmk-card-body p-0 overflow-y-auto" style="max-height: 260px;">
+            @if (_recentNotifications.Count == 0)
+            {
+                <div class="p-6 text-center text-slate-400 text-xs">Aucune alerte "Job manquant" ou "Anomalie de durée" récente.</div>
+            }
+            else
+            {
+                <div class="divide-y divide-slate-100">
+                    @foreach (var n in PagedNotifications)
+                    {
+                        <div class="px-4 py-2.5">
+                            <div class="flex items-center justify-between gap-2">
+                                <span class="text-sm font-semibold text-slate-800 truncate">@n.JobName</span>
+                                <span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 shrink-0">@n.Event</span>
+                            </div>
+                            <div class="text-[11px] text-slate-400 mt-0.5">@n.CreatedAt.ToLocalTime().ToString("dd/MM HH:mm")</div>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+        @if (_recentNotifications.Count > 0)
+        {
+            <Pagination @bind-CurrentPage="_notificationsPage" @bind-PageSize="_notificationsPageSize" TotalItems="_recentNotifications.Count" />
+        }
+    </div>
+
+    <!-- Partenaires les moins fiables (taux de succès de connexion) -->
+    <div class="kmk-card flex flex-col">
+        <div class="kmk-card-header flex items-center justify-between">
+            <div class="flex items-center gap-2">
+                <svg class="h-4 w-4 text-rose-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 14.25h13.5m-13.5 0a3 3 0 0 1-3-3m3 3a3 3 0 1 0 0 6h13.5a3 3 0 1 0 0-6m-16.5-3a3 3 0 0 1 3-3h13.5a3 3 0 0 1 3 3" /></svg>
+                <span>Partenaires les moins fiables</span>
+            </div>
+            <a href="rapport-flux" class="text-xs font-semibold text-brand-600 hover:text-brand-800">Détail →</a>
+        </div>
+        <div class="kmk-card-body p-0 overflow-y-auto" style="max-height: 260px;">
+            @if (_leastReliablePartners.Count == 0)
+            {
+                <div class="p-6 text-center text-slate-400 text-xs">Pas assez de connexions sur la période (@PeriodLabel) pour établir un taux fiable.</div>
+            }
+            else
+            {
+                <div class="divide-y divide-slate-100">
+                    @foreach (var p in _leastReliablePartners)
+                    {
+                        <div class="px-4 py-2.5 flex items-center justify-between gap-2">
+                            <span class="text-sm font-semibold text-slate-800 truncate">@p.Armateur</span>
+                            <span class="text-xs font-bold @(p.SuccessRate >= 90 ? "text-emerald-600" : p.SuccessRate >= 70 ? "text-amber-600" : "text-rose-600")">
+                                @p.SuccessRate.ToString("0")% (@p.Ok/@(p.Ok + p.Fail))
+                            </span>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+        <div class="px-4 py-2 border-t border-slate-100 text-[11px] text-slate-400">
+            🗺️ <a href="cartographie-edi" class="font-semibold text-brand-600 hover:text-brand-800">Voir la Cartographie EDI complète →</a>
         </div>
     </div>
 </div>
@@ -713,16 +908,18 @@
                         <th class="py-3">Date</th>
                         <th class="py-3">Étape défaillante</th>
                         <th class="py-3">Cause résumée</th>
+                        <th class="py-3">Origine probable</th>
                         <th class="px-5 py-3 text-right">Diagnostic</th>
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-slate-100">
-                    @foreach (var e in _recentIncidents)
+                    @foreach (var e in PagedIncidents)
                     {
                         var failingStep = e.StepLogs
                             .Where(l => l.Status is StepExecutionStatus.Echec or StepExecutionStatus.Timeout)
                             .OrderBy(l => l.Order)
                             .FirstOrDefault();
+                        var side = _incidentSideByExecution.TryGetValue(e.Id, out var sideInfo) ? sideInfo : (Diag: ClassifySide(null), Armateur: "—");
 
                         <tr class="hover:bg-rose-50/20 transition-colors">
                             <td class="px-5 py-3">
@@ -738,6 +935,12 @@
                             <td class="py-3 text-slate-500 text-xs max-w-xs truncate" title="@(failingStep?.ErrorOutput ?? e.Message)">
                                 @(failingStep?.ErrorOutput ?? e.Message ?? "Erreur indéterminée")
                             </td>
+                            <td class="py-3">
+                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold @side.Diag.CssClass" title="@(side.Armateur != "—" ? $"Partenaire concerné : {side.Armateur}" : "")">
+                                    <span>@side.Diag.Icon</span>
+                                    <span>@side.Diag.Label</span>
+                                </span>
+                            </td>
                             <td class="px-5 py-3 text-right">
                                 <a href="executions/@e.Id" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-sm transition-colors">
                                     <span>🪄 Voir Diagnostic</span>
@@ -748,6 +951,7 @@
                     }
                 </tbody>
             </table>
+            <Pagination @bind-CurrentPage="_incidentsPage" @bind-PageSize="_incidentsPageSize" TotalItems="_recentIncidents.Count" />
         }
     </div>
 </div>
@@ -755,6 +959,16 @@
 @code {
     private bool _refreshing = false;
     private string? _loadError = null;
+    private int _periodHours = 24;
+
+    private string PeriodLabel => _periodHours switch { 24 => "24h", 168 => "7j", 720 => "30j", _ => $"{_periodHours}h" };
+
+    private async Task SetPeriod(int hours)
+    {
+        if (_periodHours == hours) return;
+        _periodHours = hours;
+        await LoadDashboardAsync();
+    }
     private int _totalJobs;
     private int _activeJobs, _inactiveJobs, _runningCount, _successCount, _failedCount, _filesProcessed;
     private int? _successRate = null;
@@ -766,8 +980,118 @@
 
     // Armateur Flux Statistics (Sent vs Received)
     private List<ArmateurStat> _armateurStats = new();
+    private int _armateurPage = 1;
+    private int _armateurPageSize = 10;
+    private IEnumerable<ArmateurStat> PagedArmateurStats => _armateurStats.Skip((_armateurPage - 1) * _armateurPageSize).Take(_armateurPageSize);
+
+    private const int SilenceAttentionDays = 3;
+    private const int SilenceAlerteDays = 7;
+
+    private static (string Label, string CssClass) FormatSilence(DateTime? dernierEchange)
+    {
+        if (dernierEchange is null) return ("Jamais", "bg-red-100 text-red-700");
+        var days = (DateTime.UtcNow - dernierEchange.Value).TotalDays;
+        var label = days < 1 ? "Aujourd'hui" : $"Il y a {(int)days} j";
+        if (days >= SilenceAlerteDays) return (label, "bg-red-100 text-red-700");
+        if (days >= SilenceAttentionDays) return (label, "bg-amber-100 text-amber-700");
+        return (label, "bg-emerald-100 text-emerald-700");
+    }
+
     private int _totalEnvoyes = 0;
     private int _totalRecuperes = 0;
+
+    // Nouveaux indicateurs (jobs jamais exécutés, alertes proactives, fiabilité par partenaire)
+    private List<Job> _neverRunJobs = new();
+    private List<Notification> _recentNotifications = new();
+    private List<PartnerReliability> _leastReliablePartners = new();
+
+    // Pagination des listes du dashboard (chargées avec une borne large côté DB, paginées côté client)
+    private int _neverRunPage = 1;
+    private int _neverRunPageSize = 10;
+    private IEnumerable<Job> PagedNeverRunJobs => _neverRunJobs.Skip((_neverRunPage - 1) * _neverRunPageSize).Take(_neverRunPageSize);
+
+    private int _notificationsPage = 1;
+    private int _notificationsPageSize = 10;
+    private IEnumerable<Notification> PagedNotifications => _recentNotifications.Skip((_notificationsPage - 1) * _notificationsPageSize).Take(_notificationsPageSize);
+
+    private int _recentExecPage = 1;
+    private int _recentExecPageSize = 10;
+    private IEnumerable<JobExecution> PagedRecentExecutions => _recentExecutions.Skip((_recentExecPage - 1) * _recentExecPageSize).Take(_recentExecPageSize);
+
+    private int _upcomingPage = 1;
+    private int _upcomingPageSize = 10;
+    private IEnumerable<JobTrigger> PagedUpcoming => _upcoming.Skip((_upcomingPage - 1) * _upcomingPageSize).Take(_upcomingPageSize);
+
+    private int _credentialsPage = 1;
+    private int _credentialsPageSize = 10;
+    private IEnumerable<Credential> PagedRemoteCredentials => _remoteCredentials.Skip((_credentialsPage - 1) * _credentialsPageSize).Take(_credentialsPageSize);
+
+    private int _incidentsPage = 1;
+    private int _incidentsPageSize = 10;
+    private IEnumerable<JobExecution> PagedIncidents => _recentIncidents.Skip((_incidentsPage - 1) * _incidentsPageSize).Take(_incidentsPageSize);
+
+    // Diagnostic global : classification de chaque incident par origine probable (CIT vs partenaire/armateur)
+    private enum AnomalySide { Cit, Armateur, Indetermine, FauxPositif }
+    private record SideClassification(AnomalySide Side, string Label, string CssClass, string Icon);
+    private Dictionary<Guid, (SideClassification Diag, string Armateur)> _incidentSideByExecution = new();
+    private int _citSideCount, _armateurSideCount, _indetermineSideCount;
+    private List<(string Label, int Count)> _citSideDetails = new();
+    private List<(string Label, int Count)> _armateurSideDetails = new();
+
+    // Réutilise les mêmes signatures d'erreur que ExecutionDetail.razor (GetStepDiagnostic), condensées ici
+    // en une classification CIT vs armateur pour que n'importe quel utilisateur du dashboard sache d'un coup
+    // d'œil de quel côté chercher, sans avoir à ouvrir le détail de l'exécution.
+    private static SideClassification ClassifySide(string? errorOutput)
+    {
+        if (string.IsNullOrWhiteSpace(errorOutput))
+            return new(AnomalySide.Indetermine, "Indéterminé", "bg-slate-100 text-slate-600", "❓");
+
+        var err = errorOutput;
+
+        // Faux négatif FTP : le serveur a confirmé "226 Transfer complete" malgré le statut Échec — transfert OK.
+        if (err.Contains("226", StringComparison.OrdinalIgnoreCase) &&
+            err.Contains("Transfer complete", StringComparison.OrdinalIgnoreCase) &&
+            err.Contains("statut : Failed", StringComparison.OrdinalIgnoreCase))
+            return new(AnomalySide.FauxPositif, "Faux positif (transfert OK)", "bg-emerald-100 text-emerald-700", "✓");
+
+        // Côté CIT : infrastructure locale (lecteur réseau, dossier local, fichier verrouillé, partage SMB local).
+        if (err.Contains("DirectoryNotFoundException", StringComparison.OrdinalIgnoreCase) ||
+            err.Contains("FileNotFoundException", StringComparison.OrdinalIgnoreCase) ||
+            err.Contains("Could not find a part of the path", StringComparison.OrdinalIgnoreCase) ||
+            err.Contains("used by another process", StringComparison.OrdinalIgnoreCase) ||
+            err.Contains("being used", StringComparison.OrdinalIgnoreCase) ||
+            err.Contains("Authentification refusée par le partage", StringComparison.OrdinalIgnoreCase) ||
+            err.Contains("SmbConnectionScope", StringComparison.OrdinalIgnoreCase) ||
+            err.Contains("clé privée SSH est configuré", StringComparison.OrdinalIgnoreCase) ||
+            err.Contains("incompatible avec l'authentification SMB", StringComparison.OrdinalIgnoreCase))
+            return new(AnomalySide.Cit, "Côté CIT (infra locale)", "bg-orange-100 text-orange-700", "🏭");
+
+        // Côté partenaire/armateur : le serveur distant a explicitement rejeté la connexion ou le chemin.
+        if (err.Contains("Authentication failed", StringComparison.OrdinalIgnoreCase) ||
+            err.Contains("Permission denied", StringComparison.OrdinalIgnoreCase) ||
+            err.Contains("530", StringComparison.OrdinalIgnoreCase) ||
+            err.Contains("SshAuthenticationException", StringComparison.OrdinalIgnoreCase) ||
+            err.Contains("550", StringComparison.OrdinalIgnoreCase) ||
+            err.Contains("SftpPathNotFoundException", StringComparison.OrdinalIgnoreCase) ||
+            err.Contains("No such file", StringComparison.OrdinalIgnoreCase))
+            return new(AnomalySide.Armateur, "Côté partenaire", "bg-amber-100 text-amber-700", "🚢");
+
+        // Indéterminé : timeout/réseau/pare-feu — peut venir des deux côtés, nécessite investigation.
+        if (err.Contains("timed out", StringComparison.OrdinalIgnoreCase) ||
+            err.Contains("TimeoutException", StringComparison.OrdinalIgnoreCase) ||
+            err.Contains("A task was canceled", StringComparison.OrdinalIgnoreCase) ||
+            err.Contains("data connection", StringComparison.OrdinalIgnoreCase) ||
+            err.Contains("PASV", StringComparison.OrdinalIgnoreCase) ||
+            err.Contains("PROT P", StringComparison.OrdinalIgnoreCase))
+            return new(AnomalySide.Indetermine, "Réseau (indéterminé)", "bg-slate-100 text-slate-600", "🌐");
+
+        return new(AnomalySide.Indetermine, "Indéterminé", "bg-slate-100 text-slate-600", "❓");
+    }
+
+    private record PartnerReliability(string Armateur, int Ok, int Fail)
+    {
+        public double SuccessRate => (Ok + Fail) > 0 ? 100.0 * Ok / (Ok + Fail) : 100;
+    }
 
     // Live Real-Time Auto-Refresh
     private bool _autoRefresh = true;
@@ -799,7 +1123,10 @@
 
     private async Task RunRealTimeLoopAsync(CancellationToken ct)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+        // 15s (et non 5s) : ce rafraîchissement relance ~15 requêtes DB à chaque tick, pour chaque onglet
+        // ouvert sur le dashboard — à 5s, plusieurs utilisateurs connectés simultanément en production
+        // saturaient le serveur SQLite. Reste suffisamment "temps réel" pour un tableau de bord de supervision.
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(15));
         while (!ct.IsCancellationRequested && await timer.WaitForNextTickAsync(ct))
         {
             if (_autoRefresh && !_refreshing)
@@ -832,8 +1159,8 @@
             _inactiveJobs = await db.Jobs.CountAsync(j => !j.Enabled);
             _runningCount = await db.JobExecutions.CountAsync(e => e.Status == JobStatus.EnCours);
 
-            var since = DateTime.UtcNow.AddHours(-24);
-            var recent = db.JobExecutions.Where(e => e.StartedAt >= since && e.FinishedAt != null);
+            var since = DateTime.UtcNow.AddHours(-_periodHours);
+            var recent = db.JobExecutions.AsNoTracking().Where(e => e.StartedAt >= since && e.FinishedAt != null);
             _successCount = await recent.CountAsync(e => e.Status == JobStatus.Succes);
             _failedCount = await recent.CountAsync(e => e.Status == JobStatus.Echec);
 
@@ -847,11 +1174,13 @@
 
             // Fichiers traités
             var executionIds = await db.JobExecutions
+                .AsNoTracking()
                 .Where(e => e.StartedAt >= since)
                 .Select(e => e.Id)
                 .ToListAsync();
 
             var fileLogs = await db.StepExecutionLogs
+                .AsNoTracking()
                 .Where(l => executionIds.Contains(l.JobExecutionId) && !string.IsNullOrEmpty(l.FilesProcessedCsv))
                 .Select(l => l.FilesProcessedCsv)
                 .ToListAsync();
@@ -860,38 +1189,58 @@
 
             // Prochaines planifications
             _upcoming = await db.JobTriggers
+                .AsNoTracking()
                 .Include(t => t.Job)
                 .Where(t => t.Enabled && t.NextRunAt != null && t.Job != null && t.Job.Enabled)
                 .OrderBy(t => t.NextRunAt)
-                .Take(6)
+                .Take(50)
                 .ToListAsync();
 
-            // Flux récent (6 dernières exécutions)
+            // Flux récent
             _recentExecutions = await db.JobExecutions
+                .AsNoTracking()
                 .Include(e => e.Job)
                 .Include(e => e.StepLogs)
                 .OrderByDescending(e => e.StartedAt)
-                .Take(6)
+                .Take(50)
                 .ToListAsync();
 
-            // Incidents récents (6 derniers échecs)
+            // Jobs jamais exécutés (au moins une fois) — trigger oublié/mal configuré probable
+            _neverRunJobs = await db.Jobs
+                .AsNoTracking()
+                .Where(j => j.LastRunAt == null)
+                .OrderBy(j => j.Name)
+                .Take(50)
+                .ToListAsync();
+
+            // Alertes proactives récentes (Job manquant / Anomalie de durée) — invisibles ailleurs dans l'app
+            _recentNotifications = await db.Notifications
+                .AsNoTracking()
+                .OrderByDescending(n => n.CreatedAt)
+                .Take(50)
+                .ToListAsync();
+
+            // Incidents récents
             _recentIncidents = await db.JobExecutions
+                .AsNoTracking()
                 .Include(e => e.Job)
                 .Include(e => e.StepLogs)
                 .Where(e => e.Status == JobStatus.Echec)
                 .OrderByDescending(e => e.StartedAt)
-                .Take(6)
+                .Take(50)
                 .ToListAsync();
 
             // Serveurs distants configurés
             _remoteCredentials = await db.Credentials
+                .AsNoTracking()
                 .Where(c => !string.IsNullOrEmpty(c.Host))
                 .OrderBy(c => c.Name)
-                .Take(5)
+                .Take(50)
                 .ToListAsync();
 
             // CALCUL DU NOMBRE DE FICHIERS ENVOYÉS ET RÉCUPÉRÉS PAR ARMATEUR
             var transferSteps = await db.JobSteps
+                .AsNoTracking()
                 .Include(s => s.Job)
                 .Include(s => s.Credential)
                 .Where(s => s.Type == StepType.TransfertSftp || s.Type == StepType.TransfertFtp || s.Type == StepType.TransfertFtps || s.Type == StepType.TransfertSmb)
@@ -917,7 +1266,68 @@
                 }
             }
 
+            // Diagnostic global : classe chaque incident récent par origine probable (CIT vs partenaire) pour
+            // que n'importe quel utilisateur sache d'un coup d'œil de quel côté chercher.
+            _incidentSideByExecution = new Dictionary<Guid, (SideClassification Diag, string Armateur)>();
+            foreach (var inc in _recentIncidents)
+            {
+                var failingStep = inc.StepLogs
+                    .Where(l => l.Status is StepExecutionStatus.Echec or StepExecutionStatus.Timeout)
+                    .OrderBy(l => l.Order)
+                    .FirstOrDefault();
+                var diag = ClassifySide(failingStep?.ErrorOutput ?? inc.Message);
+                var armateur = failingStep != null && stepConfigs.TryGetValue(failingStep.JobStepId, out var stepInfo)
+                    ? stepInfo.Armateur
+                    : "—";
+                _incidentSideByExecution[inc.Id] = (diag, armateur);
+            }
+            _citSideCount = _incidentSideByExecution.Values.Count(v => v.Diag.Side == AnomalySide.Cit);
+            _armateurSideCount = _incidentSideByExecution.Values.Count(v => v.Diag.Side == AnomalySide.Armateur);
+            _indetermineSideCount = _incidentSideByExecution.Values.Count(v => v.Diag.Side == AnomalySide.Indetermine);
+
+            // Détail par job (côté CIT) / par partenaire (côté armateur) — pour répondre directement à
+            // "quel job ?" / "quel partenaire ?" sans devoir ouvrir chaque incident un par un.
+            _citSideDetails = _recentIncidents
+                .Where(e => _incidentSideByExecution.TryGetValue(e.Id, out var s) && s.Diag.Side == AnomalySide.Cit)
+                .GroupBy(e => e.Job?.Name ?? "Job inconnu")
+                .Select(g => (Label: g.Key, Count: g.Count()))
+                .OrderByDescending(x => x.Count)
+                .ToList();
+            _armateurSideDetails = _recentIncidents
+                .Where(e => _incidentSideByExecution.TryGetValue(e.Id, out var s) && s.Diag.Side == AnomalySide.Armateur)
+                .Select(e => _incidentSideByExecution[e.Id].Armateur)
+                .Where(a => a != "—")
+                .GroupBy(a => a, StringComparer.OrdinalIgnoreCase)
+                .Select(g => (Label: g.Key, Count: g.Count()))
+                .OrderByDescending(x => x.Count)
+                .ToList();
+
+            // Taux de succès de connexion par partenaire (sur la période sélectionnée) — repère les partenaires
+            // les moins fiables sans devoir ouvrir le Rapport des flux.
+            var connLogs = await db.StepExecutionLogs
+                .AsNoTracking()
+                .Where(l => l.StartedAt >= since)
+                .Select(l => new { l.JobStepId, l.Status })
+                .ToListAsync();
+
+            var connStats = new Dictionary<string, (int Ok, int Fail)>(StringComparer.OrdinalIgnoreCase);
+            foreach (var cl in connLogs)
+            {
+                if (!stepConfigs.TryGetValue(cl.JobStepId, out var info)) continue;
+                connStats.TryGetValue(info.Armateur, out var cs);
+                if (cl.Status == StepExecutionStatus.Succes) cs.Ok++;
+                else if (cl.Status == StepExecutionStatus.Echec) cs.Fail++;
+                connStats[info.Armateur] = cs;
+            }
+            _leastReliablePartners = connStats
+                .Where(kv => kv.Value.Ok + kv.Value.Fail >= 3)
+                .Select(kv => new PartnerReliability(kv.Key, kv.Value.Ok, kv.Value.Fail))
+                .OrderBy(p => p.SuccessRate)
+                .Take(4)
+                .ToList();
+
             var logs = await db.StepExecutionLogs
+                .AsNoTracking()
                 .Where(l => !string.IsNullOrEmpty(l.FilesProcessedCsv))
                 .OrderByDescending(l => l.FinishedAt ?? l.StartedAt)
                 .Take(500)

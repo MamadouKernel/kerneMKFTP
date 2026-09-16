@@ -1,4 +1,5 @@
 ﻿@page "/Account/ConfirmEmail"
+@attribute [AllowAnonymous]
 
 @using System.Text
 @using Microsoft.AspNetCore.Identity
@@ -8,13 +9,14 @@
 @inject UserManager<ApplicationUser> UserManager
 @inject IdentityRedirectManager RedirectManager
 
-<PageTitle>Confirm email</PageTitle>
+<PageTitle>Confirmation de l'email</PageTitle>
 
-<h1>Confirm email</h1>
-<StatusMessage Message="@statusMessage" />
+<h1>Confirmation de l'email</h1>
+<StatusMessage Message="@statusMessage" IsError="@statusIsError" />
 
 @code {
     private string? statusMessage;
+    private bool statusIsError;
 
     [CascadingParameter]
     private HttpContext HttpContext { get; set; } = default!;
@@ -36,13 +38,15 @@
         if (user is null)
         {
             HttpContext.Response.StatusCode = StatusCodes.Status404NotFound;
-            statusMessage = $"Error loading user with ID {UserId}";
+            statusMessage = $"Erreur : impossible de trouver l'utilisateur avec l'ID {UserId}";
+            statusIsError = true;
         }
         else
         {
             var code = Encoding.UTF8.GetString(WebEncoders.Base64UrlDecode(Code));
             var result = await UserManager.ConfirmEmailAsync(user, code);
-            statusMessage = result.Succeeded ? "Thank you for confirming your email." : "Error confirming your email.";
+            statusMessage = result.Succeeded ? "Merci d'avoir confirmé votre email." : "Erreur lors de la confirmation de l'email.";
+            statusIsError = !result.Succeeded;
         }
     }
 }

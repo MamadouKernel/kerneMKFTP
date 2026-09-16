@@ -1,0 +1,187 @@
+@page "/revue-acces"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = "Administrateur,Auditeur")]
+@using Microsoft.AspNetCore.Identity
+@using System.Text
+@inject UserManager<ApplicationUser> UserManager
+@inject IJSRuntime JS
+
+<PageTitle>Revue des accès · kernelMK</PageTitle>
+
+<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
+    <div>
+        <h1 class="mb-1">Revue des accès</h1>
+        <p class="text-sm text-slate-500">
+            Vue de conformité (lecture seule) : dernière connexion, statut et sécurité 2FA de chaque compte —
+            verrouillage automatique après 30 jours d'inactivité, désactivation définitive après 90 jours.
+        </p>
+    </div>
+    <button type="button" @onclick="ExportCsv" class="kmk-btn-secondary text-xs py-2 px-3 flex items-center gap-1.5 shadow-xs shrink-0">
+        <svg class="h-3.5 w-3.5 text-slate-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+        </svg>
+        <span>Exporter CSV</span>
+    </button>
+</div>
+
+@if (_loading)
+{
+    <p class="text-sm text-slate-500">Chargement...</p>
+}
+else
+{
+    <div class="kmk-table-container">
+        <table class="kmk-table">
+            <thead>
+                <tr>
+                    <th class="min-w-[200px]">Email</th>
+                    <th class="min-w-[150px]">Nom affiché</th>
+                    <th class="min-w-[120px]">Statut</th>
+                    <th class="min-w-[130px]">Créé le</th>
+                    <th class="min-w-[130px]">1ère connexion</th>
+                    <th class="min-w-[150px]">Dernière connexion</th>
+                    <th class="min-w-[110px]">Inactivité</th>
+                    <th class="min-w-[130px]">2FA</th>
+                    <th class="min-w-[130px]">Codes de secours</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var row in _rows)
+                {
+                    <tr>
+                        <td class="font-semibold text-slate-900 text-sm">@row.User.Email</td>
+                        <td class="text-slate-600 text-sm">@(string.IsNullOrWhiteSpace(row.User.DisplayName) ? "-" : row.User.DisplayName)</td>
+                        <td>
+                            <span class="@StatusBadgeClass(row.Status)">
+                                <span class="h-1.5 w-1.5 rounded-full @StatusDotClass(row.Status)"></span>
+                                @row.Status
+                            </span>
+                        </td>
+                        <td class="text-xs text-slate-500">@row.User.CreatedAt.ToLocalTime().ToString("dd/MM/yyyy")</td>
+                        <td class="text-xs text-slate-500">@(row.User.FirstLoginAt?.ToLocalTime().ToString("dd/MM/yyyy") ?? "-")</td>
+                        <td class="text-xs text-slate-500">@(row.User.LastLoginAt?.ToLocalTime().ToString("dd/MM/yyyy HH:mm") ?? "Jamais connecté")</td>
+                        <td>
+                            <span class="text-xs font-semibold @(row.DaysInactive >= 30 ? "text-rose-600" : row.DaysInactive >= 14 ? "text-amber-600" : "text-slate-500")">
+                                @row.DaysInactive j
+                            </span>
+                        </td>
+                        <td>
+                            @if (row.User.TwoFactorEnabled)
+                            {
+                                <span class="kmk-badge kmk-badge-success text-[10px]">✓ Activé</span>
+                            }
+                            else
+                            {
+                                <span class="kmk-badge kmk-badge-warning text-[10px]">En attente</span>
+                            }
+                        </td>
+                        <td class="text-xs">
+                            @if (!row.User.TwoFactorEnabled)
+                            {
+                                <span class="text-slate-400">-</span>
+                            }
+                            else if (row.RecoveryCodesRemaining <= 2)
+                            {
+                                <span class="font-semibold text-rose-600" title="Codes de secours presque épuisés — inviter l'utilisateur à en régénérer.">
+                                    @row.RecoveryCodesRemaining restant(s) ⚠️
+                                </span>
+                            }
+                            else
+                            {
+                                <span class="text-slate-500">@row.RecoveryCodesRemaining restants</span>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    private record UserRow(ApplicationUser User, string Status, int DaysInactive, int RecoveryCodesRemaining);
+
+    private List<UserRow> _rows = new();
+    private bool _loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        var users = UserManager.Users.OrderBy(u => u.Email).ToList();
+        var now = DateTime.UtcNow;
+        var rows = new List<UserRow>();
+
+        foreach (var user in users)
+        {
+            var reference = user.LastLoginAt ?? user.CreatedAt;
+            var daysInactive = Math.Max(0, (int)(now - reference).TotalDays);
+
+            var status = !user.Active
+                ? "Désactivé"
+                : user.LockoutEnd.HasValue && user.LockoutEnd > now
+                    ? "Verrouillé"
+                    : "Actif";
+
+            var recoveryCodes = user.TwoFactorEnabled ? await UserManager.CountRecoveryCodesAsync(user) : 0;
+
+            rows.Add(new UserRow(user, status, daysInactive, recoveryCodes));
+        }
+
+        _rows = rows;
+        _loading = false;
+    }
+
+    private static string StatusBadgeClass(string status) => status switch
+    {
+        "Actif" => "kmk-badge kmk-badge-success",
+        "Verrouillé" => "kmk-badge kmk-badge-warning",
+        _ => "kmk-badge kmk-badge-neutral"
+    };
+
+    private static string StatusDotClass(string status) => status switch
+    {
+        "Actif" => "bg-emerald-500",
+        "Verrouillé" => "bg-amber-500",
+        _ => "bg-slate-400"
+    };
+
+    private async Task ExportCsv()
+    {
+        var sb = new StringBuilder();
+        sb.Append('﻿');
+        sb.AppendLine("Email;Nom affiché;Statut;Créé le;1ère connexion;Dernière connexion;Jours d'inactivité;2FA;Codes de secours restants");
+
+        foreach (var row in _rows)
+        {
+            var email = EscapeCsv(row.User.Email ?? "");
+            var name = EscapeCsv(row.User.DisplayName ?? "");
+            var created = row.User.CreatedAt.ToLocalTime().ToString("dd/MM/yyyy");
+            var first = row.User.FirstLoginAt?.ToLocalTime().ToString("dd/MM/yyyy") ?? "Jamais";
+            var last = row.User.LastLoginAt?.ToLocalTime().ToString("dd/MM/yyyy HH:mm") ?? "Jamais";
+            var twoFa = row.User.TwoFactorEnabled ? "Activé" : "En attente";
+            var codes = row.User.TwoFactorEnabled ? row.RecoveryCodesRemaining.ToString() : "-";
+
+            sb.AppendLine($"{email};{name};{row.Status};{created};{first};{last};{row.DaysInactive};{twoFa};{codes}");
+        }
+
+        var bytes = Encoding.UTF8.GetBytes(sb.ToString());
+        var base64 = Convert.ToBase64String(bytes);
+        var fileName = $"revue-acces-cit-{DateTime.Now:yyyyMMdd-HHmm}.csv";
+
+        await JS.InvokeVoidAsync("kernelMK.downloadFile", fileName, "text/csv;charset=utf-8", base64);
+    }
+
+    private static string EscapeCsv(string value)
+    {
+        if (value.Contains(';') || value.Contains('"') || value.Contains('\n') || value.Contains('\r'))
+        {
+            return string.Concat("\"", value.Replace("\"", "\"\""), "\"");
+        }
+        return value;
+    }
+}

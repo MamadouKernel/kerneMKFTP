@@ -2,6 +2,7 @@
 @page "/executions/{ExecutionId:guid}/detail"
 @page "/executions/detail/{ExecutionId:guid}"
 @rendermode InteractiveServer
+@implements IDisposable
 @attribute [Authorize(Roles = "Administrateur,Superviseur,Exploitant,Developpeur,Auditeur")]
 @using Microsoft.EntityFrameworkCore
 @using KernelMK.Engine.Workflow
@@ -42,7 +43,14 @@ else
                 <span>/</span>
                 @if (_execution.Job is not null)
                 {
-                    <a href="jobs/@_execution.JobId/edit" class="hover:text-slate-600 transition-colors">@_execution.Job.Name</a>
+                    <AuthorizeView Roles="Administrateur,Developpeur" Context="breadcrumbCtx">
+                        <Authorized>
+                            <a href="jobs/@_execution.JobId/edit" class="hover:text-slate-600 transition-colors">@_execution.Job.Name</a>
+                        </Authorized>
+                        <NotAuthorized>
+                            <span>@_execution.Job.Name</span>
+                        </NotAuthorized>
+                    </AuthorizeView>
                     <span>/</span>
                 }
                 <span class="text-slate-600 font-mono">@_execution.Id.ToString()[..8]</span>
@@ -81,10 +89,12 @@ else
             </a>
             @if (_execution.Job is not null)
             {
-                <a href="jobs/@_execution.JobId/edit" class="kmk-btn-secondary text-sm">
-                    <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L6.832 19.82a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Zm0 0L19.5 7.125" /></svg>
-                    Modifier le job
-                </a>
+                <AuthorizeView Roles="Administrateur,Developpeur" Context="editJobCtx">
+                    <a href="jobs/@_execution.JobId/edit" class="kmk-btn-secondary text-sm">
+                        <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L6.832 19.82a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Zm0 0L19.5 7.125" /></svg>
+                        Modifier le job
+                    </a>
+                </AuthorizeView>
             }
             <a href="explorer" class="kmk-btn-primary text-sm flex items-center gap-1.5">
                 <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z" /></svg>
@@ -92,6 +102,15 @@ else
             </a>
         </div>
     </div>
+
+    <!-- Diagramme visuel du pipeline (2D) : montre l'enchaînement des étapes et met en évidence celle en cours -->
+    @if (_execution.Job is not null && _execution.Job.Steps.Count > 0)
+    {
+        <div class="kmk-card mb-6 p-4">
+            <p class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">Pipeline d'exécution</p>
+            <JobPipelineDiagram Steps="_execution.Job.Steps" LiveStatuses="_liveStepStatuses" />
+        </div>
+    }
 
     <!-- Diagnostic Intelligent (affiché si échec ou erreur) -->
     @if (_diagnostic is not null)
@@ -467,7 +486,8 @@ else
                                     </button>
                                     @if (isTraceOpen)
                                     {
-                                        <pre class="mt-2 bg-slate-950 text-rose-300 font-mono text-[11px] p-3.5 rounded-xl overflow-x-auto max-h-56 leading-relaxed border border-slate-800 shadow-inner">@log.ErrorOutput</pre>
+                                        <pre class="mt-2 font-mono text-[12.5px] font-medium p-3.5 rounded-xl overflow-x-auto max-h-56 leading-relaxed border shadow-inner"
+                                             style="background-color:#000000 !important; color:#ffffff !important; border-color:#334155 !important; forced-color-adjust:none;">@log.ErrorOutput</pre>
                                     }
                                 </div>
                             </div>
@@ -501,6 +521,40 @@ else
     private bool _copiedToast = false;
     private DiagnosticResult? _diagnostic;
     private HashSet<Guid> _expandedTraces = new();
+    private Dictionary<Guid, StepExecutionStatus> _liveStepStatuses = new();
+    private PeriodicTimer? _refreshTimer;
+    private CancellationTokenSource? _refreshCts;
+
+    private void StartLiveRefresh()
+    {
+        _refreshCts = new CancellationTokenSource();
+        _refreshTimer = new PeriodicTimer(TimeSpan.FromSeconds(3));
+        _ = RunLiveRefreshAsync(_refreshCts.Token);
+    }
+
+    private void StopLiveRefresh()
+    {
+        _refreshCts?.Cancel();
+        _refreshCts?.Dispose();
+        _refreshCts = null;
+        _refreshTimer?.Dispose();
+        _refreshTimer = null;
+    }
+
+    private async Task RunLiveRefreshAsync(CancellationToken ct)
+    {
+        try
+        {
+            while (_refreshTimer is not null && await _refreshTimer.WaitForNextTickAsync(ct))
+            {
+                await LoadAsync();
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    public void Dispose() => StopLiveRefresh();
 
     private void ToggleTrace(Guid logId)
     {
@@ -521,7 +575,7 @@ else
     {
         await using var db = await DbFactory.CreateDbContextAsync();
         _execution = await db.JobExecutions
-            .Include(e => e.Job)
+            .Include(e => e.Job!).ThenInclude(j => j.Steps)
             .Include(e => e.StepLogs)
             .FirstOrDefaultAsync(e => e.Id == ExecutionId);
 
@@ -531,6 +585,21 @@ else
                 .OrderBy(l => l.Order)
                 .ThenBy(l => l.AttemptNumber)
                 .ToList();
+
+            // Un seul statut par étape pour le diagramme : la tentative la plus récente (l'ordre AttemptNumber croissant ci-dessus fait que la dernière écrase les précédentes).
+            _liveStepStatuses = _stepLogs
+                .GroupBy(l => l.JobStepId)
+                .ToDictionary(g => g.Key, g => g.OrderBy(l => l.AttemptNumber).Last().Status);
+
+            var stillRunning = _execution.Status == JobStatus.EnCours || ExecutionCoordinator.IsExecutionRunning(_execution.Id);
+            if (stillRunning && _refreshTimer is null)
+            {
+                StartLiveRefresh();
+            }
+            else if (!stillRunning)
+            {
+                StopLiveRefresh();
+            }
 
             _allProcessedFiles.Clear();
             foreach (var s in _stepLogs)
@@ -978,6 +1047,76 @@ else
                 new()
                 {
                     "Attendre quelques instants que la génération se termine et relancer le job."
+                });
+        }
+
+        // 7. Accès refusé à un partage réseau local (SMB) — credential incorrect ou incompatible
+        if (err.Contains("Authentification refusée par le partage", StringComparison.OrdinalIgnoreCase) ||
+            err.Contains("SmbConnectionScope", StringComparison.OrdinalIgnoreCase) ||
+            err.Contains("clé privée SSH est configuré", StringComparison.OrdinalIgnoreCase) ||
+            err.Contains("incompatible avec l'authentification SMB", StringComparison.OrdinalIgnoreCase))
+        {
+            return new StepDiagnostic(
+                "Accès refusé au dossier réseau local (partage SMB)",
+                "kernelMK a tenté de s'authentifier sur le partage réseau local (\\\\serveur\\partage) avec le credential dédié configuré sur l'étape, mais Windows a refusé la connexion.",
+                new()
+                {
+                    "Le credential sélectionné pour l'accès réseau local est un credential SFTP configuré en clé privée SSH — incompatible avec l'authentification SMB Windows (qui exige un mot de passe).",
+                    "Le nom d'utilisateur doit parfois inclure le domaine (ex: 'CIT\\utilisateur' au lieu de 'utilisateur') selon la configuration du serveur cible.",
+                    "Le mot de passe a expiré, a été changé, ou le compte est verrouillé côté Windows/Active Directory.",
+                    "Une autre session est déjà connectée à ce même serveur depuis cette machine avec des identifiants différents (Windows n'autorise qu'un compte à la fois par serveur SMB)."
+                },
+                new()
+                {
+                    "Dans l'étape du job, vérifie que le credential choisi pour « Compte d'accès au partage réseau local » est bien de type Mot de passe (pas Clé privée SSH).",
+                    "Teste manuellement l'accès depuis le serveur avec les mêmes identifiants : net use \\\\serveur\\partage /user:DOMAINE\\utilisateur motdepasse.",
+                    "Si le test manuel échoue aussi, le compte/mot de passe est en cause côté Windows — pas côté kernelMK."
+                });
+        }
+
+        // 8. Faux négatif FTP : le serveur confirme "226 Transfer complete" (succès) mais le client (FluentFTP)
+        // marque quand même l'envoi en échec — typiquement parce que sa vérification post-transfert (commande
+        // SIZE) est refusée ou mal supportée par ce serveur. Le fichier est très probablement bien arrivé.
+        if (err.Contains("226", StringComparison.OrdinalIgnoreCase) &&
+            err.Contains("Transfer complete", StringComparison.OrdinalIgnoreCase) &&
+            err.Contains("statut : Failed", StringComparison.OrdinalIgnoreCase))
+        {
+            return new StepDiagnostic(
+                "Transfert probablement réussi malgré le statut « Échec » (faux négatif FTP)",
+                "Le serveur distant a répondu « 226 Transfer complete » — ce code signifie que le fichier a bien été reçu avec succès. " +
+                "Le statut « Échec » vient d'une vérification supplémentaire faite par kernelMK après l'envoi (contrôle de la taille du " +
+                "fichier déposé), que ce serveur refuse ou ne supporte pas correctement — le transfert lui-même n'a probablement pas échoué.",
+                new()
+                {
+                    "Le serveur distant (ex: GUCE/armateur) n'autorise pas la commande SIZE après l'envoi, ou la renvoie dans un format inattendu.",
+                    "Un pare-feu/proxy a coupé la connexion juste après le 226, avant que kernelMK ait pu vérifier le fichier déposé."
+                },
+                new()
+                {
+                    "Vérifiez via l'Explorateur distant si le fichier concerné est bien présent sur le serveur, avant de considérer qu'il y a eu une vraie perte.",
+                    "S'il y est déjà, aucune action n'est nécessaire — relancer le job est sans risque (l'écrasement du fichier distant est activé par défaut).",
+                    "Si ce message revient souvent avec ce même partenaire, signalez-le au support CIT : la vérification post-transfert peut être désactivée pour ce type de serveur."
+                });
+        }
+
+        // 9. RPA Robot Framework introuvable sur le serveur (Python/robotframework non installés)
+        if (err.Contains("Impossible de lancer la commande", StringComparison.OrdinalIgnoreCase) &&
+            err.Contains("robotframework", StringComparison.OrdinalIgnoreCase))
+        {
+            return new StepDiagnostic(
+                "Robot Framework introuvable sur le serveur",
+                "kernelMK a tenté de lancer la commande \"robot\" pour exécuter le fichier .robot de cette étape RPA, mais le système d'exploitation n'a pas trouvé cet exécutable.",
+                new()
+                {
+                    "Python n'est pas installé sur ce serveur, ou n'est pas dans le PATH système.",
+                    "Le paquet \"robotframework\" n'a pas été installé via pip.",
+                    "L'exécutable \"robot\" existe mais dans un environnement virtuel Python non référencé dans la configuration de l'étape."
+                },
+                new()
+                {
+                    "Installer Python puis exécuter : pip install robotframework",
+                    "Vérifier depuis une invite de commandes sur le serveur que la commande \"robot --version\" fonctionne.",
+                    "Si Robot Framework est installé dans un environnement virtuel dédié, renseigner le chemin complet de l'exécutable dans le champ « Exécutable \"robot\" » de l'étape."
                 });
         }
 

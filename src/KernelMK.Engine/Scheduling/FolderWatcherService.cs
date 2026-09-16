@@ -33,13 +33,17 @@ public class FolderWatcherService : BackgroundService
             try
             {
                 await RefreshWatchersAsync(stoppingToken);
+                await Task.Delay(RefreshInterval, stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                // Arrêt normal du service hébergé (arrêt de l'application) : rien à signaler.
+                break;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Erreur lors du rafraîchissement des surveillances de dossiers.");
             }
-
-            await Task.Delay(RefreshInterval, stoppingToken);
         }
 
         foreach (var watcher in _watchers.Values) watcher.Dispose();

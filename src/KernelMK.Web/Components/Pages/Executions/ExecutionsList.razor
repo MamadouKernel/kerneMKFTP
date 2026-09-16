@@ -115,14 +115,14 @@
 <!-- Filters Bar -->
 <div class="kmk-card p-3.5 mb-5 flex flex-col sm:flex-row items-center gap-3 bg-white/95">
     <div class="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full">
-        <select class="kmk-select !py-2 text-xs" @bind="_filterJobId">
+        <select class="kmk-select !py-2 text-xs" @bind="_filterJobId" @bind:after="() => _page = 1">
             <option value="">Tous les jobs</option>
             @foreach (var j in _jobs)
             {
                 <option value="@j.Id">@j.Name</option>
             }
         </select>
-        <select class="kmk-select !py-2 text-xs" @bind="_filterStatus">
+        <select class="kmk-select !py-2 text-xs" @bind="_filterStatus" @bind:after="() => _page = 1">
             <option value="">Tous les statuts</option>
             @foreach (var s in Enum.GetValues<JobStatus>())
             {
@@ -172,7 +172,7 @@ else
                 </tr>
             </thead>
             <tbody>
-                @foreach (var e in Filtered)
+                @foreach (var e in PagedFiltered)
                 {
                     var isRunning = e.Status == JobStatus.EnCours || ExecutionCoordinator.IsExecutionRunning(e.Id);
 
@@ -313,6 +313,7 @@ else
                 }
             </tbody>
         </table>
+        <Pagination @bind-CurrentPage="_page" @bind-PageSize="_pageSize" TotalItems="Filtered.Count()" />
     </div>
 }
 
@@ -325,9 +326,14 @@ else
     private PeriodicTimer? _refreshTimer;
     private CancellationTokenSource? _timerCts;
 
+    private int _page = 1;
+    private int _pageSize = 10;
+
     private IEnumerable<JobExecution> Filtered => _executions.Where(e =>
         (string.IsNullOrWhiteSpace(_filterJobId) || e.JobId.ToString() == _filterJobId) &&
         (string.IsNullOrWhiteSpace(_filterStatus) || e.Status.ToString() == _filterStatus));
+
+    private IEnumerable<JobExecution> PagedFiltered => Filtered.Skip((_page - 1) * _pageSize).Take(_pageSize);
 
     protected override async Task OnInitializedAsync()
     {
@@ -383,6 +389,7 @@ else
     {
         _filterJobId = "";
         _filterStatus = "";
+        _page = 1;
     }
 
     private Task ExportCsv() => ExportAsync("csv");

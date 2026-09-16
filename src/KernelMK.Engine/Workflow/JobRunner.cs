@@ -21,6 +21,14 @@ public class JobRunner : IJobRunner
     private readonly CredentialProtector _credentialProtector;
     private readonly ILogger<JobRunner> _logger;
 
+    /// <summary>Fenêtre de regroupement des notifications répétées (échec/timeout/anomalie) pour un même job :
+    /// une seule alerte externe part par tranche de 30 minutes, même en cas d'échecs à répétition.</summary>
+    private static readonly TimeSpan NotificationGroupingWindow = TimeSpan.FromMinutes(30);
+
+    private const int MinHistoryForDurationAnomaly = 5;
+    private const double DurationAnomalyFactor = 2.0;
+    private static readonly TimeSpan DurationAnomalyFloor = TimeSpan.FromSeconds(30);
+
     public JobRunner(
         IDbContextFactory<AppDbContext> dbFactory,
         StepExecutorFactory executorFactory,
@@ -151,15 +159,16 @@ public class JobRunner : IJobRunner
             {
                 if (timedOut)
                 {
-                    await _notifications.DispatchAsync(job, NotificationEvent.Timeout, execution);
+                    await _notifications.DispatchGroupedAsync(job, NotificationEvent.Timeout, execution, $"{jobId}:{NotificationEvent.Timeout}", NotificationGroupingWindow);
                 }
                 else if (overallSuccess)
                 {
                     await _notifications.DispatchAsync(job, NotificationEvent.Succes, execution);
+                    await CheckDurationAnomalyAsync(job, execution, db, cancellationToken);
                 }
                 else
                 {
-                    await _notifications.DispatchAsync(job, NotificationEvent.Echec, execution);
+                    await _notifications.DispatchGroupedAsync(job, NotificationEvent.Echec, execution, $"{jobId}:{NotificationEvent.Echec}", NotificationGroupingWindow);
                 }
 
                 await TriggerDependentJobsAsync(jobId, execution.Status, cancellationToken);
@@ -305,6 +314,40 @@ public class JobRunner : IJobRunner
         return false;
     }
 
+    /// <summary>
+    /// Compare la durée de l'exécution qui vient de réussir à la moyenne des N dernières exécutions réussies du
+    /// même job. Si elle est anormalement plus longue (au moins <see cref="DurationAnomalyFactor"/> fois la
+    /// moyenne, et au-delà d'un plancher pour ignorer le bruit sur les jobs très courts), déclenche une alerte
+    /// "Anomalie de durée" — signe possible de ralentissement réseau ou de lenteur côté serveur distant.
+    /// </summary>
+    private async Task CheckDurationAnomalyAsync(Job job, JobExecution execution, AppDbContext db, CancellationToken ct)
+    {
+        if (execution.FinishedAt is null) return;
+
+        var currentDuration = execution.FinishedAt.Value - execution.StartedAt;
+        if (currentDuration < DurationAnomalyFloor) return;
+
+        var history = await db.JobExecutions
+            .Where(e => e.JobId == job.Id && e.Status == JobStatus.Succes && e.Id != execution.Id && e.FinishedAt != null)
+            .OrderByDescending(e => e.StartedAt)
+            .Take(20)
+            .Select(e => new { e.StartedAt, e.FinishedAt })
+            .ToListAsync(ct);
+
+        if (history.Count < MinHistoryForDurationAnomaly) return;
+
+        var avgSeconds = history.Average(e => (e.FinishedAt!.Value - e.StartedAt).TotalSeconds);
+        if (avgSeconds <= 0 || currentDuration.TotalSeconds < avgSeconds * DurationAnomalyFactor) return;
+
+        var details = $"Durée inhabituelle : {currentDuration:hh\\:mm\\:ss} contre une moyenne de " +
+            $"{TimeSpan.FromSeconds(avgSeconds):hh\\:mm\\:ss} sur les {history.Count} dernières exécutions réussies — " +
+            "possible ralentissement réseau ou lenteur côté serveur distant.";
+
+        await _notifications.DispatchGroupedAsync(
+            job, NotificationEvent.AnomalieDuree, execution,
+            $"{job.Id}:{NotificationEvent.AnomalieDuree}", NotificationGroupingWindow, details);
+    }
+
     private async Task TriggerDependentJobsAsync(Guid completedJobId, JobStatus finalStatus, CancellationToken ct)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
@@ -323,7 +366,7 @@ public class JobRunner : IJobRunner
         }
     }
 
-    private async Task<(string? Username, string? Secret, string? Host, int? Port, CredentialAuthType AuthType, string? Passphrase)?> ResolveCredentialAsync(JobStep step, AppDbContext db, CancellationToken ct)
+    private async Task<(string? Username, string? Secret, string? Host, int? Port, CredentialAuthType AuthType, string? Passphrase, string? OAuth2ClientId, string? OAuth2TenantId)?> ResolveCredentialAsync(JobStep step, AppDbContext db, CancellationToken ct)
     {
         if (step.CredentialId is null) return null;
 
@@ -332,6 +375,6 @@ public class JobRunner : IJobRunner
 
         var secret = _credentialProtector.Unprotect(credential.EncryptedSecret);
         var passphrase = string.IsNullOrEmpty(credential.EncryptedPassphrase) ? null : _credentialProtector.Unprotect(credential.EncryptedPassphrase);
-        return (credential.Username, secret, credential.Host, credential.Port, credential.AuthType, passphrase);
+        return (credential.Username, secret, credential.Host, credential.Port, credential.AuthType, passphrase, credential.OAuth2ClientId, credential.OAuth2TenantId);
     }
 }

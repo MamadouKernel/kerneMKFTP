@@ -1,0 +1,16 @@
+{
+  "name": "kernelMK - Côte d'Ivoire Terminal",
+  "short_name": "kernelMK",
+  "description": "Supervision des flux EDI et transferts SFTP - Côte d'Ivoire Terminal",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#4f46e5",
+  "icons": [
+    {
+      "src": "/favicon.png",
+      "sizes": "32x32",
+      "type": "image/png"
+    }
+  ]
+}

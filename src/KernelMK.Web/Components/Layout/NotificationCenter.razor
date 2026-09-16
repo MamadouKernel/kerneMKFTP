@@ -1,4 +1,5 @@
 @rendermode InteractiveServer
+@implements IDisposable
 @using Microsoft.AspNetCore.Identity
 @using Microsoft.EntityFrameworkCore
 @using KernelMK.Data.Identity
@@ -257,10 +258,37 @@
     private DateTime _notificationsReadAt = DateTime.MinValue;
     private List<JobExecution> _recentAlerts = new();
     private string? _userId;
+    private PeriodicTimer? _refreshTimer;
+    private CancellationTokenSource? _refreshCts;
 
     protected override async Task OnInitializedAsync()
     {
         await LoadUserAndAlertsAsync();
+
+        // Rafraîchit le badge (nombre de non-lues) et la liste même si l'utilisateur ne rouvre jamais la cloche,
+        // pour ne jamais afficher un compteur figé pendant qu'il navigue sur d'autres pages.
+        _refreshCts = new CancellationTokenSource();
+        _refreshTimer = new PeriodicTimer(TimeSpan.FromSeconds(15));
+        _ = RunPeriodicRefreshAsync(_refreshCts.Token);
+    }
+
+    private async Task RunPeriodicRefreshAsync(CancellationToken ct)
+    {
+        try
+        {
+            while (_refreshTimer is not null && await _refreshTimer.WaitForNextTickAsync(ct))
+            {
+                await InvokeAsync(LoadUserAndAlertsAsync);
+            }
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    public void Dispose()
+    {
+        _refreshCts?.Cancel();
+        _refreshCts?.Dispose();
+        _refreshTimer?.Dispose();
     }
 
     private void ToggleDropdown()

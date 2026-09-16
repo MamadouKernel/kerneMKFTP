@@ -1,0 +1,128 @@
+@* Diagramme visuel 2D d'un pipeline de job : représente l'enchaînement des étapes (fichiers, transferts SFTP/FTP/SMB,
+   scripts, base de données...) sous forme de nœuds reliés par des flèches, pour comprendre en un coup d'œil comment
+   les envois/réceptions sont faits. En mode statique (LiveStatuses = null), affiche juste la configuration. En mode
+   live (LiveStatuses fourni depuis une JobExecution en cours), colore et anime l'étape active. *@
+@using System.Text.Json
+
+<div class="flex items-center gap-1.5 overflow-x-auto pb-2 -mx-1 px-1">
+    @{
+        var ordered = Steps.OrderBy(s => s.Order).ToList();
+    }
+    @for (var i = 0; i < ordered.Count; i++)
+    {
+        var step = ordered[i];
+        var visual = GetVisual(step);
+        StepExecutionStatus? status = LiveStatuses is not null && LiveStatuses.TryGetValue(step.Id, out var s) ? s : null;
+        var isActive = status == StepExecutionStatus.EnCours;
+
+        <div class="flex items-center gap-1.5 shrink-0">
+            <div class="flex flex-col items-center gap-1 w-[76px]" title="@($"{step.Name} ({step.Type})")">
+                <div class="@($"h-11 w-11 rounded-xl border flex items-center justify-center text-[10px] font-bold transition-all {GetNodeClasses(visual, status)} {(isActive ? "animate-pulse shadow-md" : "")}")">
+                    @visual.Code
+                </div>
+                <span class="text-[10px] text-slate-500 text-center truncate w-full">@step.Name</span>
+                @if (visual.DirectionArrow is not null)
+                {
+                    <span class="text-[9px] text-slate-400 text-center truncate w-full" title="@visual.HostLabel">
+                        @visual.DirectionArrow@(visual.HostLabel is not null ? $" {visual.HostLabel}" : "")
+                    </span>
+                }
+            </div>
+
+            @if (i < ordered.Count - 1)
+            {
+                <svg class="@($"h-4 w-4 shrink-0 {(isActive ? "text-brand-400" : "text-slate-300")}")" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+                </svg>
+            }
+        </div>
+    }
+
+    @if (ordered.Count == 0)
+    {
+        <span class="text-xs text-slate-400 italic">Aucune étape configurée pour le moment.</span>
+    }
+</div>
+
+@code {
+    /// <summary>Étapes du job (pas nécessairement triées ; le composant les trie par Order).</summary>
+    [Parameter, EditorRequired] public List<JobStep> Steps { get; set; } = new();
+
+    /// <summary>Statuts en direct par JobStepId (issus d'une JobExecution en cours) ; null = mode aperçu statique.</summary>
+    [Parameter] public Dictionary<Guid, StepExecutionStatus>? LiveStatuses { get; set; }
+
+    private record StepVisual(string Code, string ColorClasses, string? DirectionArrow, string? HostLabel);
+
+    private static readonly HashSet<StepType> TransferTypes = new()
+    {
+        StepType.TransfertFtp, StepType.TransfertFtps, StepType.TransfertSftp, StepType.TransfertSmb, StepType.TransfertHttp
+    };
+
+    private StepVisual GetVisual(JobStep step)
+    {
+        var (code, color) = step.Type switch
+        {
+            StepType.TransfertFtp => ("FTP", "bg-indigo-50 text-indigo-700 border-indigo-200"),
+            StepType.TransfertFtps => ("FTPS", "bg-indigo-50 text-indigo-700 border-indigo-200"),
+            StepType.TransfertSftp => ("SFTP", "bg-indigo-50 text-indigo-700 border-indigo-200"),
+            StepType.TransfertSmb => ("SMB", "bg-indigo-50 text-indigo-700 border-indigo-200"),
+            StepType.TransfertHttp => ("HTTP", "bg-indigo-50 text-indigo-700 border-indigo-200"),
+            StepType.FichierCopier => ("COPY", "bg-amber-50 text-amber-700 border-amber-200"),
+            StepType.FichierDeplacer => ("MOVE", "bg-amber-50 text-amber-700 border-amber-200"),
+            StepType.FichierRenommer => ("REN", "bg-amber-50 text-amber-700 border-amber-200"),
+            StepType.FichierSupprimer => ("DEL", "bg-rose-50 text-rose-700 border-rose-200"),
+            StepType.FichierCompresser => ("ZIP", "bg-amber-50 text-amber-700 border-amber-200"),
+            StepType.FichierDecompresser => ("UNZIP", "bg-amber-50 text-amber-700 border-amber-200"),
+            StepType.FichierVerifier => ("CHK", "bg-amber-50 text-amber-700 border-amber-200"),
+            StepType.BaseDeDonneesRequete => ("SQL", "bg-sky-50 text-sky-700 border-sky-200"),
+            StepType.ScriptSql => ("SQL", "bg-sky-50 text-sky-700 border-sky-200"),
+            StepType.EmailSmtp => ("MAIL", "bg-purple-50 text-purple-700 border-purple-200"),
+            StepType.ReceptionEmailImap => ("IMAP", "bg-purple-50 text-purple-700 border-purple-200"),
+            StepType.Webhook => ("HOOK", "bg-purple-50 text-purple-700 border-purple-200"),
+            StepType.ControleAttente => ("WAIT", "bg-slate-100 text-slate-600 border-slate-200"),
+            StepType.ControleCondition => ("IF", "bg-slate-100 text-slate-600 border-slate-200"),
+            StepType.ControleAppelJob => ("CALL", "bg-slate-100 text-slate-600 border-slate-200"),
+            StepType.EdifactMessage => ("EDI", "bg-teal-50 text-teal-700 border-teal-200"),
+            StepType.ScriptPowerShell => ("PS1", "bg-slate-100 text-slate-600 border-slate-200"),
+            StepType.ScriptPython => ("PY", "bg-slate-100 text-slate-600 border-slate-200"),
+            StepType.ScriptBatch => ("BAT", "bg-slate-100 text-slate-600 border-slate-200"),
+            StepType.CommandeSysteme => ("CMD", "bg-slate-100 text-slate-600 border-slate-200"),
+            _ => ("?", "bg-slate-100 text-slate-500 border-slate-200")
+        };
+
+        string? arrow = null;
+        string? host = null;
+
+        if (TransferTypes.Contains(step.Type))
+        {
+            try
+            {
+                var cfg = JsonSerializer.Deserialize<TransferStepConfig>(step.ConfigJson);
+                if (cfg is not null)
+                {
+                    arrow = cfg.Upload ? "↑ Envoi vers" : "↓ Réception depuis";
+                    host = string.IsNullOrWhiteSpace(cfg.Host) ? null : cfg.Host;
+                }
+            }
+            catch
+            {
+                // Configuration pas encore valide/complète (nouvelle étape) : pas de flèche affichée.
+            }
+        }
+
+        return new StepVisual(code, color, arrow, host);
+    }
+
+    private static string GetNodeClasses(StepVisual visual, StepExecutionStatus? status) => status switch
+    {
+        null => visual.ColorClasses,
+        StepExecutionStatus.Succes => "bg-emerald-50 text-emerald-700 border-emerald-300",
+        StepExecutionStatus.Echec => "bg-rose-50 text-rose-700 border-rose-400",
+        StepExecutionStatus.Timeout => "bg-rose-50 text-rose-700 border-rose-400",
+        StepExecutionStatus.Annule => "bg-slate-100 text-slate-400 border-slate-200",
+        StepExecutionStatus.Ignore => "bg-slate-100 text-slate-400 border-slate-200",
+        StepExecutionStatus.EnCours => "bg-brand-50 text-brand-700 border-brand-400",
+        StepExecutionStatus.EnAttente => "bg-slate-50 text-slate-400 border-slate-200",
+        _ => visual.ColorClasses
+    };
+}

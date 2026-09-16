@@ -1,0 +1,668 @@
+@page "/rapport-flux"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = "Administrateur,Superviseur,Exploitant,Developpeur,Auditeur")]
+@using Microsoft.EntityFrameworkCore
+@using System.Text
+@using System.Text.Json
+@using ClosedXML.Excel
+@using QuestPDF.Fluent
+@using QuestPDF.Helpers
+@using QuestPDF.Infrastructure
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject IJSRuntime JS
+
+<PageTitle>Rapport des flux · kernelMK</PageTitle>
+
+<div class="mb-6">
+    <h1 class="mb-1">Rapport des flux par job &amp; armateur</h1>
+    <p class="text-sm text-slate-500">
+        Nombre de fichiers envoyés et reçus, par jour, par job et par armateur/partenaire.
+    </p>
+</div>
+
+<div class="kmk-card p-3.5 mb-5 flex flex-col md:flex-row md:items-end gap-3">
+    <div>
+        <label class="kmk-label">Du</label>
+        <input type="date" class="kmk-input !py-2 text-xs" @bind="_dateFrom" @bind:after="LoadAsync" />
+    </div>
+    <div>
+        <label class="kmk-label">Au</label>
+        <input type="date" class="kmk-input !py-2 text-xs" @bind="_dateTo" @bind:after="LoadAsync" />
+    </div>
+    <div class="flex-1 min-w-[180px]">
+        <label class="kmk-label">Job</label>
+        <select class="kmk-select !py-2 text-xs" @bind="_filterJob" @bind:after="LoadAsync">
+            <option value="">Tous les jobs</option>
+            @foreach (var j in _jobNames)
+            {
+                <option value="@j">@j</option>
+            }
+        </select>
+    </div>
+    <div class="flex-1 min-w-[180px]">
+        <label class="kmk-label">Armateur / Partenaire</label>
+        <select class="kmk-select !py-2 text-xs" @bind="_filterArmateur" @bind:after="LoadAsync">
+            <option value="">Tous les armateurs</option>
+            @foreach (var a in _armateurNames)
+            {
+                <option value="@a">@a</option>
+            }
+        </select>
+    </div>
+</div>
+
+@if (_loading)
+{
+    <div class="kmk-card p-12 flex flex-col items-center justify-center gap-3 text-sm text-slate-500">
+        <svg class="animate-spin h-6 w-6 text-brand-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+        </svg>
+        <span>Chargement du rapport...</span>
+    </div>
+}
+else
+{
+    <div class="flex items-center justify-between mb-2.5">
+        <h2 class="text-sm font-bold text-slate-800">Vue par partenaire — connexions &amp; dépôts</h2>
+        <div class="flex items-center gap-1.5 shrink-0">
+            <button type="button" @onclick="ExportSummaryCsv" class="kmk-btn-secondary text-[11px] py-1 px-2.5 shadow-xs">CSV</button>
+            <button type="button" @onclick="ExportSummaryExcel" class="kmk-btn-secondary text-[11px] py-1 px-2.5 shadow-xs">Excel</button>
+            <button type="button" @onclick="ExportSummaryPdf" class="kmk-btn-secondary text-[11px] py-1 px-2.5 shadow-xs">PDF</button>
+        </div>
+    </div>
+
+    @if (_summaryRows.Count == 0)
+    {
+        <div class="kmk-card p-8 mb-6 text-center text-slate-400">
+            <p class="text-sm">Aucun job de transfert configuré, ou filtres ne correspondant à aucun partenaire.</p>
+        </div>
+    }
+    else
+    {
+        <div class="kmk-table-container mb-6">
+            <table class="kmk-table">
+                <thead>
+                    <tr>
+                        <th class="min-w-[200px]">Job</th>
+                        <th class="min-w-[160px]">Armateur / Partenaire</th>
+                        <th class="min-w-[150px]">Dernière activité</th>
+                        <th class="min-w-[130px]">Connexions réussies</th>
+                        <th class="min-w-[130px]">Connexions échouées</th>
+                        <th class="min-w-[110px]">Taux de succès</th>
+                        <th class="min-w-[150px]">Aucun fichier trouvé</th>
+                        <th class="min-w-[160px]">Dernier envoi</th>
+                        <th class="min-w-[110px]">Total envoyés</th>
+                        <th class="min-w-[160px]">Dernière réception</th>
+                        <th class="min-w-[110px]">Total reçus</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in PagedSummaryRows)
+                    {
+                        <tr>
+                            <td class="text-sm font-semibold text-slate-900">@row.JobName</td>
+                            <td class="text-sm text-slate-700">@row.Armateur</td>
+                            <td>
+                                @{ var (silenceLabel, silenceClass) = FormatSilence(row.DerniereActivite); }
+                                <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold @silenceClass">
+                                    @silenceLabel
+                                </span>
+                            </td>
+                            <td class="text-sm font-bold text-emerald-600">@row.ConnexionsReussies</td>
+                            <td class="text-sm font-bold @(row.ConnexionsEchouees > 0 ? "text-red-600" : "text-slate-400")">@row.ConnexionsEchouees</td>
+                            <td class="text-sm font-bold @SuccessRateClass(row.TauxSucces)">@(row.TauxSucces.HasValue ? $"{row.TauxSucces.Value:0}%" : "—")</td>
+                            <td class="text-xs text-slate-500">@(row.AucunFichierDisponible > 0 ? $"{row.AucunFichierDisponible} fois" : "—")</td>
+                            <td class="text-xs font-mono text-slate-600">@(row.DernierEnvoi.HasValue ? row.DernierEnvoi.Value.ToString("dd/MM/yyyy HH:mm:ss") : "—")</td>
+                            <td class="text-sm font-bold text-emerald-600">@row.TotalEnvoyes</td>
+                            <td class="text-xs font-mono text-slate-600">@(row.DerniereReception.HasValue ? row.DerniereReception.Value.ToString("dd/MM/yyyy HH:mm:ss") : "—")</td>
+                            <td class="text-sm font-bold text-sky-600">@row.TotalRecus</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            <Pagination @bind-CurrentPage="_summaryPage" @bind-PageSize="_summaryPageSize" TotalItems="_summaryRows.Count" />
+        </div>
+        <p class="text-xs text-slate-400 mb-6 -mt-4">
+            « Dernière activité » : tous fichiers confondus, indépendamment de la période sélectionnée ci-dessus
+            (orange dès 3 jours sans échange, rouge dès 7 jours). « Taux de succès » : connexions réussies /
+            tentatives totales sur la période affichée. « Aucun fichier trouvé » : connexion réussie mais rien ne
+            correspondait au filtre de récupération à ce moment-là. « Connexions échouées » : échec réel
+            (authentification, réseau, hôte injoignable...).
+        </p>
+    }
+
+    <div class="flex items-center justify-between mb-2.5">
+        <h2 class="text-sm font-bold text-slate-800">Détail par jour</h2>
+        <div class="flex items-center gap-1.5 shrink-0">
+            <button type="button" @onclick="ExportDetailCsv" class="kmk-btn-secondary text-[11px] py-1 px-2.5 shadow-xs">CSV</button>
+            <button type="button" @onclick="ExportDetailExcel" class="kmk-btn-secondary text-[11px] py-1 px-2.5 shadow-xs">Excel</button>
+            <button type="button" @onclick="ExportDetailPdf" class="kmk-btn-secondary text-[11px] py-1 px-2.5 shadow-xs">PDF</button>
+        </div>
+    </div>
+
+    @if (_rows.Count == 0)
+    {
+        <div class="kmk-card p-8 text-center text-slate-400">
+            <p class="text-sm">Aucun fichier échangé sur la période et les filtres sélectionnés.</p>
+        </div>
+    }
+    else
+    {
+        <div class="kmk-table-container">
+            <table class="kmk-table">
+                <thead>
+                    <tr>
+                        <th class="min-w-[110px]">Date</th>
+                        <th class="min-w-[200px]">Job</th>
+                        <th class="min-w-[160px]">Armateur / Partenaire</th>
+                        <th class="min-w-[120px]">Envoyés ⬆️</th>
+                        <th class="min-w-[120px]">Reçus ⬇️</th>
+                        <th class="min-w-[100px]">Total</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in PagedRows)
+                    {
+                        <tr>
+                            <td class="text-xs font-mono text-slate-600">@row.Date.ToString("dd/MM/yyyy")</td>
+                            <td class="text-sm font-semibold text-slate-900">@row.JobName</td>
+                            <td class="text-sm text-slate-700">@row.Armateur</td>
+                            <td class="text-sm font-bold text-emerald-600">@row.Envoyes</td>
+                            <td class="text-sm font-bold text-sky-600">@row.Recus</td>
+                            <td class="text-sm font-bold text-slate-900">@(row.Envoyes + row.Recus)</td>
+                        </tr>
+                    }
+                </tbody>
+                <tfoot>
+                    <tr class="bg-slate-50 font-bold">
+                        <td colspan="3" class="text-right text-xs text-slate-500 pr-3">Total période :</td>
+                        <td class="text-emerald-700">@_rows.Sum(r => r.Envoyes)</td>
+                        <td class="text-sky-700">@_rows.Sum(r => r.Recus)</td>
+                        <td class="text-slate-900">@_rows.Sum(r => r.Envoyes + r.Recus)</td>
+                    </tr>
+                </tfoot>
+            </table>
+            <Pagination @bind-CurrentPage="_detailPage" @bind-PageSize="_detailPageSize" TotalItems="_rows.Count" />
+        </div>
+    }
+}
+
+@code {
+    private record FluxRow(DateOnly Date, string JobName, string Armateur, int Envoyes, int Recus);
+
+    private record PartnerSummary(
+        string JobName, string Armateur,
+        int ConnexionsReussies, int ConnexionsEchouees, int AucunFichierDisponible,
+        DateTime? DernierEnvoi, int TotalEnvoyes,
+        DateTime? DerniereReception, int TotalRecus,
+        DateTime? DerniereActivite)
+    {
+        public double? TauxSucces => (ConnexionsReussies + ConnexionsEchouees) > 0
+            ? 100.0 * ConnexionsReussies / (ConnexionsReussies + ConnexionsEchouees)
+            : null;
+    }
+
+    private const string NoMatchingFileMarker = "Aucun fichier ne correspond au filtre";
+    private const int SilenceAttentionDays = 3;
+    private const int SilenceAlerteDays = 7;
+
+    private List<FluxRow> _rows = new();
+    private int _detailPage = 1;
+    private int _detailPageSize = 10;
+    private IEnumerable<FluxRow> PagedRows => _rows.Skip((_detailPage - 1) * _detailPageSize).Take(_detailPageSize);
+    private List<PartnerSummary> _summaryRows = new();
+    private int _summaryPage = 1;
+    private int _summaryPageSize = 10;
+    private IEnumerable<PartnerSummary> PagedSummaryRows => _summaryRows.Skip((_summaryPage - 1) * _summaryPageSize).Take(_summaryPageSize);
+    private List<string> _jobNames = new();
+    private List<string> _armateurNames = new();
+    private bool _loading = true;
+
+    private DateTime _dateFrom = DateTime.Today.AddDays(-30);
+    private DateTime _dateTo = DateTime.Today;
+    private string _filterJob = "";
+    private string _filterArmateur = "";
+
+    private static readonly HashSet<StepType> TransferTypes = new()
+    {
+        StepType.TransfertFtp, StepType.TransfertFtps, StepType.TransfertSftp, StepType.TransfertSmb
+    };
+
+    private static readonly HashSet<StepType> FileOpsTypes = new()
+    {
+        StepType.FichierCopier, StepType.FichierDeplacer, StepType.FichierRenommer, StepType.FichierDecompresser
+    };
+
+    private static bool IsUncPath(string? path) => !string.IsNullOrWhiteSpace(path) && path.StartsWith(@"\\", StringComparison.Ordinal);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        // Bornes en UTC (fin de journée incluse) pour couvrir toute la période sélectionnée, quel que soit le fuseau du serveur.
+        var fromUtc = DateTime.SpecifyKind(_dateFrom.Date, DateTimeKind.Utc);
+        var toUtc = DateTime.SpecifyKind(_dateTo.Date.AddDays(1), DateTimeKind.Utc);
+
+        var transferSteps = await db.JobSteps
+            .Include(s => s.Job)
+            .Include(s => s.Credential)
+            .Where(s => TransferTypes.Contains(s.Type) || FileOpsTypes.Contains(s.Type)
+                     || s.Type == StepType.EmailSmtp || s.Type == StepType.ReceptionEmailImap)
+            .ToListAsync();
+
+        var stepInfo = new Dictionary<Guid, (string JobName, string Armateur, bool Upload)>();
+        foreach (var step in transferSteps)
+        {
+            if (step.Job is null) continue;
+
+            if (TransferTypes.Contains(step.Type))
+            {
+                try
+                {
+                    var cfg = JsonSerializer.Deserialize<TransferStepConfig>(step.ConfigJson);
+                    var armateur = cfg?.Armateur;
+                    if (string.IsNullOrWhiteSpace(armateur))
+                    {
+                        armateur = DetectArmateur(step.Credential?.Name, step.Job.Name, step.Name);
+                    }
+                    stepInfo[step.Id] = (step.Job.Name, armateur, cfg?.Upload ?? true);
+                }
+                catch
+                {
+                    stepInfo[step.Id] = (step.Job.Name, DetectArmateur(step.Job.Name, step.Name), true);
+                }
+                continue;
+            }
+
+            // Étape Fichier (Copier/Déplacer/Renommer/Décompresser) : ne remonte dans le rapport que si un des
+            // deux chemins est un partage UNC (\\serveur\partage\...) — c'est ce côté qui indique un échange
+            // avec un partenaire plutôt qu'une simple opération locale. Destination UNC = envoi ; Source UNC = réception.
+            try
+            {
+                var fcfg = JsonSerializer.Deserialize<FileOpStepConfig>(step.ConfigJson);
+                if (fcfg is null) continue;
+
+                var isUpload = IsUncPath(fcfg.DestinationPath);
+                var isDownload = IsUncPath(fcfg.SourcePath);
+                if (!isUpload && !isDownload) continue;
+
+                var armateur = fcfg.Armateur;
+                if (string.IsNullOrWhiteSpace(armateur))
+                {
+                    armateur = DetectArmateur(step.Credential?.Name, step.Job.Name, step.Name);
+                }
+                if (string.IsNullOrWhiteSpace(armateur)) continue;
+
+                stepInfo[step.Id] = (step.Job.Name, armateur, isUpload);
+            }
+            catch { }
+        }
+
+        // Canal SMTP : envoi (EmailSmtp) ou relève (ReceptionEmailImap) taguée d'un armateur — voir
+        // EmailStepConfig.Armateur / EmailReceptionStepConfig.Armateur. L'exécuteur de relève IMAP remplit déjà
+        // FilesProcessedCsv avec les pièces jointes téléchargées, donc ce canal s'intègre directement dans le
+        // même modèle d'agrégation "fichiers envoyés/reçus" que les transferts SFTP/FTP.
+        foreach (var step in transferSteps.Where(s => s.Type == StepType.EmailSmtp))
+        {
+            if (step.Job is null) continue;
+            try
+            {
+                var mcfg = JsonSerializer.Deserialize<EmailStepConfig>(step.ConfigJson);
+                if (string.IsNullOrWhiteSpace(mcfg?.Armateur)) continue;
+                stepInfo[step.Id] = (step.Job.Name, mcfg.Armateur, true);
+            }
+            catch { }
+        }
+        foreach (var step in transferSteps.Where(s => s.Type == StepType.ReceptionEmailImap))
+        {
+            if (step.Job is null) continue;
+            try
+            {
+                var mrcfg = JsonSerializer.Deserialize<EmailReceptionStepConfig>(step.ConfigJson);
+                if (string.IsNullOrWhiteSpace(mrcfg?.Armateur)) continue;
+                stepInfo[step.Id] = (step.Job.Name, mrcfg.Armateur, false);
+            }
+            catch { }
+        }
+
+        // Tous les statuts sont chargés (pas seulement les succès) : les échecs et les "aucun fichier
+        // trouvé" sont nécessaires pour compter les tentatives de connexion au serveur distant.
+        var logs = await db.StepExecutionLogs
+            .Where(l => l.StartedAt >= fromUtc && l.StartedAt < toUtc)
+            .ToListAsync();
+
+        // Dernière activité tous-temps (hors filtre de période) : un superviseur veut savoir "depuis quand on
+        // n'a rien reçu de cet armateur" même s'il a resserré la période affichée à quelques jours.
+        // Regroupé par étape et agrégé côté base (MAX) plutôt que de rapatrier tout l'historique en mémoire —
+        // cette requête ne grandit pas avec le volume total de logs au fil des années.
+        var lastSuccessLogs = await db.StepExecutionLogs
+            .Where(l => l.Status == StepExecutionStatus.Succes && l.FilesProcessedCsv != null && l.FilesProcessedCsv != "")
+            .GroupBy(l => l.JobStepId)
+            .Select(g => new { JobStepId = g.Key, FinishedAt = g.Max(l => (DateTime?)(l.FinishedAt ?? l.StartedAt)), StartedAt = g.Max(l => l.StartedAt) })
+            .ToListAsync();
+
+        var globalLastDict = new Dictionary<(string Job, string Armateur), (DateTime? DernierEnvoi, DateTime? DerniereReception)>();
+        foreach (var log in lastSuccessLogs)
+        {
+            if (!stepInfo.TryGetValue(log.JobStepId, out var info)) continue;
+            var when = (log.FinishedAt ?? log.StartedAt).ToLocalTime();
+            var key = (info.JobName, info.Armateur);
+            globalLastDict.TryGetValue(key, out var last);
+            globalLastDict[key] = info.Upload
+                ? (last.DernierEnvoi is null || when > last.DernierEnvoi ? when : last.DernierEnvoi, last.DerniereReception)
+                : (last.DernierEnvoi, last.DerniereReception is null || when > last.DerniereReception ? when : last.DerniereReception);
+        }
+
+        var dict = new Dictionary<(DateOnly Date, string Job, string Armateur), (int Envoyes, int Recus)>();
+        var summaryDict = new Dictionary<(string Job, string Armateur), (int Reussies, int Echouees, int AucunFichier, int TotalEnvoyes, int TotalRecus)>();
+
+        foreach (var log in logs)
+        {
+            if (!stepInfo.TryGetValue(log.JobStepId, out var info)) continue;
+
+            var when = (log.FinishedAt ?? log.StartedAt).ToLocalTime();
+
+            // "Aucun fichier ne correspond au filtre" : le job s'est bien connecté et a listé le dossier
+            // distant, mais rien ne correspondait au filtre à ce moment-là — ce n'est pas un échec de connexion.
+            var noMatchingFiles = log.Status == StepExecutionStatus.Echec
+                && (log.ErrorOutput?.Contains(NoMatchingFileMarker, StringComparison.OrdinalIgnoreCase) ?? false);
+            var connected = log.Status == StepExecutionStatus.Succes || noMatchingFiles;
+
+            var summaryKey = (info.JobName, info.Armateur);
+            summaryDict.TryGetValue(summaryKey, out var summary);
+
+            var reussies = summary.Reussies + (connected ? 1 : 0);
+            var echouees = summary.Echouees + (!connected && log.Status == StepExecutionStatus.Echec ? 1 : 0);
+            var aucunFichier = summary.AucunFichier + (noMatchingFiles ? 1 : 0);
+            var totalEnvoyes = summary.TotalEnvoyes;
+            var totalRecus = summary.TotalRecus;
+
+            if (log.Status == StepExecutionStatus.Succes && !string.IsNullOrEmpty(log.FilesProcessedCsv))
+            {
+                var files = log.FilesProcessedCsv.Split(new[] { ';', ',' }, StringSplitOptions.RemoveEmptyEntries);
+                if (files.Length > 0)
+                {
+                    if (info.Upload) totalEnvoyes += files.Length;
+                    else totalRecus += files.Length;
+
+                    var date = DateOnly.FromDateTime(when);
+                    var dailyKey = (date, info.JobName, info.Armateur);
+                    dict.TryGetValue(dailyKey, out var counts);
+                    dict[dailyKey] = info.Upload
+                        ? (counts.Envoyes + files.Length, counts.Recus)
+                        : (counts.Envoyes, counts.Recus + files.Length);
+                }
+            }
+
+            summaryDict[summaryKey] = (reussies, echouees, aucunFichier, totalEnvoyes, totalRecus);
+        }
+
+        // Toutes les paires (job, armateur) configurées apparaissent, même sans la moindre connexion sur la
+        // période sélectionnée — c'est justement ce silence qui doit remonter aux superviseurs.
+        var allPartnerKeys = stepInfo.Values.Select(v => (v.JobName, v.Armateur)).Distinct();
+
+        var allRows = dict.Select(kv => new FluxRow(kv.Key.Date, kv.Key.Job, kv.Key.Armateur, kv.Value.Envoyes, kv.Value.Recus));
+        var allSummaryRows = allPartnerKeys.Select(key =>
+        {
+            summaryDict.TryGetValue(key, out var s);
+            globalLastDict.TryGetValue(key, out var last);
+            var derniereActivite = (last.DernierEnvoi, last.DerniereReception) switch
+            {
+                (null, null) => (DateTime?)null,
+                (var e, null) => e,
+                (null, var r) => r,
+                (var e, var r) => e > r ? e : r
+            };
+            return new PartnerSummary(
+                key.JobName, key.Armateur,
+                s.Reussies, s.Echouees, s.AucunFichier,
+                last.DernierEnvoi, s.TotalEnvoyes,
+                last.DerniereReception, s.TotalRecus,
+                derniereActivite);
+        });
+
+        if (!string.IsNullOrWhiteSpace(_filterJob))
+        {
+            allRows = allRows.Where(r => r.JobName == _filterJob);
+            allSummaryRows = allSummaryRows.Where(r => r.JobName == _filterJob);
+        }
+        if (!string.IsNullOrWhiteSpace(_filterArmateur))
+        {
+            allRows = allRows.Where(r => r.Armateur == _filterArmateur);
+            allSummaryRows = allSummaryRows.Where(r => r.Armateur == _filterArmateur);
+        }
+
+        _rows = allRows.OrderByDescending(r => r.Date).ThenBy(r => r.JobName).ThenBy(r => r.Armateur).ToList();
+        // Les partenaires les plus silencieux (jamais vus, ou vus il y a le plus longtemps) remontent en premier.
+        _summaryRows = allSummaryRows.OrderBy(r => r.DerniereActivite ?? DateTime.MinValue).ThenBy(r => r.JobName).ThenBy(r => r.Armateur).ToList();
+
+        _jobNames = stepInfo.Values.Select(v => v.JobName).Distinct().OrderBy(n => n).ToList();
+        _armateurNames = stepInfo.Values.Select(v => v.Armateur).Distinct().OrderBy(n => n).ToList();
+
+        _loading = false;
+    }
+
+    private static (string Label, string CssClass) FormatSilence(DateTime? derniereActivite)
+    {
+        if (derniereActivite is null)
+        {
+            return ("Jamais", "bg-red-100 text-red-700");
+        }
+
+        var days = (DateTime.Now - derniereActivite.Value).TotalDays;
+        var label = days < 1 ? "Aujourd'hui" : $"Il y a {(int)days} j";
+
+        if (days >= SilenceAlerteDays) return (label, "bg-red-100 text-red-700");
+        if (days >= SilenceAttentionDays) return (label, "bg-amber-100 text-amber-700");
+        return (label, "bg-emerald-100 text-emerald-700");
+    }
+
+    private static string SuccessRateClass(double? tauxSucces)
+    {
+        if (tauxSucces is null) return "text-slate-400";
+        if (tauxSucces >= 90) return "text-emerald-600";
+        if (tauxSucces >= 70) return "text-amber-600";
+        return "text-red-600";
+    }
+
+    private static string DetectArmateur(params string?[] candidates)
+    {
+        var known = new[] { "GUCE", "MSC", "CMA CGM", "CMA-CGM", "MAERSK", "HAPAG-LLOYD", "HAPAG", "COSCO", "ONE", "GRIMALDI", "PIL", "ARKAS", "BOLUDA" };
+        foreach (var text in candidates)
+        {
+            if (string.IsNullOrWhiteSpace(text)) continue;
+            foreach (var k in known)
+            {
+                if (text.Contains(k, StringComparison.OrdinalIgnoreCase)) return k.ToUpper();
+            }
+        }
+        var fallback = candidates.FirstOrDefault(c => !string.IsNullOrWhiteSpace(c));
+        return !string.IsNullOrWhiteSpace(fallback) ? fallback.Trim() : "Partenaire Général";
+    }
+
+    private static readonly string[] DetailHeaders = { "Date", "Job", "Armateur", "Fichiers Envoyés", "Fichiers Reçus", "Total" };
+
+    private static string[] DetailRowToArray(FluxRow row) => new[]
+    {
+        row.Date.ToString("dd/MM/yyyy"), row.JobName, row.Armateur,
+        row.Envoyes.ToString(), row.Recus.ToString(), (row.Envoyes + row.Recus).ToString()
+    };
+
+    private static readonly string[] SummaryHeaders =
+    {
+        "Job", "Armateur", "Dernière activité", "Connexions réussies", "Connexions échouées",
+        "Taux de succès", "Aucun fichier trouvé", "Dernier envoi", "Total envoyés", "Dernière réception", "Total reçus"
+    };
+
+    private static string[] SummaryRowToArray(PartnerSummary row) => new[]
+    {
+        row.JobName, row.Armateur,
+        row.DerniereActivite.HasValue ? row.DerniereActivite.Value.ToString("dd/MM/yyyy HH:mm:ss") : "Jamais",
+        row.ConnexionsReussies.ToString(), row.ConnexionsEchouees.ToString(),
+        row.TauxSucces.HasValue ? $"{row.TauxSucces.Value:0}%" : "—",
+        row.AucunFichierDisponible.ToString(),
+        row.DernierEnvoi.HasValue ? row.DernierEnvoi.Value.ToString("dd/MM/yyyy HH:mm:ss") : "—",
+        row.TotalEnvoyes.ToString(),
+        row.DerniereReception.HasValue ? row.DerniereReception.Value.ToString("dd/MM/yyyy HH:mm:ss") : "—",
+        row.TotalRecus.ToString()
+    };
+
+    private async Task ExportDetailCsv() =>
+        await DownloadAsync(BuildCsv(DetailHeaders, _rows.Select(DetailRowToArray)), "text/csv;charset=utf-8", "rapport-flux-cit", "csv");
+
+    private async Task ExportDetailExcel() =>
+        await DownloadAsync(BuildExcel("Détail par jour", DetailHeaders, _rows.Select(DetailRowToArray)),
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "rapport-flux-cit", "xlsx");
+
+    private async Task ExportDetailPdf() =>
+        await DownloadAsync(BuildPdf("Rapport des flux — Détail par jour", DetailHeaders, _rows.Select(DetailRowToArray)),
+            "application/pdf", "rapport-flux-cit", "pdf");
+
+    private async Task ExportSummaryCsv() =>
+        await DownloadAsync(BuildCsv(SummaryHeaders, _summaryRows.Select(SummaryRowToArray)), "text/csv;charset=utf-8", "rapport-partenaires-cit", "csv");
+
+    private async Task ExportSummaryExcel() =>
+        await DownloadAsync(BuildExcel("Vue par partenaire", SummaryHeaders, _summaryRows.Select(SummaryRowToArray)),
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "rapport-partenaires-cit", "xlsx");
+
+    private async Task ExportSummaryPdf() =>
+        await DownloadAsync(BuildPdf("Rapport des flux — Vue par partenaire", SummaryHeaders, _summaryRows.Select(SummaryRowToArray)),
+            "application/pdf", "rapport-partenaires-cit", "pdf");
+
+    private async Task DownloadAsync(byte[] bytes, string mimeType, string fileNamePrefix, string extension)
+    {
+        var base64 = Convert.ToBase64String(bytes);
+        var fileName = $"{fileNamePrefix}-{DateTime.Now:yyyyMMdd-HHmm}.{extension}";
+        await JS.InvokeVoidAsync("kernelMK.downloadFile", fileName, mimeType, base64);
+    }
+
+    private static byte[] BuildCsv(string[] headers, IEnumerable<string[]> rows)
+    {
+        var sb = new StringBuilder();
+        sb.Append('﻿');
+        sb.AppendLine(string.Join(';', headers.Select(EscapeCsv)));
+        foreach (var row in rows)
+        {
+            sb.AppendLine(string.Join(';', row.Select(EscapeCsv)));
+        }
+        return Encoding.UTF8.GetBytes(sb.ToString());
+    }
+
+    private static byte[] BuildExcel(string sheetName, string[] headers, IEnumerable<string[]> rows)
+    {
+        using var wb = new XLWorkbook();
+        var ws = wb.Worksheets.Add(sheetName);
+
+        for (var c = 0; c < headers.Length; c++)
+        {
+            ws.Cell(1, c + 1).Value = headers[c];
+        }
+        ws.Row(1).Style.Font.Bold = true;
+        ws.Row(1).Style.Fill.BackgroundColor = XLColor.FromArgb(241, 245, 249);
+        ws.SheetView.FreezeRows(1);
+
+        var r = 2;
+        foreach (var row in rows)
+        {
+            for (var c = 0; c < row.Length; c++)
+            {
+                // Même neutralisation que le CSV (voir EscapeCsv) : par défense en profondeur, on ne laisse
+                // jamais une cellule commencer par =, +, -, @ ou une tabulation, même si le format .xlsx
+                // stocke le texte comme littéral (moins exposé que le CSV, mais pas nul selon le lecteur).
+                ws.Cell(r, c + 1).Value = EscapeSpreadsheetLeadingChar(row[c]);
+            }
+            r++;
+        }
+
+        ws.Columns().AdjustToContents();
+
+        using var ms = new MemoryStream();
+        wb.SaveAs(ms);
+        return ms.ToArray();
+    }
+
+    private static byte[] BuildPdf(string title, string[] headers, IEnumerable<string[]> rows)
+    {
+        static IContainer HeaderCellStyle(IContainer c) => c.Background(Colors.Grey.Lighten3).Padding(4)
+            .BorderBottom(1).BorderColor(Colors.Grey.Medium).DefaultTextStyle(t => t.Bold());
+        static IContainer BodyCellStyle(IContainer c) => c.Padding(4).BorderBottom(0.5f).BorderColor(Colors.Grey.Lighten2);
+
+        var document = Document.Create(container =>
+        {
+            container.Page(page =>
+            {
+                page.Size(PageSizes.A4.Landscape());
+                page.Margin(24);
+                page.DefaultTextStyle(x => x.FontSize(8));
+
+                page.Header().Column(col =>
+                {
+                    col.Item().Text(title).FontSize(13).Bold();
+                    col.Item().Text($"kernelMK · Côte d'Ivoire Terminal · Généré le {DateTime.Now:dd/MM/yyyy HH:mm}")
+                        .FontSize(8).FontColor(Colors.Grey.Darken1);
+                    col.Item().PaddingTop(8);
+                });
+
+                page.Content().Table(table =>
+                {
+                    table.ColumnsDefinition(columns =>
+                    {
+                        foreach (var _ in headers) columns.RelativeColumn();
+                    });
+
+                    table.Header(header =>
+                    {
+                        foreach (var h in headers)
+                        {
+                            header.Cell().Element(HeaderCellStyle).Text(h);
+                        }
+                    });
+
+                    foreach (var row in rows)
+                    {
+                        foreach (var cell in row)
+                        {
+                            table.Cell().Element(BodyCellStyle).Text(cell);
+                        }
+                    }
+                });
+
+                page.Footer().AlignCenter().Text(x =>
+                {
+                    x.CurrentPageNumber();
+                    x.Span(" / ");
+                    x.TotalPages();
+                });
+            });
+        });
+
+        return document.GeneratePdf();
+    }
+
+    private static string EscapeCsv(string value)
+    {
+        value = EscapeSpreadsheetLeadingChar(value);
+
+        if (value.Contains(';') || value.Contains('"') || value.Contains('\n') || value.Contains('\r'))
+        {
+            return string.Concat("\"", value.Replace("\"", "\"\""), "\"");
+        }
+        return value;
+    }
+
+    /// <summary>
+    /// Neutralise l'injection de formule (CSV/Excel) : un tableur peut interpréter toute cellule commençant
+    /// par =, +, -, @ ou une tabulation comme une formule à exécuter à l'ouverture. Appliqué à la fois au CSV
+    /// (où le risque est direct) et à l'Excel généré via ClosedXML (où .xlsx stocke normalement le texte comme
+    /// littéral, mais on neutralise quand même par défense en profondeur, le comportement variant selon le lecteur).
+    /// </summary>
+    private static string EscapeSpreadsheetLeadingChar(string value) =>
+        value.Length > 0 && (value[0] is '=' or '+' or '-' or '@' or '\t') ? "'" + value : value;
+}

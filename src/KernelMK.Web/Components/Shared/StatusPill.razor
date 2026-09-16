@@ -1,0 +1,18 @@
+@* Petite bulle de statut colorée, utilisée par EdiLifecycleDiagram (et réutilisable ailleurs). *@
+<span class="@ColorClasses px-2.5 py-1 rounded-full text-[10px] sm:text-[11px] font-bold whitespace-nowrap" title="@Title">
+    @Text
+</span>
+
+@code {
+    [Parameter, EditorRequired] public string Text { get; set; } = "";
+    [Parameter] public string Color { get; set; } = "slate";
+    [Parameter] public string? Title { get; set; }
+
+    private string ColorClasses => Color switch
+    {
+        "rose" => "bg-rose-50 text-rose-700 border border-rose-200",
+        "amber" => "bg-amber-50 text-amber-700 border border-amber-200",
+        "emerald" => "bg-emerald-50 text-emerald-700 border border-emerald-200",
+        _ => "bg-slate-100 text-slate-600 border border-slate-200"
+    };
+}

@@ -25,6 +25,9 @@ public enum TriggerType
     Cron,
     Calendrier,
     EvenementDossier,
+    /// <summary>Non implémenté : jamais évalué par le scheduler et non sélectionnable dans l'UI (JobEdit.razor).
+    /// Le chaînage job-à-job est géré par l'entité JobDependency, indépendante du système de déclencheurs — ne
+    /// pas renuméroter cette valeur (stockée en entier en base) sans migration des JobTrigger existants.</summary>
     DependanceJob,
     Demarrage,
     Api,
@@ -70,7 +73,11 @@ public enum StepType
     ControleAttente,
     ControleCondition,
     ControleAppelJob,
-    EdifactMessage
+    EdifactMessage,
+    /// <summary>Relève d'une boîte mail par IMAP : télécharge les pièces jointes (EDI...) correspondant aux filtres, pour un traitement ultérieur (ex. étape EdifactMessage en Analyse).</summary>
+    ReceptionEmailImap,
+    /// <summary>Exécute un fichier .robot (Robot Framework) via la commande "robot" — automatisation RPA (ex. saisie répétitive sur une interface web GUCE/TOS). Nécessite Python + le paquet robotframework installés sur le serveur.</summary>
+    RpaRobotFramework
 }
 
 /// <summary>Messages EDIFACT du transport maritime/portuaire pris en charge.</summary>
@@ -132,7 +139,13 @@ public enum NotificationEvent
     Timeout,
     FichierAbsent,
     ConnexionImpossible,
-    JobDesactive
+    JobDesactive,
+    /// <summary>Déclencheur planifié (Horaire/Cron/Calendrier) lancé avec un retard anormal — signe possible
+    /// que le service kernelMK a été interrompu (redémarrage serveur, arrêt du service Windows...) pendant la fenêtre attendue.</summary>
+    JobManquant,
+    /// <summary>Exécution réussie mais significativement plus longue que la moyenne historique du job —
+    /// signe possible de ralentissement réseau ou de lenteur côté serveur distant.</summary>
+    AnomalieDuree
 }
 
 public enum AppRole

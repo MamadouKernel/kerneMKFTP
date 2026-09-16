@@ -6,8 +6,12 @@
 @inject UserManager<ApplicationUser> UserManager
 @inject IDbContextFactory<AppDbContext> DbFactory
 @inject NavigationManager NavigationManager
+@inject IJSRuntime JS
 
 <div class="min-h-screen flex bg-slate-50">
+    <AuthorizeView>
+        <Authorized><GlobalSearch /></Authorized>
+    </AuthorizeView>
     <NavMenu />
 
     <div class="flex-1 min-w-0 flex flex-col">
@@ -55,6 +59,24 @@
                         <span>Système nominal</span>
                     </div>
                 }
+
+                <!-- Recherche globale (Ctrl+K) -->
+                <AuthorizeView>
+                    <button type="button"
+                            class="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-500 text-xs transition-colors"
+                            title="Recherche globale (Ctrl+K)"
+                            onclick="if (window.kernelMK &amp;&amp; window.kernelMK.globalSearch.dotNetRef) window.kernelMK.globalSearch.dotNetRef.invokeMethodAsync('ToggleOpen');">
+                        <svg class="h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
+                        </svg>
+                        <kbd class="text-[10px] font-mono">Ctrl+K</kbd>
+                    </button>
+                </AuthorizeView>
+
+                <!-- Notifications Push navigateur (activer/désactiver sur cet appareil) -->
+                <AuthorizeView>
+                    <Authorized><PushToggle /></Authorized>
+                </AuthorizeView>
 
                 <!-- Centre d'Alertes & Notifications (Cloche Interactive) -->
                 <NotificationCenter />
@@ -166,6 +188,19 @@
             </div>
         </header>
 
+        @if (_recoveryCodesLow)
+        {
+            <div class="px-4 sm:px-6 lg:px-8 pt-4 max-w-7xl w-full mx-auto">
+                <div class="flex items-center justify-between gap-3 px-4 py-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-medium">
+                    <div class="flex items-center gap-2">
+                        <span>⚠️</span>
+                        <span>Il vous reste 2 codes de secours 2FA ou moins — pensez à en régénérer un nouveau lot avant de les épuiser.</span>
+                    </div>
+                    <a href="Account/Manage/GenerateRecoveryCodes" class="kmk-btn-secondary !py-1 !px-2.5 text-[11px] shrink-0">Régénérer maintenant</a>
+                </div>
+            </div>
+        }
+
         <main class="flex-1 px-4 py-6 sm:px-6 lg:px-8 max-w-7xl w-full mx-auto">
             @Body
         </main>
@@ -181,10 +216,25 @@
     private string _initials = "U";
     private ApplicationUser? _currentAppUser;
     private int _failedAlertsCount = 0;
+    private bool _recoveryCodesLow = false;
 
     protected override async Task OnInitializedAsync()
     {
         await LoadHealthStatusAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && AuthStateTask != null)
+        {
+            var state = await AuthStateTask;
+            if (state.User.Identity?.IsAuthenticated == true)
+            {
+                // Politique de sécurité CIT : déconnexion automatique après 30 min d'inactivité
+                // (aucun mouvement de souris / clavier / clic / défilement), avec avertissement 60s avant.
+                await JS.InvokeVoidAsync("kernelMK.startIdleTimer", 30 * 60 * 1000, 60 * 1000);
+            }
+        }
     }
 
     private async Task LoadHealthStatusAsync()
@@ -235,6 +285,13 @@
                 {
                     _cachedUserId = currentId;
                     _currentAppUser = await UserManager.GetUserAsync(principal);
+
+                    _recoveryCodesLow = false;
+                    if (_currentAppUser is not null && await UserManager.GetTwoFactorEnabledAsync(_currentAppUser))
+                    {
+                        var remaining = await UserManager.CountRecoveryCodesAsync(_currentAppUser);
+                        _recoveryCodesLow = remaining <= 2;
+                    }
 
                     if (string.IsNullOrWhiteSpace(claimName))
                     {

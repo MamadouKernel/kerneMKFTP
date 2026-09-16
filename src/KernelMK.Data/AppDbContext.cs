@@ -22,6 +22,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<NotificationRule> NotificationRules => Set<NotificationRule>();
     public DbSet<AuditLogEntry> AuditLogEntries => Set<AuditLogEntry>();
     public DbSet<TrustedHostKey> TrustedHostKeys => Set<TrustedHostKey>();
+    public DbSet<Notification> Notifications => Set<Notification>();
+    public DbSet<PushSubscription> PushSubscriptions => Set<PushSubscription>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -59,10 +61,37 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         builder.Entity<JobStep>()
             .HasOne(s => s.Credential).WithMany().HasForeignKey(s => s.CredentialId).OnDelete(DeleteBehavior.SetNull);
 
-        builder.Entity<JobExecution>()
-            .HasMany(x => x.StepLogs).WithOne(l => l.JobExecution!).HasForeignKey(l => l.JobExecutionId).OnDelete(DeleteBehavior.Cascade);
+        builder.Entity<JobExecution>(e =>
+        {
+            e.HasMany(x => x.StepLogs).WithOne(l => l.JobExecution!).HasForeignKey(l => l.JobExecutionId).OnDelete(DeleteBehavior.Cascade);
+            // Quasi toutes les requêtes du dashboard/historique filtrent par période (StartedAt) et/ou par
+            // statut (Succès/Échec/EnCours) — sans index, chaque appel scanne la table entière, ce qui devient
+            // très lent en production dès que l'historique grossit (constaté : lenteur après déploiement réel).
+            e.HasIndex(x => new { x.StartedAt, x.Status });
+        });
+
+        builder.Entity<StepExecutionLog>()
+            .HasIndex(l => l.StartedAt);
+
+        builder.Entity<Notification>()
+            .HasIndex(n => n.CreatedAt);
+
+        builder.Entity<JobTrigger>()
+            .HasIndex(t => t.NextRunAt);
+
+        builder.Entity<Job>()
+            .HasIndex(j => j.LastRunAt);
+
+        builder.Entity<AuditLogEntry>()
+            .HasIndex(a => a.Timestamp);
 
         builder.Entity<TrustedHostKey>()
             .HasIndex(k => new { k.Host, k.Port }).IsUnique();
+
+        builder.Entity<PushSubscription>(e =>
+        {
+            e.HasIndex(p => p.Endpoint).IsUnique();
+            e.HasOne<ApplicationUser>().WithMany().HasForeignKey(p => p.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
     }
 }

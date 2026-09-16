@@ -1,6 +1,8 @@
 using System.Text.Json;
 using KernelMK.Core;
+using KernelMK.Core.Entities;
 using KernelMK.Core.StepConfigs;
+using KernelMK.Engine.Notifications;
 using MailKit.Net.Smtp;
 using MailKit.Security;
 using MimeKit;
@@ -10,6 +12,13 @@ namespace KernelMK.Engine.Execution.Executors;
 /// <summary>Envoi d'email SMTP (section 4.2 "Communication").</summary>
 public class EmailStepExecutor : IStepExecutor
 {
+    private readonly Microsoft365TokenProvider _tokenProvider;
+
+    public EmailStepExecutor(Microsoft365TokenProvider tokenProvider)
+    {
+        _tokenProvider = tokenProvider;
+    }
+
     public IReadOnlyCollection<StepType> SupportedTypes { get; } = new[] { StepType.EmailSmtp };
 
     public async Task<StepExecutionResult> ExecuteAsync(StepExecutionContext context)
@@ -28,7 +37,8 @@ public class EmailStepExecutor : IStepExecutor
             message.Subject = config.Subject;
 
             var builder = new BodyBuilder { TextBody = config.Body };
-            if (!string.IsNullOrWhiteSpace(config.AttachmentPath) && File.Exists(config.AttachmentPath))
+            var attachmentSent = !string.IsNullOrWhiteSpace(config.AttachmentPath) && File.Exists(config.AttachmentPath);
+            if (attachmentSent)
             {
                 builder.Attachments.Add(config.AttachmentPath);
             }
@@ -39,15 +49,29 @@ public class EmailStepExecutor : IStepExecutor
                 config.UseTls ? SecureSocketOptions.StartTls : SecureSocketOptions.None,
                 context.CancellationToken);
 
-            if (context.ResolvedCredential is { Username: not null })
+            if (context.ResolvedCredential is { Username: not null } cred)
             {
-                await client.AuthenticateAsync(context.ResolvedCredential.Value.Username, context.ResolvedCredential.Value.Secret ?? string.Empty, context.CancellationToken);
+                if (cred.AuthType == CredentialAuthType.OAuth2Microsoft365)
+                {
+                    if (string.IsNullOrWhiteSpace(cred.OAuth2ClientId) || string.IsNullOrWhiteSpace(cred.OAuth2TenantId))
+                    {
+                        return StepExecutionResult.Fail("Credential OAuth2 Microsoft 365 incomplet : Id d'application (ClientId) ou Id de tenant manquant.");
+                    }
+                    var accessToken = await _tokenProvider.GetTokenAsync(cred.OAuth2TenantId, cred.OAuth2ClientId, cred.Secret ?? string.Empty, context.CancellationToken);
+                    await client.AuthenticateAsync(new SaslMechanismOAuth2(cred.Username, accessToken), context.CancellationToken);
+                }
+                else
+                {
+                    await client.AuthenticateAsync(cred.Username, cred.Secret ?? string.Empty, context.CancellationToken);
+                }
             }
 
             await client.SendAsync(message, context.CancellationToken);
             await client.DisconnectAsync(true, context.CancellationToken);
 
-            return StepExecutionResult.Ok($"Email envoyé à {config.ToCsv}.");
+            return StepExecutionResult.Ok(
+                $"Email envoyé à {config.ToCsv}.",
+                filesProcessedCsv: attachmentSent ? config.AttachmentPath : null);
         }
         catch (Exception ex)
         {

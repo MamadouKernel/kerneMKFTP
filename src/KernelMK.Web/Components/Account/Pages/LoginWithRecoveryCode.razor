@@ -1,4 +1,5 @@
 @page "/Account/LoginWithRecoveryCode"
+@attribute [AllowAnonymous]
 @layout KernelMK.Web.Components.Layout.EmptyLayout
 
 @using System.ComponentModel.DataAnnotations
@@ -104,6 +105,18 @@
 
         if (result.Succeeded)
         {
+            // Recharge l'utilisateur : TwoFactorRecoveryCodeSignInAsync consomme le code de secours et modifie déjà
+            // la ligne en base, ce qui invalide le ConcurrencyStamp de l'objet chargé plus tôt dans OnInitializedAsync
+            // — le réutiliser ici ferait échouer UserManager.UpdateAsync avec une exception de concurrence.
+            var freshUser = await UserManager.FindByIdAsync(userId);
+            if (freshUser is not null)
+            {
+                var now = DateTime.UtcNow;
+                freshUser.FirstLoginAt ??= now;
+                freshUser.LastLoginAt = now;
+                await UserManager.UpdateAsync(freshUser);
+            }
+
             Logger.LogInformation("Utilisateur ID '{UserId}' connecté avec un code de secours.", userId);
             RedirectManager.RedirectTo(ReturnUrl);
         }

@@ -65,14 +65,59 @@ public class RemoteFileBrowserService
         };
     }
 
+    /// <summary>
+    /// Confiance à la première connexion (TOFU) partagée entre clés d'hôte SSH et certificats TLS (FTPS) :
+    /// la première empreinte vue pour un host:port est mémorisée, toute empreinte différente ensuite
+    /// est refusée (usurpation possible, ou le serveur a été réinstallé/son certificat renouvelé).
+    /// </summary>
+    private async Task<(bool Trusted, string? ErrorMessage)> VerifyFingerprintAsync(string host, int port, string fingerprint, string protocolLabel, CancellationToken ct)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        var known = await db.TrustedHostKeys.FirstOrDefaultAsync(k => k.Host == host && k.Port == port, ct);
+
+        if (known is null)
+        {
+            db.TrustedHostKeys.Add(new TrustedHostKey { Host = host, Port = port, FingerprintSha256 = fingerprint });
+            await db.SaveChangesAsync(ct);
+            _logger.LogInformation("Nouvelle empreinte {Protocol} mémorisée pour {Host}:{Port}.", protocolLabel, host, port);
+            return (true, null);
+        }
+
+        if (known.FingerprintSha256 == fingerprint)
+        {
+            known.LastVerifiedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync(ct);
+            return (true, null);
+        }
+
+        _logger.LogWarning("ALERTE SECURITE : l'empreinte {Protocol} de {Host}:{Port} ne correspond pas à celle mémorisée. Connexion refusée.", protocolLabel, host, port);
+        return (false,
+            $"Empreinte {protocolLabel} inattendue pour {host}:{port}. Connexion refusée par sécurité (usurpation possible, " +
+            "ou le serveur a été réinstallé/son certificat renouvelé — un administrateur doit alors supprimer l'entrée mémorisée pour ce serveur).");
+    }
+
     private async Task<List<RemoteItemInfo>> ListSftpItemsAsync(
         string host, int port, string username, string secret, string remotePath, CredentialAuthType authType, string? passphrase, CancellationToken ct)
     {
         using var client = SftpClientFactory.Create(host, port, username, secret, authType, passphrase);
         client.ConnectionInfo.Timeout = TimeSpan.FromSeconds(10);
-        client.HostKeyReceived += (_, e) => e.CanTrust = true;
+        string? hostKeyError = null;
+        client.HostKeyReceived += (_, e) =>
+        {
+            var fingerprint = Convert.ToHexString(SHA256.HashData(e.HostKey));
+            var verdict = VerifyFingerprintAsync(host, port, fingerprint, "SSH", ct).GetAwaiter().GetResult();
+            e.CanTrust = verdict.Trusted;
+            if (!verdict.Trusted) hostKeyError = verdict.ErrorMessage;
+        };
 
-        await Task.Run(client.Connect, ct);
+        try
+        {
+            await Task.Run(client.Connect, ct);
+        }
+        catch (Exception) when (hostKeyError is not null)
+        {
+            throw new InvalidOperationException(hostKeyError);
+        }
 
         try
         {
@@ -99,28 +144,47 @@ public class RemoteFileBrowserService
         }
     }
 
-    private static async Task ConnectFtpClientAsync(AsyncFtpClient client, bool useTls, int port, CancellationToken ct)
+    private async Task ConnectFtpClientAsync(AsyncFtpClient client, bool useTls, int port, CancellationToken ct)
     {
+        string? certError = null;
         if (useTls)
         {
             client.Config.EncryptionMode = FtpEncryptionMode.Explicit;
-            client.Config.ValidateAnyCertificate = true;
             client.Config.DataConnectionEncryption = true;
             client.Config.SslProtocols = System.Security.Authentication.SslProtocols.None;
+
+            client.ValidateCertificate += (_, e) =>
+            {
+                if (e.PolicyErrors == System.Net.Security.SslPolicyErrors.None)
+                {
+                    e.Accept = true;
+                    return;
+                }
+
+                using var cert2 = new System.Security.Cryptography.X509Certificates.X509Certificate2(e.Certificate);
+                var fingerprint = Convert.ToHexString(SHA256.HashData(cert2.RawData));
+                var verdict = VerifyFingerprintAsync(client.Host, port, fingerprint, "TLS (FTPS)", ct).GetAwaiter().GetResult();
+                e.Accept = verdict.Trusted;
+                if (!verdict.Trusted) certError = verdict.ErrorMessage;
+            };
         }
 
         try
         {
             await client.Connect(ct);
         }
-        catch (Exception) when (useTls && port == 990)
+        catch (Exception) when (useTls && port == 990 && certError is null)
         {
             client.Config.EncryptionMode = FtpEncryptionMode.Implicit;
             await client.Connect(ct);
         }
+        catch (Exception) when (certError is not null)
+        {
+            throw new InvalidOperationException(certError);
+        }
     }
 
-    private static async Task<List<RemoteItemInfo>> ListFtpItemsAsync(
+    private async Task<List<RemoteItemInfo>> ListFtpItemsAsync(
         string host, int port, string username, string secret, bool useTls, string remotePath, CancellationToken ct)
     {
         using var client = new AsyncFtpClient(host, username, secret, port);
@@ -201,9 +265,24 @@ public class RemoteFileBrowserService
     {
         if (protocol == StepType.TransfertSftp)
         {
-            using var client = SftpClientFactory.Create(host, port <= 0 ? 22 : port, username, secret, authType, passphrase);
-            client.HostKeyReceived += (_, e) => e.CanTrust = true;
-            await Task.Run(client.Connect, ct);
+            var resolvedPort = port <= 0 ? 22 : port;
+            using var client = SftpClientFactory.Create(host, resolvedPort, username, secret, authType, passphrase);
+            string? hostKeyError = null;
+            client.HostKeyReceived += (_, e) =>
+            {
+                var fingerprint = Convert.ToHexString(SHA256.HashData(e.HostKey));
+                var verdict = VerifyFingerprintAsync(host, resolvedPort, fingerprint, "SSH", ct).GetAwaiter().GetResult();
+                e.CanTrust = verdict.Trusted;
+                if (!verdict.Trusted) hostKeyError = verdict.ErrorMessage;
+            };
+            try
+            {
+                await Task.Run(client.Connect, ct);
+            }
+            catch (Exception) when (hostKeyError is not null)
+            {
+                throw new InvalidOperationException(hostKeyError);
+            }
             try
             {
                 using var ms = new MemoryStream();
@@ -246,9 +325,24 @@ public class RemoteFileBrowserService
 
         if (protocol == StepType.TransfertSftp)
         {
-            using var client = SftpClientFactory.Create(host, port <= 0 ? 22 : port, username, secret, authType, passphrase);
-            client.HostKeyReceived += (_, e) => e.CanTrust = true;
-            await Task.Run(client.Connect, ct);
+            var resolvedPort = port <= 0 ? 22 : port;
+            using var client = SftpClientFactory.Create(host, resolvedPort, username, secret, authType, passphrase);
+            string? hostKeyError = null;
+            client.HostKeyReceived += (_, e) =>
+            {
+                var fingerprint = Convert.ToHexString(SHA256.HashData(e.HostKey));
+                var verdict = VerifyFingerprintAsync(host, resolvedPort, fingerprint, "SSH", ct).GetAwaiter().GetResult();
+                e.CanTrust = verdict.Trusted;
+                if (!verdict.Trusted) hostKeyError = verdict.ErrorMessage;
+            };
+            try
+            {
+                await Task.Run(client.Connect, ct);
+            }
+            catch (Exception) when (hostKeyError is not null)
+            {
+                throw new InvalidOperationException(hostKeyError);
+            }
             try
             {
                 await Task.Run(() => client.UploadFile(contentStream, remotePath, true), ct);
@@ -275,7 +369,14 @@ public class RemoteFileBrowserService
         }
         else
         {
-            var localDest = Path.Combine(remoteDirectory, fileName);
+            // Défense en profondeur : ne garde que le segment nom-de-fichier pour ne jamais écrire hors du
+            // dossier SMB actuellement parcouru, même si le nom transmis contient des séparateurs de chemin.
+            var safeFileName = Path.GetFileName(fileName);
+            if (string.IsNullOrWhiteSpace(safeFileName))
+            {
+                throw new InvalidOperationException("Nom de fichier invalide pour l'envoi.");
+            }
+            var localDest = Path.Combine(remoteDirectory, safeFileName);
             await using var fs = File.Create(localDest);
             await contentStream.CopyToAsync(fs, ct);
         }
@@ -287,9 +388,24 @@ public class RemoteFileBrowserService
     {
         if (protocol == StepType.TransfertSftp)
         {
-            using var client = SftpClientFactory.Create(host, port <= 0 ? 22 : port, username, secret, authType, passphrase);
-            client.HostKeyReceived += (_, e) => e.CanTrust = true;
-            await Task.Run(client.Connect, ct);
+            var resolvedPort = port <= 0 ? 22 : port;
+            using var client = SftpClientFactory.Create(host, resolvedPort, username, secret, authType, passphrase);
+            string? hostKeyError = null;
+            client.HostKeyReceived += (_, e) =>
+            {
+                var fingerprint = Convert.ToHexString(SHA256.HashData(e.HostKey));
+                var verdict = VerifyFingerprintAsync(host, resolvedPort, fingerprint, "SSH", ct).GetAwaiter().GetResult();
+                e.CanTrust = verdict.Trusted;
+                if (!verdict.Trusted) hostKeyError = verdict.ErrorMessage;
+            };
+            try
+            {
+                await Task.Run(client.Connect, ct);
+            }
+            catch (Exception) when (hostKeyError is not null)
+            {
+                throw new InvalidOperationException(hostKeyError);
+            }
             try
             {
                 if (isDirectory) await Task.Run(() => client.DeleteDirectory(remotePath), ct);
@@ -328,9 +444,24 @@ public class RemoteFileBrowserService
     {
         if (protocol == StepType.TransfertSftp)
         {
-            using var client = SftpClientFactory.Create(host, port <= 0 ? 22 : port, username, secret, authType, passphrase);
-            client.HostKeyReceived += (_, e) => e.CanTrust = true;
-            await Task.Run(client.Connect, ct);
+            var resolvedPort = port <= 0 ? 22 : port;
+            using var client = SftpClientFactory.Create(host, resolvedPort, username, secret, authType, passphrase);
+            string? hostKeyError = null;
+            client.HostKeyReceived += (_, e) =>
+            {
+                var fingerprint = Convert.ToHexString(SHA256.HashData(e.HostKey));
+                var verdict = VerifyFingerprintAsync(host, resolvedPort, fingerprint, "SSH", ct).GetAwaiter().GetResult();
+                e.CanTrust = verdict.Trusted;
+                if (!verdict.Trusted) hostKeyError = verdict.ErrorMessage;
+            };
+            try
+            {
+                await Task.Run(client.Connect, ct);
+            }
+            catch (Exception) when (hostKeyError is not null)
+            {
+                throw new InvalidOperationException(hostKeyError);
+            }
             try
             {
                 await Task.Run(() => client.CreateDirectory(remotePath), ct);

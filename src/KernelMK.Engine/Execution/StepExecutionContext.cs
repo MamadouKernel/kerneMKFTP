@@ -9,8 +9,10 @@ public class StepExecutionContext
     public required JobExecution Execution { get; init; }
     public required CancellationToken CancellationToken { get; init; }
     /// <summary>Identifiants (username/secret déchiffré, hôte et port éventuels) résolus pour le credential associé à l'étape, si présent.
-    /// Pour le SFTP par clé privée SSH, Secret contient la clé PEM déchiffrée et Passphrase sa passphrase éventuelle.</summary>
-    public (string? Username, string? Secret, string? Host, int? Port, CredentialAuthType AuthType, string? Passphrase)? ResolvedCredential { get; init; }
+    /// Pour le SFTP par clé privée SSH, Secret contient la clé PEM déchiffrée et Passphrase sa passphrase éventuelle.
+    /// Pour AuthType = OAuth2Microsoft365, Secret contient le client secret déchiffré (pas un mot de passe de boîte
+    /// mail) et OAuth2ClientId/OAuth2TenantId identifient l'application Entra ID à utiliser pour acquérir un jeton.</summary>
+    public (string? Username, string? Secret, string? Host, int? Port, CredentialAuthType AuthType, string? Passphrase, string? OAuth2ClientId, string? OAuth2TenantId)? ResolvedCredential { get; init; }
 }
 
 public class StepExecutionResult

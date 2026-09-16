@@ -1,0 +1,70 @@
+@* Diagramme explicatif (statique) du cycle de vie d'un message EDI entre CIT et un armateur/partenaire —
+   deux flux (Envoi / Réception), avec les statuts réellement traversés par les étapes du moteur
+   (EdifactMessage, Transfert SFTP/FTP/IMAP). Sert de légende visuelle au-dessus de la cartographie EDI. *@
+
+<div class="kmk-card p-5 mb-6">
+    <div class="flex items-center justify-between flex-wrap gap-3 mb-4">
+        <div class="flex items-center gap-2">
+            <span class="text-emerald-500 text-lg">▶</span>
+            <h2 class="text-base font-extrabold text-slate-900">Cycle de vie d'un message EDI</h2>
+        </div>
+        <div class="flex items-center gap-4 text-xs text-slate-600">
+            <span class="flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-full bg-rose-500 inline-block"></span> Obligatoire</span>
+            <span class="flex items-center gap-1.5"><span class="h-2.5 w-2.5 rounded-full bg-amber-400 inline-block"></span> Optionnel</span>
+        </div>
+    </div>
+
+    <!-- Bandeau des phases -->
+    <div class="flex items-stretch mb-6 rounded-lg overflow-hidden text-white text-[10px] sm:text-xs font-bold uppercase tracking-wide">
+        <div class="flex-1 bg-emerald-700 px-2 sm:px-4 py-2 text-center">Génération</div>
+        <div class="flex-1 bg-emerald-600 px-2 sm:px-4 py-2 text-center">Envoi</div>
+        <div class="flex-1 bg-emerald-500 px-2 sm:px-4 py-2 text-center">Réception partenaire</div>
+        <div class="flex-1 bg-emerald-400 px-2 sm:px-4 py-2 text-center">Traitement</div>
+    </div>
+
+    <div class="flex items-center gap-3 sm:gap-6">
+        <!-- Acteur CIT -->
+        <div class="flex flex-col items-center shrink-0 w-16 sm:w-20">
+            <div class="h-12 w-12 sm:h-14 sm:w-14 rounded-full bg-indigo-100 flex items-center justify-center text-xl sm:text-2xl">🏭</div>
+            <span class="text-[11px] sm:text-xs font-bold text-slate-700 mt-1 text-center">CIT</span>
+        </div>
+
+        <div class="flex-1 min-w-0 flex flex-col gap-5">
+            <!-- Flux Envoi : CIT -> Partenaire -->
+            <div>
+                <div class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">↑ Envoi (CIT → Partenaire)</div>
+                <div class="flex items-center gap-1.5 flex-wrap">
+                    <StatusPill Text="Généré" Color="rose" Title="Étape « Message EDIFACT » (Générer) réussie" />
+                    @ArrowIcon()
+                    <StatusPill Text="Envoyé" Color="rose" Title="Étape de transfert (Upload) réussie" />
+                    @ArrowIcon()
+                    <StatusPill Text="Livré" Color="emerald" Title="Transfert confirmé côté serveur distant" />
+                </div>
+            </div>
+
+            <!-- Flux Réception : Partenaire -> CIT -->
+            <div>
+                <div class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">↓ Réception (Partenaire → CIT)</div>
+                <div class="flex items-center gap-1.5 flex-wrap">
+                    <StatusPill Text="Reçu" Color="rose" Title="Étape de transfert (Download) ou Réception Email (IMAP) réussie" />
+                    @ArrowIcon()
+                    <StatusPill Text="Analysé" Color="amber" Title="Étape « Message EDIFACT » (Analyser) — facultative, tous les jobs n'en ont pas" />
+                    @ArrowIcon()
+                    <StatusPill Text="Intégré" Color="emerald" Title="Fichier traité et disponible pour le système CIT" />
+                </div>
+            </div>
+        </div>
+
+        <!-- Acteur Armateur/Partenaire -->
+        <div class="flex flex-col items-center shrink-0 w-16 sm:w-20">
+            <div class="h-12 w-12 sm:h-14 sm:w-14 rounded-full bg-amber-100 flex items-center justify-center text-xl sm:text-2xl">🚢</div>
+            <span class="text-[11px] sm:text-xs font-bold text-slate-700 mt-1 text-center">Armateur</span>
+        </div>
+    </div>
+</div>
+
+@code {
+    private static MarkupString ArrowIcon() => new(
+        "<svg class=\"h-3 w-3 text-slate-300 shrink-0\" xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\" stroke-width=\"3\">" +
+        "<path stroke-linecap=\"round\" stroke-linejoin=\"round\" d=\"m8.25 4.5 7.5 7.5-7.5 7.5\" /></svg>");
+}

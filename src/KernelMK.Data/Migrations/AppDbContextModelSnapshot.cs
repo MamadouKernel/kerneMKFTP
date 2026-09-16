@@ -49,12 +49,17 @@ namespace KernelMK.Data.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("Timestamp");
+
                     b.ToTable("AuditLogEntries");
                 });
 
             modelBuilder.Entity("KernelMK.Core.Entities.Credential", b =>
                 {
                     b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AllowedRolesCsv")
                         .HasColumnType("TEXT");
 
                     b.Property<int>("AuthType")
@@ -81,6 +86,12 @@ namespace KernelMK.Data.Migrations
 
                     b.Property<string>("Name")
                         .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OAuth2ClientId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OAuth2TenantId")
                         .HasColumnType("TEXT");
 
                     b.Property<int?>("Port")
@@ -157,6 +168,8 @@ namespace KernelMK.Data.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("LastRunAt");
+
                     b.HasIndex("Name");
 
                     b.ToTable("Jobs");
@@ -224,6 +237,8 @@ namespace KernelMK.Data.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("JobId");
+
+                    b.HasIndex("StartedAt", "Status");
 
                     b.ToTable("JobExecutions");
                 });
@@ -346,7 +361,38 @@ namespace KernelMK.Data.Migrations
 
                     b.HasIndex("JobId");
 
+                    b.HasIndex("NextRunAt");
+
                     b.ToTable("JobTriggers");
+                });
+
+            modelBuilder.Entity("KernelMK.Core.Entities.Notification", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Event")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid?>("JobId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("JobName")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Message")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAt");
+
+                    b.ToTable("Notifications");
                 });
 
             modelBuilder.Entity("KernelMK.Core.Entities.NotificationRule", b =>
@@ -377,6 +423,43 @@ namespace KernelMK.Data.Migrations
                     b.HasIndex("JobId");
 
                     b.ToTable("NotificationRules");
+                });
+
+            modelBuilder.Entity("KernelMK.Core.Entities.PushSubscription", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Auth")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Endpoint")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("P256dh")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UserAgent")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Endpoint")
+                        .IsUnique();
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("PushSubscriptions");
                 });
 
             modelBuilder.Entity("KernelMK.Core.Entities.StepExecutionLog", b =>
@@ -424,6 +507,8 @@ namespace KernelMK.Data.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("JobExecutionId");
+
+                    b.HasIndex("StartedAt");
 
                     b.ToTable("StepExecutionLogs");
                 });
@@ -476,6 +561,9 @@ namespace KernelMK.Data.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<DateTime?>("DeactivatedForInactivityAt")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("DisplayName")
                         .HasColumnType("TEXT");
 
@@ -485,6 +573,12 @@ namespace KernelMK.Data.Migrations
 
                     b.Property<bool>("EmailConfirmed")
                         .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("FirstLoginAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("LastLoginAt")
+                        .HasColumnType("TEXT");
 
                     b.Property<bool>("LockoutEnabled")
                         .HasColumnType("INTEGER");
@@ -730,6 +824,15 @@ namespace KernelMK.Data.Migrations
                         .IsRequired();
 
                     b.Navigation("Job");
+                });
+
+            modelBuilder.Entity("KernelMK.Core.Entities.PushSubscription", b =>
+                {
+                    b.HasOne("KernelMK.Data.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("KernelMK.Core.Entities.StepExecutionLog", b =>

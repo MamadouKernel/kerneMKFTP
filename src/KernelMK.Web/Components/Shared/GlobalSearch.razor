@@ -1,0 +1,150 @@
+@implements IAsyncDisposable
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+
+@if (_isOpen)
+{
+    <div class="fixed inset-0 z-[100] flex items-start justify-center pt-24 px-4 bg-slate-900/50 backdrop-blur-xs" @onclick="Close">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-xl border border-slate-200 overflow-hidden" @onclick:stopPropagation="true">
+            <div class="flex items-center gap-2.5 px-4 py-3 border-b border-slate-100">
+                <svg class="h-4 w-4 text-slate-400 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
+                </svg>
+                <input id="kmk-global-search-input" class="flex-1 text-sm outline-none placeholder:text-slate-400"
+                       placeholder="Rechercher un job, un partenaire, un credential..." value="@_query"
+                       @oninput="OnQueryChanged" @onkeydown="OnKeyDown" />
+                <kbd class="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-400 border border-slate-200 shrink-0">Échap</kbd>
+            </div>
+
+            <div class="max-h-96 overflow-y-auto">
+                @if (string.IsNullOrWhiteSpace(_query))
+                {
+                    <div class="p-6 text-center text-xs text-slate-400">Tape pour chercher parmi les jobs, armateurs et credentials.</div>
+                }
+                else if (_results.Count == 0)
+                {
+                    <div class="p-6 text-center text-xs text-slate-400">Aucun résultat pour « @_query ».</div>
+                }
+                else
+                {
+                    <div class="divide-y divide-slate-100">
+                        @for (var i = 0; i < _results.Count; i++)
+                        {
+                            var r = _results[i];
+                            var isSelected = i == _selectedIndex;
+                            <a href="@r.Url" class="flex items-center gap-3 px-4 py-2.5 transition-colors @(isSelected ? "bg-brand-50" : "hover:bg-slate-50")">
+                                <span class="h-8 w-8 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center text-sm shrink-0">@r.Icon</span>
+                                <div class="min-w-0 flex-1">
+                                    <div class="text-sm font-semibold text-slate-900 truncate">@r.Label</div>
+                                    <div class="text-[11px] text-slate-400 truncate">@r.SubLabel</div>
+                                </div>
+                            </a>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private bool _isOpen;
+    private string _query = "";
+    private List<SearchResult> _results = new();
+    private int _selectedIndex = 0;
+    private DotNetObjectReference<GlobalSearch>? _selfRef;
+
+    private record SearchResult(string Label, string SubLabel, string Url, string Icon);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _selfRef = DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("kernelMK.globalSearch.register", _selfRef);
+        }
+    }
+
+    [JSInvokable]
+    public async Task ToggleOpen()
+    {
+        _isOpen = !_isOpen;
+        StateHasChanged();
+        if (_isOpen)
+        {
+            await Task.Delay(50);
+            await JS.InvokeVoidAsync("kernelMK.focusElementById", "kmk-global-search-input");
+        }
+    }
+
+    private void Close()
+    {
+        _isOpen = false;
+        _query = "";
+        _results.Clear();
+    }
+
+    private async Task OnQueryChanged(ChangeEventArgs e)
+    {
+        _query = e.Value?.ToString() ?? "";
+        _selectedIndex = 0;
+
+        if (string.IsNullOrWhiteSpace(_query) || _query.Trim().Length < 2)
+        {
+            _results.Clear();
+            return;
+        }
+
+        var q = _query.Trim();
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        var jobs = await db.Jobs
+            .Where(j => EF.Functions.Like(j.Name, $"%{q}%") || (j.Description != null && EF.Functions.Like(j.Description, $"%{q}%")))
+            .OrderBy(j => j.Name)
+            .Take(5)
+            .ToListAsync();
+
+        var credentials = await db.Credentials
+            .Where(c => EF.Functions.Like(c.Name, $"%{q}%") || (c.Host != null && EF.Functions.Like(c.Host, $"%{q}%")))
+            .OrderBy(c => c.Name)
+            .Take(5)
+            .ToListAsync();
+
+        _results = jobs.Select(j => new SearchResult(j.Name, j.Description ?? "Job", $"jobs/{j.Id}/edit", "⚙️"))
+            .Concat(credentials.Select(c => new SearchResult(c.Name, c.Host ?? "Credential", "credentials", "🔑")))
+            .ToList();
+    }
+
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        switch (e.Key)
+        {
+            case "Escape":
+                Close();
+                break;
+            case "ArrowDown":
+                if (_results.Count > 0) _selectedIndex = Math.Min(_selectedIndex + 1, _results.Count - 1);
+                break;
+            case "ArrowUp":
+                if (_results.Count > 0) _selectedIndex = Math.Max(_selectedIndex - 1, 0);
+                break;
+            case "Enter":
+                if (_results.Count > 0)
+                {
+                    var target = _results[_selectedIndex].Url;
+                    Close();
+                    Navigation.NavigateTo(target);
+                }
+                break;
+        }
+        await Task.CompletedTask;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _selfRef?.Dispose();
+        await Task.CompletedTask;
+    }
+}

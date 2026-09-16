@@ -1,0 +1,314 @@
+@page "/reseau"
+@rendermode InteractiveServer
+@implements IDisposable
+@attribute [Authorize(Roles = "Administrateur,Superviseur,Exploitant,Developpeur,Auditeur")]
+@using Microsoft.EntityFrameworkCore
+@using KernelMK.Engine.Workflow
+@using System.Text.Json
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject IJobExecutionCoordinator ExecutionCoordinator
+@inject IJSRuntime JS
+
+<PageTitle>Carte réseau · kernelMK</PageTitle>
+
+<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
+    <div>
+        <h1 class="mb-1">Carte réseau des transferts</h1>
+        <p class="text-sm text-slate-500">
+            Vue d'ensemble en direct : chaque ligne relie le terminal CIT à un serveur distant configuré. Une ligne animée indique un transfert en cours (↑ envoi, ↓ réception).
+        </p>
+    </div>
+    <div class="flex items-center gap-2.5 shrink-0 flex-wrap">
+        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+            <span class="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+            Temps réel (4s)
+        </span>
+        <div class="inline-flex rounded-lg border border-slate-200 overflow-hidden text-xs font-semibold">
+            <button type="button" @onclick="() => SetViewMode(false)" class="@(_view3D ? "bg-white text-slate-500" : "bg-brand-600 text-white") px-3 py-1.5 transition-colors">Vue 2D</button>
+            <button type="button" @onclick="() => SetViewMode(true)" class="@(_view3D ? "bg-brand-600 text-white" : "bg-white text-slate-500") px-3 py-1.5 transition-colors" title="Piste exploratoire : rendu 3D avec three.js">Vue 3D 🧪</button>
+        </div>
+    </div>
+</div>
+
+@if (_loading)
+{
+    <div class="kmk-card p-12 flex flex-col items-center justify-center gap-3 text-sm text-slate-500">
+        <svg class="animate-spin h-6 w-6 text-brand-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+        </svg>
+        <span>Chargement de la carte réseau...</span>
+    </div>
+}
+else if (_nodes.Count == 0)
+{
+    <div class="kmk-card p-12 text-center text-slate-400">
+        <p class="text-sm">Aucun serveur distant configuré pour le moment.</p>
+        <AuthorizeView Roles="Administrateur,Developpeur">
+            <a href="credentials" class="text-xs text-brand-600 font-semibold mt-2 inline-block">Ajouter un identifiant serveur distant →</a>
+        </AuthorizeView>
+    </div>
+}
+else if (_view3D)
+{
+    <div class="kmk-card p-2 sm:p-3">
+        <div id="reseau3d-container" class="w-full h-[300px] sm:h-[420px] lg:h-[520px]" style="border-radius:0.75rem; overflow:hidden;"></div>
+        <p class="text-[11px] text-slate-400 mt-2 px-2">🧪 Vue exploratoire (rotation automatique, chargée via three.js) — les points dorés représentent les transferts en cours, direction envoi/réception comprise.</p>
+    </div>
+}
+else
+{
+    <!-- Petit écran : liste verticale (le diagramme SVG large horizontal ne se lit pas bien sur mobile) -->
+    <div class="sm:hidden space-y-2">
+        @foreach (var node in _nodes)
+        {
+            var transfers = _active.Where(a => a.Host == node.Host).ToList();
+            var isActive = transfers.Count > 0;
+            <div class="kmk-card p-3 flex items-start gap-3 @(isActive ? "border-brand-300 bg-brand-50/30" : "")">
+                <span class="h-9 w-9 rounded-full flex items-center justify-center shrink-0 @(isActive ? "bg-brand-100" : "bg-slate-100")">🖥️</span>
+                <div class="min-w-0 flex-1">
+                    <div class="font-bold text-sm text-slate-900 truncate">@node.Host</div>
+                    @if (!string.IsNullOrWhiteSpace(node.Name))
+                    {
+                        <div class="text-xs text-slate-400 truncate">@node.Name</div>
+                    }
+                    @if (isActive)
+                    {
+                        <div class="text-xs text-brand-700 font-semibold mt-1">
+                            @string.Join(" · ", transfers.Select(t => $"{(t.Upload ? "↑" : "↓")} {t.JobName}"))
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="text-xs text-slate-400 mt-1">Aucun transfert en cours</div>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+
+    <div class="hidden sm:block kmk-card p-4 sm:p-6 overflow-x-auto">
+        <svg viewBox="@($"0 0 800 {SvgHeight}")" class="w-full" style="min-width: 620px; height: @(SvgHeight)px; max-height: 70vh;">
+            @foreach (var node in _nodes)
+            {
+                var y = GetNodeY(node);
+                var transfers = _active.Where(a => a.Host == node.Host).ToList();
+                var isActive = transfers.Count > 0;
+
+                <!-- Ligne neutre : aucune flèche fixe, le sens réel est porté par le chevron animé ci-dessous
+                     (un transfert peut être un envoi OU une réception, jamais présumé d'avance). -->
+                <line x1="90" y1="@HubY" x2="720" y2="@y"
+                      stroke="@(isActive ? "#4f46e5" : "#e2e8f0")" stroke-width="@(isActive ? 2.5 : 1.5)" />
+
+                @foreach (var t in transfers)
+                {
+                    var pathD = t.Upload ? $"M 90,{HubY} L 720,{y}" : $"M 720,{y} L 90,{HubY}";
+                    <path d="M -5,-3.5 L 5,0 L -5,3.5 Z" fill="#4f46e5">
+                        <animateMotion dur="1.6s" repeatCount="indefinite" path="@pathD" rotate="auto" />
+                    </path>
+                }
+
+                <g transform="@($"translate(720,{y})")">
+                    <circle r="20" fill="@(isActive ? "#eef2ff" : "#f8fafc")" stroke="@(isActive ? "#4f46e5" : "#cbd5e1")" stroke-width="2" />
+                    <text x="0" y="5" text-anchor="middle" font-size="16">🖥️</text>
+                    <text x="30" y="-4" font-size="13" font-weight="700" fill="#1e293b">@node.Host</text>
+                    @if (!string.IsNullOrWhiteSpace(node.Name))
+                    {
+                        @SvgText(30, 13, node.Name, fontSize: 10.5, fill: "#94a3b8")
+                    }
+                    @if (isActive)
+                    {
+                        @SvgText(30, string.IsNullOrWhiteSpace(node.Name) ? 13 : 27,
+                                 string.Join(" · ", transfers.Select(t => $"{(t.Upload ? "↑" : "↓")} {t.JobName}")),
+                                 fontSize: 10.5, fill: "#4f46e5", fontWeight: "600")
+                    }
+                </g>
+            }
+
+            <!-- Nœud central CIT -->
+            <g transform="@($"translate(60,{HubY})")">
+                <circle r="34" fill="#0f172a" />
+                <text x="0" y="-4" text-anchor="middle" font-size="10" font-weight="700" fill="#fff">CIT</text>
+                <text x="0" y="10" text-anchor="middle" font-size="8" fill="#94a3b8">Local</text>
+            </g>
+        </svg>
+    </div>
+
+    @if (_active.Count == 0)
+    {
+        <p class="text-xs text-slate-400 mt-3 text-center">Aucun transfert en cours actuellement — les lignes s'animeront dès qu'un job démarrera un envoi ou une réception.</p>
+    }
+}
+
+@code {
+    private record RemoteNode(Guid CredentialId, string Host, string? Name);
+    private record ActiveTransfer(Guid JobId, string JobName, string Host, bool Upload, string StepName);
+
+    private List<RemoteNode> _nodes = new();
+    private List<ActiveTransfer> _active = new();
+    private bool _loading = true;
+    private PeriodicTimer? _timer;
+    private CancellationTokenSource? _cts;
+
+    private const int RowHeight = 64;
+    private int SvgHeight => Math.Max(200, _nodes.Count * RowHeight + 40);
+    private int HubY => SvgHeight / 2;
+
+    /// <summary>
+    /// Construit un &lt;text&gt; SVG en MarkupString brut (échappé) : le tag "text" imbriqué dans un bloc @if
+    /// lui-même imbriqué dans @foreach est mal interprété par le parseur Razor (RZ1023, tag réservé), d'où ce
+    /// contournement pour les libellés dynamiques à deux niveaux d'imbrication.
+    /// </summary>
+    private static MarkupString SvgText(double x, double y, string text, double fontSize = 12, string fill = "#1e293b", string fontWeight = "400")
+    {
+        var escaped = System.Net.WebUtility.HtmlEncode(text);
+        return new MarkupString($"<text x=\"{x}\" y=\"{y}\" font-size=\"{fontSize}\" fill=\"{fill}\" font-weight=\"{fontWeight}\">{escaped}</text>");
+    }
+
+    private int GetNodeY(RemoteNode node)
+    {
+        var index = _nodes.IndexOf(node);
+        return 40 + index * RowHeight + RowHeight / 2;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        _loading = false;
+
+        _cts = new CancellationTokenSource();
+        _timer = new PeriodicTimer(TimeSpan.FromSeconds(4));
+        _ = RefreshLoopAsync(_cts.Token);
+    }
+
+    private async Task RefreshLoopAsync(CancellationToken ct)
+    {
+        try
+        {
+            while (_timer is not null && await _timer.WaitForNextTickAsync(ct))
+            {
+                await LoadAsync();
+                await InvokeAsync(StateHasChanged);
+                if (_view3D)
+                {
+                    await InvokeAsync(() => Push3DDataAsync(init: false));
+                }
+            }
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    private bool _view3D = false;
+    private bool _pending3DInit = false;
+
+    private void SetViewMode(bool is3D)
+    {
+        if (_view3D == is3D) return;
+        _view3D = is3D;
+        if (!is3D)
+        {
+            _ = JS.InvokeVoidAsync("kernelMK.reseau3d.dispose");
+        }
+        else
+        {
+            _pending3DInit = true;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_pending3DInit && _view3D)
+        {
+            _pending3DInit = false;
+            await Push3DDataAsync(init: true);
+        }
+    }
+
+    private async Task Push3DDataAsync(bool init)
+    {
+        var nodesPayload = _nodes.Select(n => new { host = n.Host, name = n.Name }).ToList();
+        var activesPayload = _active.Select(a => new { host = a.Host, upload = a.Upload, jobName = a.JobName }).ToList();
+        try
+        {
+            if (init)
+                await JS.InvokeVoidAsync("kernelMK.reseau3d.init", "reseau3d-container", nodesPayload, activesPayload);
+            else
+                await JS.InvokeVoidAsync("kernelMK.reseau3d.update", nodesPayload, activesPayload);
+        }
+        catch (JSDisconnectedException) { }
+    }
+
+    private static readonly HashSet<StepType> TransferTypes = new()
+    {
+        StepType.TransfertFtp, StepType.TransfertFtps, StepType.TransfertSftp, StepType.TransfertSmb, StepType.TransfertHttp
+    };
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        var rawCredentials = await db.Credentials
+            .Where(c => c.Host != null && c.Host != "")
+            .Select(c => new { c.Id, Host = c.Host!, c.Name })
+            .ToListAsync();
+
+        _nodes = rawCredentials
+            .GroupBy(c => c.Host)
+            .Select(g => new RemoteNode(g.First().Id, g.Key, g.First().Name))
+            .OrderBy(n => n.Host)
+            .ToList();
+
+        var runningJobIds = ExecutionCoordinator.GetRunningJobIds();
+        var active = new List<ActiveTransfer>();
+
+        if (runningJobIds.Count > 0)
+        {
+            var executions = await db.JobExecutions
+                .Include(e => e.Job!).ThenInclude(j => j.Steps)
+                .Include(e => e.StepLogs)
+                .Where(e => runningJobIds.Contains(e.JobId) && e.Status == JobStatus.EnCours)
+                .ToListAsync();
+
+            foreach (var exec in executions)
+            {
+                if (exec.Job is null) continue;
+
+                var currentLog = exec.StepLogs
+                    .Where(l => l.Status == StepExecutionStatus.EnCours)
+                    .OrderByDescending(l => l.AttemptNumber)
+                    .FirstOrDefault();
+                if (currentLog is null) continue;
+
+                var step = exec.Job.Steps.FirstOrDefault(s => s.Id == currentLog.JobStepId);
+                if (step is null || !TransferTypes.Contains(step.Type)) continue;
+
+                try
+                {
+                    var cfg = JsonSerializer.Deserialize<TransferStepConfig>(step.ConfigJson);
+                    if (cfg is not null && !string.IsNullOrWhiteSpace(cfg.Host))
+                    {
+                        active.Add(new ActiveTransfer(exec.JobId, exec.Job.Name, cfg.Host, cfg.Upload, step.Name));
+                    }
+                }
+                catch
+                {
+                    // Configuration invalide/incomplète : on ignore simplement l'affichage de cette ligne.
+                }
+            }
+        }
+
+        _active = active;
+    }
+
+    public void Dispose()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
+        _timer?.Dispose();
+        if (_view3D)
+        {
+            try { _ = JS.InvokeVoidAsync("kernelMK.reseau3d.dispose"); }
+            catch (JSDisconnectedException) { }
+        }
+    }
+}

@@ -15,14 +15,35 @@ public static class ServiceCollectionExtensions
     {
         var connectionString = ResolveConnectionString(configuration.GetConnectionString("Default") ?? "Data Source=automation-platform.db");
 
-        services.AddDbContextFactory<AppDbContext>(options => options.UseSqlite(connectionString));
+        // Mode journal WAL (Write-Ahead Logging) : contrairement au mode par défaut ("DELETE"), qui verrouille
+        // toute la base pendant une écriture et bloque les lecteurs concurrents, WAL permet aux lectures de
+        // continuer pendant qu'un écrivain est actif. Réglage persistant (stocké dans le fichier .db), à activer
+        // une seule fois — nécessaire dès que plusieurs utilisateurs consultent l'app pendant qu'un job s'exécute
+        // ou qu'un autre utilisateur enregistre une modification (ex. création de job pendant que le dashboard
+        // d'un collègue se rafraîchit automatiquement) : cause probable des lenteurs constatées en production.
+        EnableWalMode(connectionString);
+
+        services.AddDbContextFactory<AppDbContext>(options => options
+            .UseSqlite(connectionString)
+            .AddInterceptors(new SqlitePragmaInterceptor()));
         services.AddScoped<AppDbContext>(sp => sp.GetRequiredService<IDbContextFactory<AppDbContext>>().CreateDbContext());
 
-        services.AddDataProtection()
+        // Le trousseau est persisté sur disque (obligatoire pour survivre aux redémarrages/mises à jour) mais
+        // chiffré au repos via DPAPI machine : une copie du dossier keys\ (ex. sauvegarde volée) est inexploitable
+        // sans être déchiffrée depuis cette machine Windows précise — la clé seule ne suffit plus à lire les
+        // credentials SFTP/FTP/SMTP/BD chiffrés en base.
+        var dataProtectionBuilder = services.AddDataProtection()
             .PersistKeysToFileSystem(new DirectoryInfo(GetKeyRingPath(configuration)))
             .SetApplicationName("KernelMK");
 
-        services.AddScoped<CredentialProtector>();
+        if (OperatingSystem.IsWindows())
+        {
+            dataProtectionBuilder.ProtectKeysWithDpapi(protectToLocalMachine: true);
+        }
+
+        // Singleton : n'enveloppe que IDataProtectionProvider (lui-même singleton, sans état par requête) —
+        // nécessaire pour être consommable par les exécuteurs d'étapes, eux aussi singletons (StepExecutorFactory).
+        services.AddSingleton<CredentialProtector>();
 
         services.AddIdentity<ApplicationUser, IdentityRole>(options =>
             {
@@ -34,8 +55,9 @@ public static class ServiceCollectionExtensions
             })
             .AddEntityFrameworkStores<AppDbContext>()
             .AddDefaultTokenProviders()
-            .AddSignInManager()
-            .AddClaimsPrincipalFactory<AppUserClaimsPrincipalFactory>();
+            .AddSignInManager<AppSignInManager>()
+            .AddClaimsPrincipalFactory<AppUserClaimsPrincipalFactory>()
+            .AddErrorDescriber<FrenchIdentityErrorDescriber>();
 
         return services;
     }
@@ -55,6 +77,15 @@ public static class ServiceCollectionExtensions
             builder.DataSource = Path.Combine(AppContext.BaseDirectory, builder.DataSource);
         }
         return builder.ConnectionString;
+    }
+
+    private static void EnableWalMode(string connectionString)
+    {
+        using var connection = new SqliteConnection(connectionString);
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA journal_mode=WAL;";
+        command.ExecuteNonQuery();
     }
 
     private static string GetKeyRingPath(IConfiguration configuration)

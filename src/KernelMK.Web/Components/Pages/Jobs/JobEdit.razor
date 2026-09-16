@@ -94,6 +94,15 @@ else
                     💡 Astuce : choisis le type d'étape puis clique sur « Modèle JSON » pour préremplir la configuration
                     avec les champs attendus — il ne reste plus qu'à ajuster les valeurs (chemins, hôte, requête...).
                 </p>
+
+                @if (_job.Steps.Count > 0)
+                {
+                    <div class="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
+                        <p class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">Aperçu du pipeline</p>
+                        <JobPipelineDiagram Steps="_job.Steps" />
+                    </div>
+                }
+
                 @foreach (var step in _job.Steps.OrderBy(s => s.Order).ToList())
                 {
                     <div class="border border-slate-200 rounded-lg p-4">
@@ -239,10 +248,30 @@ else
 
                                             <div class="col-span-1 sm:col-span-2">
                                                 <label class="kmk-label">Chemin local (@(tConfig.Upload ? "dossier/fichier source local" : "dossier cible local"))</label>
-                                                <input class="kmk-input font-mono text-xs" placeholder="ex: C:\Donnees\Local\ ou C:\data\mon_fichier.csv"
+                                                <input class="kmk-input font-mono text-xs" placeholder="ex: C:\Donnees\Local\ ou \\Serveur\Partage\Dossier\"
                                                        value="@tConfig.LocalPath"
                                                        @oninput="(e) => { tConfig.LocalPath = e.Value?.ToString() ?? string.Empty; SyncTransferConfig(step); }" />
                                             </div>
+
+                                            @if (tConfig.LocalPath.StartsWith(@"\\"))
+                                            {
+                                                <div class="col-span-1 sm:col-span-2">
+                                                    <label class="kmk-label">
+                                                        Compte d'accès au partage réseau local
+                                                        <span class="text-slate-400 font-normal text-[11px]">(si le service Windows n'y a pas accès directement)</span>
+                                                    </label>
+                                                    <select class="kmk-select text-xs"
+                                                            value="@(tConfig.LocalCredentialId?.ToString() ?? "")"
+                                                            @onchange="(e) => { var val = e.Value?.ToString(); tConfig.LocalCredentialId = Guid.TryParse(val, out var gid) ? gid : null; SyncTransferConfig(step); }">
+                                                        <option value="">(Identité du service — lecteur déjà accessible)</option>
+                                                        @foreach (var c in _credentials)
+                                                        {
+                                                            <option value="@c.Id">@c.Name @(!string.IsNullOrWhiteSpace(c.Host) ? $" · {c.Host}" : "")</option>
+                                                        }
+                                                    </select>
+                                                    <p class="text-[11px] text-slate-400 mt-1">Se connecte au partage avec ces identifiants (équivalent de « net use » avec un compte dédié), indépendamment du Credential utilisé côté serveur distant ci-dessus.</p>
+                                                </div>
+                                            }
 
                                             <div class="col-span-1 sm:col-span-2">
                                                 <label class="kmk-label">Filtre de fichiers (multi-fichiers)</label>
@@ -369,6 +398,434 @@ else
                                     }
                                 </div>
                             }
+                            else if (IsFileOpStep(step.Type))
+                            {
+                                var fConfig = GetOrCreateFileOpConfig(step);
+                                var hints = GetFileOpUiHints(step.Type);
+                                <div class="col-span-2 sm:col-span-4 md:col-span-6 bg-slate-50/90 border border-slate-200/90 rounded-xl p-4 mt-2">
+                                    <div class="flex items-center justify-between mb-3 border-b border-slate-200/60 pb-2">
+                                        <span class="text-xs font-bold uppercase tracking-wider text-slate-700">Paramètres fichier (@step.Type)</span>
+                                        <button type="button" class="kmk-btn-secondary kmk-btn-sm text-xs" @onclick="() => ToggleRawJson(step)">
+                                            @(IsRawJsonMode(step) ? "Afficher le formulaire" : "Mode JSON brut")
+                                        </button>
+                                    </div>
+
+                                    @if (IsRawJsonMode(step))
+                                    {
+                                        <div class="space-y-1">
+                                            <label class="kmk-label">Configuration (JSON brut)</label>
+                                            <textarea class="kmk-input font-mono text-xs" rows="4" @bind="step.ConfigJson"></textarea>
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                                            <div class="@(hints.DestinationLabel is not null ? "col-span-1 sm:col-span-2" : "col-span-1 sm:col-span-2 md:col-span-4")">
+                                                <label class="kmk-label">@hints.SourceLabel</label>
+                                                <input class="kmk-input font-mono text-xs" placeholder="ex: C:\Donnees\Source\"
+                                                       value="@fConfig.SourcePath"
+                                                       @oninput="(e) => { fConfig.SourcePath = e.Value?.ToString() ?? string.Empty; SyncFileOpConfig(step); }" />
+                                            </div>
+
+                                            @if (hints.DestinationLabel is not null)
+                                            {
+                                                <div class="col-span-1 sm:col-span-2">
+                                                    <label class="kmk-label">@hints.DestinationLabel</label>
+                                                    <input class="kmk-input font-mono text-xs" placeholder="ex: D:\Donnees\Destination\ (un autre lecteur est possible)"
+                                                           value="@fConfig.DestinationPath"
+                                                           @oninput="(e) => { fConfig.DestinationPath = e.Value?.ToString(); SyncFileOpConfig(step); }" />
+                                                </div>
+                                            }
+
+                                            @if (hints.ShowFilter)
+                                            {
+                                                <div class="col-span-1 sm:col-span-2">
+                                                    <label class="kmk-label">Filtre de fichiers</label>
+                                                    <input class="kmk-input font-mono text-xs" placeholder="ex: *.csv;*.txt;*.edi (vide = tous)"
+                                                           value="@fConfig.Filter"
+                                                           @oninput="(e) => { fConfig.Filter = string.IsNullOrWhiteSpace(e.Value?.ToString()) ? null : e.Value?.ToString(); SyncFileOpConfig(step); }" />
+                                                </div>
+                                            }
+
+                                            <div class="col-span-1 sm:col-span-2 flex items-end gap-4 pb-1">
+                                                @if (hints.ShowRecursive)
+                                                {
+                                                    <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                                                        <input type="checkbox" class="kmk-checkbox" checked="@fConfig.Recursive"
+                                                               @onchange="(e) => { fConfig.Recursive = (bool)(e.Value ?? false); SyncFileOpConfig(step); }" />
+                                                        <span class="font-semibold text-slate-800">Inclure les sous-dossiers</span>
+                                                    </label>
+                                                }
+                                                @if (hints.DestinationLabel is not null)
+                                                {
+                                                    <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                                                        <input type="checkbox" class="kmk-checkbox" checked="@fConfig.Overwrite"
+                                                               @onchange="(e) => { fConfig.Overwrite = (bool)(e.Value ?? false); SyncFileOpConfig(step); }" />
+                                                        <span class="font-semibold text-slate-800">Écraser si déjà existant</span>
+                                                    </label>
+                                                }
+                                            </div>
+
+                                            @if (hints.ShowArchive)
+                                            {
+                                                <div class="col-span-1 sm:col-span-2 md:col-span-4">
+                                                    <label class="kmk-label">
+                                                        Dossier d'archive
+                                                        <span class="text-slate-400 font-normal text-[11px]">(facultatif — dépose une copie de sécurité en plus de l'opération, peut être sur un autre lecteur)</span>
+                                                    </label>
+                                                    <input class="kmk-input font-mono text-xs" placeholder="ex: E:\Archives\ (laisser vide pour ne rien archiver)"
+                                                           value="@fConfig.ArchiveDirectory"
+                                                           @oninput="(e) => { fConfig.ArchiveDirectory = string.IsNullOrWhiteSpace(e.Value?.ToString()) ? null : e.Value?.ToString(); SyncFileOpConfig(step); }" />
+                                                </div>
+                                            }
+
+                                            @if (hints.DestinationLabel is not null)
+                                            {
+                                                <div class="col-span-1 sm:col-span-2">
+                                                    <label class="kmk-label">
+                                                        Armateur / Partenaire
+                                                        <span class="text-slate-400 font-normal text-[11px]">(facultatif — fait remonter cette étape dans le Rapport des flux et la Cartographie EDI)</span>
+                                                    </label>
+                                                    <input class="kmk-input text-xs" placeholder="ex: MSC, MAERSK... (déduit du nom si vide)"
+                                                           value="@fConfig.Armateur"
+                                                           @oninput="(e) => { fConfig.Armateur = string.IsNullOrWhiteSpace(e.Value?.ToString()) ? null : e.Value?.ToString(); SyncFileOpConfig(step); }" />
+                                                </div>
+                                            }
+                                        </div>
+                                    }
+                                </div>
+                            }
+                            else if (IsEmailStep(step.Type))
+                            {
+                                var eConfig = GetOrCreateEmailConfig(step);
+                                <div class="col-span-2 sm:col-span-4 md:col-span-6 bg-slate-50/90 border border-slate-200/90 rounded-xl p-4 mt-2">
+                                    <div class="flex items-center justify-between mb-3 border-b border-slate-200/60 pb-2">
+                                        <span class="text-xs font-bold uppercase tracking-wider text-slate-700">Paramètres email (SMTP)</span>
+                                        <button type="button" class="kmk-btn-secondary kmk-btn-sm text-xs" @onclick="() => ToggleRawJson(step)">
+                                            @(IsRawJsonMode(step) ? "Afficher le formulaire" : "Mode JSON brut")
+                                        </button>
+                                    </div>
+
+                                    @if (IsRawJsonMode(step))
+                                    {
+                                        <div class="space-y-1">
+                                            <label class="kmk-label">Configuration (JSON brut)</label>
+                                            <textarea class="kmk-input font-mono text-xs" rows="4" @bind="step.ConfigJson"></textarea>
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                                            <div class="col-span-1 sm:col-span-3">
+                                                <label class="kmk-label">Serveur SMTP</label>
+                                                <input class="kmk-input font-mono text-xs" placeholder="ex: smtp.office365.com"
+                                                       value="@eConfig.SmtpHost"
+                                                       @oninput="(e) => { eConfig.SmtpHost = e.Value?.ToString() ?? string.Empty; SyncEmailConfig(step); }" />
+                                            </div>
+                                            <div>
+                                                <label class="kmk-label">Port</label>
+                                                <input type="number" class="kmk-input" placeholder="587"
+                                                       value="@eConfig.SmtpPort"
+                                                       @oninput="(e) => { if (int.TryParse(e.Value?.ToString(), out var p)) eConfig.SmtpPort = p; SyncEmailConfig(step); }" />
+                                            </div>
+
+                                            <div class="col-span-1 sm:col-span-2">
+                                                <label class="kmk-label">Expéditeur (From)</label>
+                                                <input class="kmk-input text-xs" placeholder="jobs@exemple.fr"
+                                                       value="@eConfig.From"
+                                                       @oninput="(e) => { eConfig.From = e.Value?.ToString() ?? string.Empty; SyncEmailConfig(step); }" />
+                                            </div>
+                                            <div class="col-span-1 sm:col-span-2">
+                                                <label class="kmk-label">Destinataire(s)</label>
+                                                <input class="kmk-input text-xs" placeholder="support@exemple.fr, autre@exemple.fr"
+                                                       value="@eConfig.ToCsv"
+                                                       @oninput="(e) => { eConfig.ToCsv = e.Value?.ToString() ?? string.Empty; SyncEmailConfig(step); }" />
+                                            </div>
+
+                                            <div class="col-span-1 sm:col-span-2 md:col-span-4">
+                                                <label class="kmk-label">Objet</label>
+                                                <input class="kmk-input text-xs" placeholder="Notification"
+                                                       value="@eConfig.Subject"
+                                                       @oninput="(e) => { eConfig.Subject = e.Value?.ToString() ?? string.Empty; SyncEmailConfig(step); }" />
+                                            </div>
+                                            <div class="col-span-1 sm:col-span-2 md:col-span-4">
+                                                <label class="kmk-label">Message</label>
+                                                <textarea class="kmk-input text-xs" rows="3" placeholder="Traitement terminé."
+                                                          @oninput="(e) => { eConfig.Body = e.Value?.ToString() ?? string.Empty; SyncEmailConfig(step); }">@eConfig.Body</textarea>
+                                            </div>
+
+                                            <div class="col-span-1 sm:col-span-2">
+                                                <label class="kmk-label">Pièce jointe <span class="text-slate-400 font-normal text-[11px]">(facultatif)</span></label>
+                                                <input class="kmk-input font-mono text-xs" placeholder="ex: C:\rapports\bilan.csv"
+                                                       value="@eConfig.AttachmentPath"
+                                                       @oninput="(e) => { eConfig.AttachmentPath = string.IsNullOrWhiteSpace(e.Value?.ToString()) ? null : e.Value?.ToString(); SyncEmailConfig(step); }" />
+                                            </div>
+                                            <div class="col-span-1 sm:col-span-2 flex items-end pb-1">
+                                                <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                                                    <input type="checkbox" class="kmk-checkbox" checked="@eConfig.UseTls"
+                                                           @onchange="(e) => { eConfig.UseTls = (bool)(e.Value ?? false); SyncEmailConfig(step); }" />
+                                                    <span class="font-semibold text-slate-800">Chiffrement TLS (recommandé)</span>
+                                                </label>
+                                            </div>
+                                            <div class="col-span-1 sm:col-span-2">
+                                                <label class="kmk-label">Armateur / partenaire <span class="text-slate-400 font-normal text-[11px]">(facultatif)</span></label>
+                                                <input class="kmk-input text-xs" placeholder="ex: MSC, CMA CGM, MAERSK..."
+                                                       value="@eConfig.Armateur"
+                                                       @oninput="(e) => { eConfig.Armateur = string.IsNullOrWhiteSpace(e.Value?.ToString()) ? null : e.Value?.ToString(); SyncEmailConfig(step); }" />
+                                                <p class="text-[11px] text-slate-400 mt-1">Fait apparaître cet envoi (canal SMTP) dans la Cartographie EDI.</p>
+                                            </div>
+                                        </div>
+
+                                        <p class="text-[11px] text-slate-400 mt-3 pt-2 border-t border-slate-200/60">
+                                            Le credential sélectionné ci-dessus fournit l'utilisateur/mot de passe d'authentification SMTP — le serveur et le port doivent être renseignés ici.
+                                        </p>
+                                    }
+                                </div>
+                            }
+                            else if (IsEmailReceptionStep(step.Type))
+                            {
+                                var rConfig = GetOrCreateEmailReceptionConfig(step);
+                                <div class="col-span-2 sm:col-span-4 md:col-span-6 bg-slate-50/90 border border-slate-200/90 rounded-xl p-4 mt-2">
+                                    <div class="flex items-center justify-between mb-3 border-b border-slate-200/60 pb-2">
+                                        <span class="text-xs font-bold uppercase tracking-wider text-slate-700">Paramètres réception email (IMAP)</span>
+                                        <button type="button" class="kmk-btn-secondary kmk-btn-sm text-xs" @onclick="() => ToggleRawJson(step)">
+                                            @(IsRawJsonMode(step) ? "Afficher le formulaire" : "Mode JSON brut")
+                                        </button>
+                                    </div>
+
+                                    @if (IsRawJsonMode(step))
+                                    {
+                                        <div class="space-y-1">
+                                            <label class="kmk-label">Configuration (JSON brut)</label>
+                                            <textarea class="kmk-input font-mono text-xs" rows="4" @bind="step.ConfigJson"></textarea>
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                                            <div class="col-span-1 sm:col-span-2">
+                                                <label class="kmk-label">Dossier de la boîte mail</label>
+                                                <input class="kmk-input font-mono text-xs" placeholder="INBOX"
+                                                       value="@rConfig.MailboxFolder"
+                                                       @oninput="(e) => { rConfig.MailboxFolder = string.IsNullOrWhiteSpace(e.Value?.ToString()) ? DefaultMailboxFolder : e.Value!.ToString()!; SyncEmailReceptionConfig(step); }" />
+                                            </div>
+                                            <div class="col-span-1 sm:col-span-2">
+                                                <label class="kmk-label">Nombre max de messages / exécution</label>
+                                                <input type="number" class="kmk-input" placeholder="50"
+                                                       value="@rConfig.MaxMessagesPerRun"
+                                                       @oninput="(e) => { if (int.TryParse(e.Value?.ToString(), out var n)) rConfig.MaxMessagesPerRun = n; SyncEmailReceptionConfig(step); }" />
+                                            </div>
+
+                                            <div class="col-span-1 sm:col-span-2">
+                                                <label class="kmk-label">Filtre expéditeur <span class="text-slate-400 font-normal text-[11px]">(facultatif)</span></label>
+                                                <input class="kmk-input text-xs" placeholder="ex: guce.gouv.ci"
+                                                       value="@rConfig.SenderFilter"
+                                                       @oninput="(e) => { rConfig.SenderFilter = string.IsNullOrWhiteSpace(e.Value?.ToString()) ? null : e.Value?.ToString(); SyncEmailReceptionConfig(step); }" />
+                                            </div>
+                                            <div class="col-span-1 sm:col-span-2">
+                                                <label class="kmk-label">Filtre objet <span class="text-slate-400 font-normal text-[11px]">(facultatif)</span></label>
+                                                <input class="kmk-input text-xs" placeholder="ex: EDI"
+                                                       value="@rConfig.SubjectFilter"
+                                                       @oninput="(e) => { rConfig.SubjectFilter = string.IsNullOrWhiteSpace(e.Value?.ToString()) ? null : e.Value?.ToString(); SyncEmailReceptionConfig(step); }" />
+                                            </div>
+
+                                            <div class="col-span-1 sm:col-span-2">
+                                                <label class="kmk-label">Extensions de pièces jointes à récupérer</label>
+                                                <input class="kmk-input font-mono text-xs" placeholder=".edi;.txt;.xml"
+                                                       value="@rConfig.AttachmentExtensionsCsv"
+                                                       @oninput="(e) => { rConfig.AttachmentExtensionsCsv = e.Value?.ToString(); SyncEmailReceptionConfig(step); }" />
+                                            </div>
+                                            <div class="col-span-1 sm:col-span-2">
+                                                <label class="kmk-label">Dossier local de dépôt</label>
+                                                <input class="kmk-input font-mono text-xs" placeholder="ex: C:\edi\entrants\"
+                                                       value="@rConfig.DownloadPath"
+                                                       @oninput="(e) => { rConfig.DownloadPath = e.Value?.ToString() ?? string.Empty; SyncEmailReceptionConfig(step); }" />
+                                            </div>
+
+                                            <div class="col-span-1 sm:col-span-2 flex items-end pb-1">
+                                                <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                                                    <input type="checkbox" class="kmk-checkbox" checked="@rConfig.MarkAsReadAfterDownload"
+                                                           @onchange="(e) => { rConfig.MarkAsReadAfterDownload = (bool)(e.Value ?? false); SyncEmailReceptionConfig(step); }" />
+                                                    <span class="font-semibold text-slate-800">Marquer comme lu après téléchargement</span>
+                                                </label>
+                                            </div>
+                                            <div class="col-span-1 sm:col-span-2 flex items-end pb-1">
+                                                <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                                                    <input type="checkbox" class="kmk-checkbox" checked="@rConfig.DeleteAfterDownload"
+                                                           @onchange="(e) => { rConfig.DeleteAfterDownload = (bool)(e.Value ?? false); SyncEmailReceptionConfig(step); }" />
+                                                    <span class="font-semibold text-slate-800">Supprimer l'email après téléchargement</span>
+                                                </label>
+                                            </div>
+                                            <div class="col-span-1 sm:col-span-2">
+                                                <label class="kmk-label">Armateur / partenaire <span class="text-slate-400 font-normal text-[11px]">(facultatif)</span></label>
+                                                <input class="kmk-input text-xs" placeholder="ex: MSC, CMA CGM, MAERSK..."
+                                                       value="@rConfig.Armateur"
+                                                       @oninput="(e) => { rConfig.Armateur = string.IsNullOrWhiteSpace(e.Value?.ToString()) ? null : e.Value?.ToString(); SyncEmailReceptionConfig(step); }" />
+                                                <p class="text-[11px] text-slate-400 mt-1">Fait apparaître cette relève (canal SMTP) dans la Cartographie EDI.</p>
+                                            </div>
+                                        </div>
+
+                                        <p class="text-[11px] text-slate-400 mt-3 pt-2 border-t border-slate-200/60">
+                                            Le credential sélectionné ci-dessus (type "Email IMAP") fournit l'hôte, le port et les identifiants de connexion — seuls les filtres et le dépôt sont à renseigner ici.
+                                        </p>
+                                    }
+                                </div>
+                            }
+                            else if (IsRobotStep(step.Type))
+                            {
+                                var rbConfig = GetOrCreateRobotConfig(step);
+                                <div class="col-span-2 sm:col-span-4 md:col-span-6 bg-slate-50/90 border border-slate-200/90 rounded-xl p-4 mt-2">
+                                    <div class="flex items-center justify-between mb-3 border-b border-slate-200/60 pb-2">
+                                        <span class="text-xs font-bold uppercase tracking-wider text-slate-700">Paramètres RPA (Robot Framework)</span>
+                                        <button type="button" class="kmk-btn-secondary kmk-btn-sm text-xs" @onclick="() => ToggleRawJson(step)">
+                                            @(IsRawJsonMode(step) ? "Afficher le formulaire" : "Mode JSON brut")
+                                        </button>
+                                    </div>
+
+                                    @if (IsRawJsonMode(step))
+                                    {
+                                        <div class="space-y-1">
+                                            <label class="kmk-label">Configuration (JSON brut)</label>
+                                            <textarea class="kmk-input font-mono text-xs" rows="4" @bind="step.ConfigJson"></textarea>
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                                            <div class="col-span-1 sm:col-span-3">
+                                                <label class="kmk-label">Fichier .robot à exécuter</label>
+                                                <input class="kmk-input font-mono text-xs" placeholder="ex: C:\rpa\saisie_guce.robot"
+                                                       value="@rbConfig.RobotFilePath"
+                                                       @oninput="(e) => { rbConfig.RobotFilePath = e.Value?.ToString() ?? string.Empty; SyncRobotConfig(step); }" />
+                                            </div>
+                                            <div>
+                                                <label class="kmk-label">Exécutable "robot" <span class="text-slate-400 font-normal text-[11px]">(facultatif)</span></label>
+                                                <input class="kmk-input font-mono text-xs" placeholder="robot"
+                                                       value="@rbConfig.RobotExecutablePath"
+                                                       @oninput="(e) => { rbConfig.RobotExecutablePath = string.IsNullOrWhiteSpace(e.Value?.ToString()) ? null : e.Value?.ToString(); SyncRobotConfig(step); }" />
+                                            </div>
+
+                                            <div class="col-span-1 sm:col-span-2">
+                                                <label class="kmk-label">Dossier de sortie (rapports) <span class="text-slate-400 font-normal text-[11px]">(facultatif)</span></label>
+                                                <input class="kmk-input font-mono text-xs" placeholder="ex: C:\rpa\rapports\"
+                                                       value="@rbConfig.OutputDirectory"
+                                                       @oninput="(e) => { rbConfig.OutputDirectory = string.IsNullOrWhiteSpace(e.Value?.ToString()) ? null : e.Value?.ToString(); SyncRobotConfig(step); }" />
+                                            </div>
+                                            <div class="col-span-1">
+                                                <label class="kmk-label">Tags à inclure <span class="text-slate-400 font-normal text-[11px]">(facultatif)</span></label>
+                                                <input class="kmk-input text-xs" placeholder="ex: smoke;critique"
+                                                       value="@rbConfig.IncludeTagsCsv"
+                                                       @oninput="(e) => { rbConfig.IncludeTagsCsv = string.IsNullOrWhiteSpace(e.Value?.ToString()) ? null : e.Value?.ToString(); SyncRobotConfig(step); }" />
+                                            </div>
+                                            <div class="col-span-1">
+                                                <label class="kmk-label">Tags à exclure <span class="text-slate-400 font-normal text-[11px]">(facultatif)</span></label>
+                                                <input class="kmk-input text-xs" placeholder="ex: manuel"
+                                                       value="@rbConfig.ExcludeTagsCsv"
+                                                       @oninput="(e) => { rbConfig.ExcludeTagsCsv = string.IsNullOrWhiteSpace(e.Value?.ToString()) ? null : e.Value?.ToString(); SyncRobotConfig(step); }" />
+                                            </div>
+
+                                            <div class="col-span-1 sm:col-span-2 md:col-span-4">
+                                                <label class="kmk-label">Variables Robot Framework <span class="text-slate-400 font-normal text-[11px]">(une par ligne, format NOM:valeur)</span></label>
+                                                <textarea class="kmk-input font-mono text-xs" rows="3" placeholder="URL_PORTAIL:https://guce.gouv.ci&#10;UTILISATEUR:hdl-cit"
+                                                          @oninput="(e) => { rbConfig.VariablesText = e.Value?.ToString(); SyncRobotConfig(step); }">@rbConfig.VariablesText</textarea>
+                                            </div>
+                                            <div class="col-span-1 sm:col-span-2 md:col-span-4">
+                                                <label class="kmk-label">Arguments supplémentaires <span class="text-slate-400 font-normal text-[11px]">(facultatif, utilisateurs avancés)</span></label>
+                                                <input class="kmk-input font-mono text-xs" placeholder="ex: --loglevel DEBUG"
+                                                       value="@rbConfig.ExtraArguments"
+                                                       @oninput="(e) => { rbConfig.ExtraArguments = string.IsNullOrWhiteSpace(e.Value?.ToString()) ? null : e.Value?.ToString(); SyncRobotConfig(step); }" />
+                                            </div>
+                                        </div>
+
+                                        <p class="text-[11px] text-slate-400 mt-3 pt-2 border-t border-slate-200/60">
+                                            Le fichier .robot lui-même doit être écrit au préalable avec un éditeur externe (RIDE, VS Code + extension Robot Framework...). kernelMK nécessite Python et le paquet
+                                            <code class="font-mono">robotframework</code> installés sur ce serveur (<code class="font-mono">pip install robotframework</code>) pour pouvoir lancer la commande "robot".
+                                        </p>
+                                    }
+                                </div>
+                            }
+                            else if (IsSqlStep(step.Type))
+                            {
+                                var sqlConfig = GetOrCreateSqlConfig(step);
+                                <div class="col-span-2 sm:col-span-4 md:col-span-6 bg-slate-50/90 border border-slate-200/90 rounded-xl p-4 mt-2">
+                                    <div class="flex items-center justify-between mb-3 border-b border-slate-200/60 pb-2">
+                                        <span class="text-xs font-bold uppercase tracking-wider text-slate-700">Paramètres Base de données</span>
+                                        <button type="button" class="kmk-btn-secondary kmk-btn-sm text-xs" @onclick="() => ToggleRawJson(step)">
+                                            @(IsRawJsonMode(step) ? "Afficher le formulaire" : "Mode JSON brut")
+                                        </button>
+                                    </div>
+
+                                    @if (IsRawJsonMode(step))
+                                    {
+                                        <div class="space-y-1">
+                                            <label class="kmk-label">Configuration (JSON brut)</label>
+                                            <textarea class="kmk-input font-mono text-xs" rows="4" @bind="step.ConfigJson"></textarea>
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                                            <div>
+                                                <label class="kmk-label">Fournisseur</label>
+                                                <select class="kmk-select" value="@sqlConfig.Provider"
+                                                        @onchange='(e) => { sqlConfig.Provider = e.Value?.ToString() ?? "Sqlite"; SyncSqlConfig(step); }'>
+                                                    <option value="Sqlite">Sqlite</option>
+                                                    <option value="SqlServer">SqlServer</option>
+                                                </select>
+                                            </div>
+                                            <div class="col-span-1 sm:col-span-2 flex items-end pb-1">
+                                                <label class="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                                                    <input type="checkbox" class="kmk-checkbox" checked="@sqlConfig.IsStoredProcedure"
+                                                           @onchange="(e) => { sqlConfig.IsStoredProcedure = (bool)(e.Value ?? false); SyncSqlConfig(step); }" />
+                                                    <span class="font-semibold text-slate-800">Procédure stockée</span>
+                                                </label>
+                                            </div>
+                                            <div>
+                                                <label class="kmk-label">Timeout requête (s)</label>
+                                                <input type="number" class="kmk-input" placeholder="300"
+                                                       value="@sqlConfig.CommandTimeoutSeconds"
+                                                       @oninput="(e) => { if (int.TryParse(e.Value?.ToString(), out var t)) sqlConfig.CommandTimeoutSeconds = t; SyncSqlConfig(step); }" />
+                                            </div>
+
+                                            @if (sqlConfig.Provider == "SqlServer" && step.CredentialId is not null)
+                                            {
+                                                <div class="col-span-1 sm:col-span-2 md:col-span-4">
+                                                    <label class="kmk-label">Nom de la base</label>
+                                                    <input class="kmk-input text-xs" placeholder="ex: KernelMK_EDI"
+                                                           value="@sqlConfig.Database"
+                                                           @oninput="(e) => { sqlConfig.Database = string.IsNullOrWhiteSpace(e.Value?.ToString()) ? null : e.Value?.ToString(); SyncSqlConfig(step); }" />
+                                                    <p class="text-[11px] text-slate-400 mt-1">Le credential sélectionné ci-dessus (type "Base de données") fournit l'hôte, le port et les identifiants — seul le nom de la base est à renseigner ici.</p>
+                                                </div>
+                                            }
+                                            else
+                                            {
+                                                <div class="col-span-1 sm:col-span-2 md:col-span-4">
+                                                    <label class="kmk-label">
+                                                        Chaîne de connexion
+                                                        @if (sqlConfig.Provider == "SqlServer")
+                                                        {
+                                                            <span class="text-slate-400 font-normal text-[11px]">(ou sélectionnez un credential "Base de données" ci-dessus pour éviter d'écrire le mot de passe ici)</span>
+                                                        }
+                                                    </label>
+                                                    <input class="kmk-input font-mono text-xs" placeholder="@(sqlConfig.Provider == "SqlServer" ? "Server=...;Database=...;User Id=...;Password=...;" : "Data Source=chemin/vers/base.db")"
+                                                           value="@sqlConfig.ConnectionString"
+                                                           @oninput="(e) => { sqlConfig.ConnectionString = e.Value?.ToString() ?? string.Empty; SyncSqlConfig(step); }" />
+                                                </div>
+                                            }
+
+                                            <div class="col-span-1 sm:col-span-2 md:col-span-4">
+                                                <label class="kmk-label">Requête / commande SQL</label>
+                                                <textarea class="kmk-input font-mono text-xs" rows="4" placeholder="SELECT * FROM ma_table WHERE ...;"
+                                                          @oninput="(e) => { sqlConfig.CommandText = e.Value?.ToString() ?? string.Empty; SyncSqlConfig(step); }">@sqlConfig.CommandText</textarea>
+                                            </div>
+                                        </div>
+
+                                        <p class="text-[11px] text-slate-400 mt-3 pt-2 border-t border-slate-200/60">
+                                            Un SELECT affiche un aperçu des lignes retournées (jusqu'à 50) dans le diagnostic de l'étape ; toute autre commande (INSERT/UPDATE/DELETE/procédure) affiche le nombre de lignes affectées.
+                                        </p>
+                                    }
+                                </div>
+                            }
                             else
                             {
                                 <div class="col-span-2 sm:col-span-4 md:col-span-6">
@@ -485,8 +942,12 @@ else
                             {
                                 <div class="col-span-3">
                                     <label class="kmk-label">Jeton d'authentification API (Webhook)</label>
-                                    <input class="kmk-input font-mono text-xs" placeholder="token-secret-guce-cit" @bind="trigger.WebhookToken" />
+                                    <div class="flex gap-2">
+                                        <input class="kmk-input font-mono text-xs" readonly placeholder="Clique sur « Générer » pour créer un jeton sécurisé" value="@trigger.WebhookToken" />
+                                        <button type="button" class="kmk-btn-secondary kmk-btn-sm whitespace-nowrap" @onclick="() => GenerateWebhookToken(trigger)">🔑 Générer</button>
+                                    </div>
                                     <p class="text-[11px] text-slate-500 mt-1">URL de déclenchement : <code>POST http://[serveur]:5000/api/triggers/@(string.IsNullOrWhiteSpace(trigger.WebhookToken) ? "{jeton}" : trigger.WebhookToken)</code></p>
+                                    <p class="text-[11px] text-amber-600 mt-1">⚠️ Ce jeton donne le droit de déclencher ce job à distance sans authentification supplémentaire. Ne le partage que via un canal sécurisé.</p>
                                 </div>
                             }
 
@@ -696,6 +1157,11 @@ else
 
     private void AddTrigger() => _job.Triggers.Add(new JobTrigger { Type = TriggerType.Horaire, Enabled = true });
 
+    private void GenerateWebhookToken(JobTrigger trigger)
+    {
+        trigger.WebhookToken = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+    }
+
     private void AddDependency()
     {
         if (_otherJobs.Count == 0) return;
@@ -724,12 +1190,31 @@ else
     }
 
     private readonly Dictionary<JobStep, TransferStepConfig> _transferConfigs = new();
+    private readonly Dictionary<JobStep, FileOpStepConfig> _fileOpConfigs = new();
+    private readonly Dictionary<JobStep, EmailStepConfig> _emailConfigs = new();
+    private readonly Dictionary<JobStep, EmailReceptionStepConfig> _emailReceptionConfigs = new();
+    private readonly Dictionary<JobStep, RobotFrameworkStepConfig> _robotConfigs = new();
+    private readonly Dictionary<JobStep, SqlStepConfig> _sqlConfigs = new();
     private readonly Dictionary<JobStep, bool> _rawJsonMode = new();
     private readonly Dictionary<JobStep, ConnectionTestResult?> _testResults = new();
     private readonly Dictionary<JobStep, bool> _isTesting = new();
 
     private static bool IsTransferStep(StepType type) =>
         type is StepType.TransfertSftp or StepType.TransfertFtp or StepType.TransfertFtps or StepType.TransfertSmb;
+
+    private static bool IsEmailStep(StepType type) => type == StepType.EmailSmtp;
+
+    private static bool IsEmailReceptionStep(StepType type) => type == StepType.ReceptionEmailImap;
+    private const string DefaultMailboxFolder = "INBOX";
+
+    private static bool IsRobotStep(StepType type) => type == StepType.RpaRobotFramework;
+
+    private static bool IsSqlStep(StepType type) => type is StepType.ScriptSql or StepType.BaseDeDonneesRequete;
+
+    private static bool IsFileOpStep(StepType type) =>
+        type is StepType.FichierCopier or StepType.FichierDeplacer or StepType.FichierRenommer
+            or StepType.FichierSupprimer or StepType.FichierCompresser or StepType.FichierDecompresser
+            or StepType.FichierVerifier;
 
     private bool IsRawJsonMode(JobStep step) => _rawJsonMode.GetValueOrDefault(step, false);
 
@@ -738,14 +1223,209 @@ else
         var current = IsRawJsonMode(step);
         if (!current)
         {
-            SyncTransferConfig(step);
+            if (IsTransferStep(step.Type)) SyncTransferConfig(step);
+            else if (IsFileOpStep(step.Type)) SyncFileOpConfig(step);
+            else if (IsEmailStep(step.Type)) SyncEmailConfig(step);
+            else if (IsEmailReceptionStep(step.Type)) SyncEmailReceptionConfig(step);
+            else if (IsRobotStep(step.Type)) SyncRobotConfig(step);
+            else if (IsSqlStep(step.Type)) SyncSqlConfig(step);
         }
         else
         {
-            _transferConfigs.Remove(step);
-            _ = GetOrCreateTransferConfig(step);
+            if (IsTransferStep(step.Type))
+            {
+                _transferConfigs.Remove(step);
+                _ = GetOrCreateTransferConfig(step);
+            }
+            else if (IsFileOpStep(step.Type))
+            {
+                _fileOpConfigs.Remove(step);
+                _ = GetOrCreateFileOpConfig(step);
+            }
+            else if (IsEmailStep(step.Type))
+            {
+                _emailConfigs.Remove(step);
+                _ = GetOrCreateEmailConfig(step);
+            }
+            else if (IsEmailReceptionStep(step.Type))
+            {
+                _emailReceptionConfigs.Remove(step);
+                _ = GetOrCreateEmailReceptionConfig(step);
+            }
+            else if (IsRobotStep(step.Type))
+            {
+                _robotConfigs.Remove(step);
+                _ = GetOrCreateRobotConfig(step);
+            }
+            else if (IsSqlStep(step.Type))
+            {
+                _sqlConfigs.Remove(step);
+                _ = GetOrCreateSqlConfig(step);
+            }
         }
         _rawJsonMode[step] = !current;
+    }
+
+    private record FileOpUiHints(string SourceLabel, string? DestinationLabel, bool ShowRecursive, bool ShowFilter, bool ShowArchive);
+
+    private static FileOpUiHints GetFileOpUiHints(StepType type) => type switch
+    {
+        StepType.FichierCopier => new("Dossier ou fichier source", "Dossier de destination", true, true, true),
+        StepType.FichierDeplacer => new("Dossier ou fichier source", "Dossier de destination", true, true, true),
+        StepType.FichierRenommer => new("Fichier source (chemin complet)", "Nouveau chemin / nom du fichier", false, false, true),
+        StepType.FichierSupprimer => new("Dossier ou fichier à supprimer", null, true, true, true),
+        StepType.FichierCompresser => new("Dossier à compresser", "Fichier .zip de sortie", false, false, true),
+        StepType.FichierDecompresser => new("Fichier .zip à extraire", "Dossier de destination", false, false, true),
+        StepType.FichierVerifier => new("Dossier ou fichier à vérifier", null, true, true, false),
+        _ => new("Chemin source", "Chemin destination", true, true, true)
+    };
+
+    private FileOpStepConfig GetOrCreateFileOpConfig(JobStep step)
+    {
+        if (!_fileOpConfigs.TryGetValue(step, out var config))
+        {
+            try
+            {
+                config = !string.IsNullOrWhiteSpace(step.ConfigJson) && step.ConfigJson != "{}"
+                    ? JsonSerializer.Deserialize<FileOpStepConfig>(step.ConfigJson) ?? new FileOpStepConfig()
+                    : new FileOpStepConfig();
+            }
+            catch
+            {
+                config = new FileOpStepConfig();
+            }
+            _fileOpConfigs[step] = config;
+        }
+        return config;
+    }
+
+    private void SyncFileOpConfig(JobStep step)
+    {
+        if (_fileOpConfigs.TryGetValue(step, out var config))
+        {
+            step.ConfigJson = JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true });
+        }
+    }
+
+    private EmailStepConfig GetOrCreateEmailConfig(JobStep step)
+    {
+        if (!_emailConfigs.TryGetValue(step, out var config))
+        {
+            try
+            {
+                config = !string.IsNullOrWhiteSpace(step.ConfigJson) && step.ConfigJson != "{}"
+                    ? JsonSerializer.Deserialize<EmailStepConfig>(step.ConfigJson) ?? new EmailStepConfig()
+                    : new EmailStepConfig { SmtpPort = 587, UseTls = true };
+            }
+            catch
+            {
+                config = new EmailStepConfig { SmtpPort = 587, UseTls = true };
+            }
+
+            // Le credential ne fournit que l'authentification (utilisateur/mot de passe) à l'exécution — mais on
+            // préremplit ici l'hôte/port pour l'écran si le credential en porte déjà (confort de saisie uniquement).
+            if (string.IsNullOrWhiteSpace(config.SmtpHost) && step.CredentialId is not null)
+            {
+                var cred = _credentials.FirstOrDefault(c => c.Id == step.CredentialId.Value);
+                if (cred is not null)
+                {
+                    if (!string.IsNullOrWhiteSpace(cred.Host)) config.SmtpHost = cred.Host;
+                    if (cred.Port is > 0) config.SmtpPort = cred.Port.Value;
+                }
+            }
+
+            _emailConfigs[step] = config;
+        }
+        return config;
+    }
+
+    private void SyncEmailConfig(JobStep step)
+    {
+        if (_emailConfigs.TryGetValue(step, out var config))
+        {
+            step.ConfigJson = JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true });
+        }
+    }
+
+    private EmailReceptionStepConfig GetOrCreateEmailReceptionConfig(JobStep step)
+    {
+        if (!_emailReceptionConfigs.TryGetValue(step, out var config))
+        {
+            try
+            {
+                config = !string.IsNullOrWhiteSpace(step.ConfigJson) && step.ConfigJson != "{}"
+                    ? JsonSerializer.Deserialize<EmailReceptionStepConfig>(step.ConfigJson) ?? new EmailReceptionStepConfig()
+                    : new EmailReceptionStepConfig();
+            }
+            catch
+            {
+                config = new EmailReceptionStepConfig();
+            }
+            _emailReceptionConfigs[step] = config;
+        }
+        return config;
+    }
+
+    private void SyncEmailReceptionConfig(JobStep step)
+    {
+        if (_emailReceptionConfigs.TryGetValue(step, out var config))
+        {
+            step.ConfigJson = JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true });
+        }
+    }
+
+    private RobotFrameworkStepConfig GetOrCreateRobotConfig(JobStep step)
+    {
+        if (!_robotConfigs.TryGetValue(step, out var config))
+        {
+            try
+            {
+                config = !string.IsNullOrWhiteSpace(step.ConfigJson) && step.ConfigJson != "{}"
+                    ? JsonSerializer.Deserialize<RobotFrameworkStepConfig>(step.ConfigJson) ?? new RobotFrameworkStepConfig()
+                    : new RobotFrameworkStepConfig();
+            }
+            catch
+            {
+                config = new RobotFrameworkStepConfig();
+            }
+            _robotConfigs[step] = config;
+        }
+        return config;
+    }
+
+    private void SyncRobotConfig(JobStep step)
+    {
+        if (_robotConfigs.TryGetValue(step, out var config))
+        {
+            step.ConfigJson = JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true });
+        }
+    }
+
+    private SqlStepConfig GetOrCreateSqlConfig(JobStep step)
+    {
+        if (!_sqlConfigs.TryGetValue(step, out var config))
+        {
+            try
+            {
+                config = !string.IsNullOrWhiteSpace(step.ConfigJson) && step.ConfigJson != "{}"
+                    ? JsonSerializer.Deserialize<SqlStepConfig>(step.ConfigJson) ?? new SqlStepConfig()
+                    : new SqlStepConfig();
+            }
+            catch
+            {
+                config = new SqlStepConfig();
+            }
+            _sqlConfigs[step] = config;
+        }
+        return config;
+    }
+
+    private void SyncSqlConfig(JobStep step)
+    {
+        if (_sqlConfigs.TryGetValue(step, out var config))
+        {
+            step.ConfigJson = JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true });
+        }
     }
 
     private string? GetCredentialHost(Guid? credentialId) =>
@@ -849,6 +1529,17 @@ else
                     }
 
                     SyncTransferConfig(step);
+                }
+            }
+            else if (IsEmailStep(step.Type))
+            {
+                var cred = _credentials.FirstOrDefault(c => c.Id == id);
+                if (cred is not null)
+                {
+                    var config = GetOrCreateEmailConfig(step);
+                    if (!string.IsNullOrWhiteSpace(cred.Host)) config.SmtpHost = cred.Host;
+                    if (cred.Port is > 0) config.SmtpPort = cred.Port.Value;
+                    SyncEmailConfig(step);
                 }
             }
         }
@@ -962,6 +1653,11 @@ else
     {
         _job.Steps.Remove(step);
         _transferConfigs.Remove(step);
+        _fileOpConfigs.Remove(step);
+        _emailConfigs.Remove(step);
+        _emailReceptionConfigs.Remove(step);
+        _robotConfigs.Remove(step);
+        _sqlConfigs.Remove(step);
         _rawJsonMode.Remove(step);
         _testResults.Remove(step);
         _isTesting.Remove(step);
@@ -1004,7 +1700,7 @@ else
                 new ScriptStepConfig { Path = @"C:\scripts\exemple.ps1", Arguments = "-Param valeur" },
             StepType.FichierCopier or StepType.FichierDeplacer or StepType.FichierRenommer or StepType.FichierSupprimer
                 or StepType.FichierCompresser or StepType.FichierDecompresser or StepType.FichierVerifier =>
-                new FileOpStepConfig { SourcePath = @"C:\source", DestinationPath = @"C:\destination", Filter = "*.csv;*.txt;*.xml" },
+                new FileOpStepConfig { SourcePath = @"C:\source", DestinationPath = @"D:\destination", Filter = "*.csv;*.txt;*.xml" },
             StepType.TransfertFtp or StepType.TransfertFtps or StepType.TransfertSftp or StepType.TransfertSmb =>
                 new TransferStepConfig
                 {
@@ -1016,8 +1712,23 @@ else
                 new SqlStepConfig { Provider = "Sqlite", ConnectionString = "Data Source=exemple.db", CommandText = "SELECT 1;" },
             StepType.EmailSmtp =>
                 new EmailStepConfig { SmtpHost = "smtp.exemple.fr", SmtpPort = 587, From = "jobs@exemple.fr", ToCsv = "support@exemple.fr", Subject = "Notification", Body = "Traitement terminé." },
+            StepType.ReceptionEmailImap =>
+                new EmailReceptionStepConfig
+                {
+                    MailboxFolder = "INBOX",
+                    AttachmentExtensionsCsv = ".edi;.txt;.xml",
+                    DownloadPath = @"C:\edi\entrants\",
+                    MarkAsReadAfterDownload = true
+                },
             StepType.Webhook or StepType.TransfertHttp =>
                 new WebhookStepConfig { Url = "https://exemple.fr/webhook", Method = "POST" },
+            StepType.RpaRobotFramework =>
+                new RobotFrameworkStepConfig
+                {
+                    RobotFilePath = @"C:\rpa\saisie_guce.robot",
+                    OutputDirectory = @"C:\rpa\rapports\",
+                    VariablesText = "URL_PORTAIL:https://guce.gouv.ci"
+                },
             StepType.ControleAttente or StepType.ControleCondition or StepType.ControleAppelJob =>
                 new ControlStepConfig { Operation = ControlOperation.Attente, WaitSeconds = 30 },
             StepType.EdifactMessage =>
@@ -1037,17 +1748,28 @@ else
         };
 
         step.ConfigJson = JsonSerializer.Serialize(template, new JsonSerializerOptions { WriteIndented = true });
+
+        // Invalide les caches de formulaire visuel pour que le nouveau modèle soit repris immédiatement à l'écran.
+        _transferConfigs.Remove(step);
+        _fileOpConfigs.Remove(step);
+        _emailConfigs.Remove(step);
+        _emailReceptionConfigs.Remove(step);
+        _robotConfigs.Remove(step);
+        _sqlConfigs.Remove(step);
     }
 
     private async Task SaveAsync()
     {
-        // Synchroniser tous les formulaires visuels de transfert vers le ConfigJson
+        // Synchroniser tous les formulaires visuels (transfert, opérations fichiers) vers le ConfigJson
         foreach (var s in _job.Steps)
         {
-            if (IsTransferStep(s.Type) && !_rawJsonMode.GetValueOrDefault(s, false))
-            {
-                SyncTransferConfig(s);
-            }
+            if (_rawJsonMode.GetValueOrDefault(s, false)) continue;
+            if (IsTransferStep(s.Type)) SyncTransferConfig(s);
+            else if (IsFileOpStep(s.Type)) SyncFileOpConfig(s);
+            else if (IsEmailStep(s.Type)) SyncEmailConfig(s);
+            else if (IsEmailReceptionStep(s.Type)) SyncEmailReceptionConfig(s);
+            else if (IsRobotStep(s.Type)) SyncRobotConfig(s);
+            else if (IsSqlStep(s.Type)) SyncSqlConfig(s);
         }
 
         await using var db = await DbFactory.CreateDbContextAsync();

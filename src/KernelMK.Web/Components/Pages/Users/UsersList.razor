@@ -4,11 +4,13 @@
 @rendermode InteractiveServer
 @attribute [Authorize(Roles = "Administrateur")]
 @using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
 @using KernelMK.Engine.Audit
 @inject UserManager<ApplicationUser> UserManager
 @inject RoleManager<IdentityRole> RoleManager
 @inject AuditService Audit
 @inject AuthenticationStateProvider AuthState
+@inject IDbContextFactory<AppDbContext> DbFactory
 
 <PageTitle>Utilisateurs &amp; rôles · kernelMK</PageTitle>
 
@@ -73,6 +75,10 @@
 }
 else
 {
+    <div class="kmk-card p-3.5 mb-4">
+        <input class="kmk-input !py-2 text-xs max-w-sm" placeholder="Rechercher par email ou nom..."
+               @bind="_searchQuery" @bind:event="oninput" @bind:after="() => _page = 1" />
+    </div>
     <div class="kmk-table-container">
         <table class="kmk-table">
             <thead>
@@ -85,17 +91,28 @@ else
                 </tr>
             </thead>
             <tbody>
-                @foreach (var u in _users)
+                @foreach (var u in PagedUsers)
                 {
                     <tr>
                         <td class="font-semibold text-slate-900 text-sm">@u.Email</td>
                         <td class="text-slate-600 text-sm">@(string.IsNullOrWhiteSpace(u.DisplayName) ? "-" : u.DisplayName)</td>
                         <td>
-                            <button type="button" @onclick="() => ToggleActiveAsync(u, !u.Active)"
-                                    class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold @(u.Active ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-slate-100 text-slate-500 border border-slate-200") hover:opacity-80 transition-opacity cursor-pointer">
-                                <span class="h-1.5 w-1.5 rounded-full @(u.Active ? "bg-emerald-500" : "bg-slate-400")"></span>
-                                @(u.Active ? "Actif" : "Désactivé")
-                            </button>
+                            <div class="flex items-center gap-1.5 flex-wrap">
+                                <button type="button" @onclick="() => ToggleActiveAsync(u, !u.Active)"
+                                        class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold @(u.Active ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-slate-100 text-slate-500 border border-slate-200") hover:opacity-80 transition-opacity cursor-pointer">
+                                    <span class="h-1.5 w-1.5 rounded-full @(u.Active ? "bg-emerald-500" : "bg-slate-400")"></span>
+                                    @(u.Active ? "Actif" : "Désactivé")
+                                </button>
+                                @if (IsLocked(u))
+                                {
+                                    <button type="button" @onclick="() => UnlockAsync(u)"
+                                            class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200 hover:opacity-80 transition-opacity cursor-pointer"
+                                            title="Compte verrouillé automatiquement (30 jours d'inactivité) — cliquer pour déverrouiller.">
+                                        <span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span>
+                                        Verrouillé — Déverrouiller
+                                    </button>
+                                }
+                            </div>
                         </td>
                         <td>
                             @if (u.TwoFactorEnabled)
@@ -130,6 +147,7 @@ else
                 }
             </tbody>
         </table>
+        <Pagination @bind-CurrentPage="_page" @bind-PageSize="_pageSize" TotalItems="FilteredUsers.Count" />
     </div>
 }
 
@@ -137,6 +155,17 @@ else
     private List<ApplicationUser> _users = new();
     private Dictionary<string, List<string>> _userRoles = new();
     private bool _loading = true;
+    private string _searchQuery = "";
+    private int _page = 1;
+    private int _pageSize = 10;
+
+    private List<ApplicationUser> FilteredUsers => string.IsNullOrWhiteSpace(_searchQuery)
+        ? _users
+        : _users.Where(u =>
+            (u.Email?.Contains(_searchQuery, StringComparison.OrdinalIgnoreCase) ?? false) ||
+            (u.DisplayName?.Contains(_searchQuery, StringComparison.OrdinalIgnoreCase) ?? false)).ToList();
+
+    private IEnumerable<ApplicationUser> PagedUsers => FilteredUsers.Skip((_page - 1) * _pageSize).Take(_pageSize);
     private string _newEmail = "";
     private string _newDisplayName = "";
     private string _newPassword = "";
@@ -163,12 +192,28 @@ else
     private async Task LoadAsync()
     {
         _loading = true;
-        _users = UserManager.Users.ToList();
-        _userRoles = new Dictionary<string, List<string>>();
-        foreach (var u in _users)
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        // Avant ce correctif : une requête GetRolesAsync par utilisateur (N+1) — sur un déploiement avec
+        // davantage d'utilisateurs ou un disque plus lent, cette boucle séquentielle pouvait rendre la page
+        // perceptiblement figée après un clic sur une case rôle (LoadAsync est rappelé après chaque bascule),
+        // donnant l'impression que l'attribution "ne se fait pas automatiquement" alors qu'elle avait bien
+        // été enregistrée — elle mettait simplement du temps à se refléter à l'écran.
+        _users = await db.Users.AsNoTracking().ToListAsync();
+        var roleRows = await (
+            from ur in db.UserRoles.AsNoTracking()
+            join r in db.Roles.AsNoTracking() on ur.RoleId equals r.Id
+            select new { ur.UserId, r.Name }
+        ).ToListAsync();
+
+        _userRoles = roleRows
+            .GroupBy(x => x.UserId)
+            .ToDictionary(g => g.Key, g => g.Select(x => x.Name!).ToList());
+        foreach (var u in _users.Where(u => !_userRoles.ContainsKey(u.Id)))
         {
-            _userRoles[u.Id] = (await UserManager.GetRolesAsync(u)).ToList();
+            _userRoles[u.Id] = new List<string>();
         }
+
         _loading = false;
     }
 
@@ -201,6 +246,15 @@ else
         user.Active = active;
         await UserManager.UpdateAsync(user);
         await Audit.LogAsync(active ? AuditAction.Activation : AuditAction.Desactivation, nameof(ApplicationUser), user.Id, user.Email, null, _currentUser);
+    }
+
+    private static bool IsLocked(ApplicationUser user) => user.LockoutEnd.HasValue && user.LockoutEnd > DateTimeOffset.UtcNow;
+
+    private async Task UnlockAsync(ApplicationUser user)
+    {
+        await UserManager.SetLockoutEndDateAsync(user, null);
+        await Audit.LogAsync(AuditAction.Activation, nameof(ApplicationUser), user.Id, user.Email, null, _currentUser, "Déverrouillage manuel (verrouillage automatique pour inactivité levé par un administrateur)");
+        await LoadAsync();
     }
 
     private async Task ToggleRoleAsync(ApplicationUser user, string role, bool assign)

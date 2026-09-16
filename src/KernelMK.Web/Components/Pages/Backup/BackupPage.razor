@@ -71,6 +71,34 @@
             {
                 <p class="text-xs text-slate-600 mt-3 break-all">Créée : <code class="bg-slate-100 rounded px-1.5 py-0.5">@_backupPath</code></p>
             }
+
+            <div class="mt-4 pt-4 border-t border-slate-100">
+                <p class="text-xs font-semibold text-slate-700 mb-1">Restaurer une sauvegarde</p>
+                @if (_pendingRestore)
+                {
+                    <div class="rounded-lg bg-amber-50 border border-amber-200 p-3 mb-2">
+                        <p class="text-xs text-amber-800 font-semibold">⚠ Restauration en attente</p>
+                        <p class="text-xs text-amber-700 mt-1">
+                            Un fichier a été validé et sera appliqué automatiquement au <strong>prochain redémarrage</strong> du service kernelMK
+                            (la base actuelle sera sauvegardée avant d'être remplacée). Redémarrez le service Windows pour l'appliquer maintenant,
+                            ou annulez ci-dessous.
+                        </p>
+                        <button class="kmk-btn-secondary !py-1 !px-2 text-xs mt-2" @onclick="CancelRestoreAsync">Annuler la restauration en attente</button>
+                    </div>
+                }
+                else
+                {
+                    <p class="text-xs text-slate-500 mb-2">
+                        Dépose un fichier .db précédemment sauvegardé. La restauration ne s'applique qu'au <strong>prochain redémarrage</strong> du service
+                        (jamais à chaud), pour éviter tout risque de corruption pendant que l'application tourne.
+                    </p>
+                    <InputFile OnChange="StageRestoreAsync" class="text-sm" />
+                }
+                @if (!string.IsNullOrEmpty(_restoreMessage))
+                {
+                    <p class="text-xs @(_restoreError ? "text-rose-700" : "text-emerald-700") mt-2 font-medium">@_restoreMessage</p>
+                }
+            </div>
         </div>
     </div>
 </div>
@@ -127,11 +155,43 @@
     private string? _importMessage;
     private string? _backupPath;
     private string? _currentUser;
+    private bool _pendingRestore;
+    private string? _restoreMessage;
+    private bool _restoreError;
 
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthState.GetAuthenticationStateAsync();
         _currentUser = authState.User.Identity?.Name;
+        _pendingRestore = Backup.HasPendingDatabaseRestore();
+    }
+
+    private async Task StageRestoreAsync(InputFileChangeEventArgs e)
+    {
+        _restoreMessage = null;
+        try
+        {
+            await using var stream = e.File.OpenReadStream(maxAllowedSize: 500_000_000);
+            await Backup.StagePendingDatabaseRestoreAsync(stream);
+            _pendingRestore = true;
+            _restoreError = false;
+            _restoreMessage = "Fichier validé — sera appliqué au prochain redémarrage du service.";
+            await Audit.LogAsync(AuditAction.Restauration, "Base de données", null, null, null, _currentUser, "Restauration mise en attente (appliquée au prochain redémarrage)");
+        }
+        catch (Exception ex)
+        {
+            _restoreError = true;
+            _restoreMessage = $"Fichier rejeté : {ex.Message}";
+        }
+    }
+
+    private async Task CancelRestoreAsync()
+    {
+        Backup.CancelPendingDatabaseRestore();
+        _pendingRestore = false;
+        _restoreError = false;
+        _restoreMessage = "Restauration en attente annulée.";
+        await Audit.LogAsync(AuditAction.Annulation, "Base de données", null, null, null, _currentUser, "Restauration en attente annulée");
     }
 
     private async Task ExportConfigAsync()

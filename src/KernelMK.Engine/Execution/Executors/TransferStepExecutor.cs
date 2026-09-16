@@ -4,6 +4,7 @@ using KernelMK.Core;
 using KernelMK.Core.Entities;
 using KernelMK.Core.StepConfigs;
 using KernelMK.Data;
+using KernelMK.Data.Security;
 using FluentFTP;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -16,11 +17,13 @@ namespace KernelMK.Engine.Execution.Executors;
 public class TransferStepExecutor : IStepExecutor
 {
     private readonly IDbContextFactory<AppDbContext> _dbFactory;
+    private readonly CredentialProtector _protector;
     private readonly ILogger<TransferStepExecutor> _logger;
 
-    public TransferStepExecutor(IDbContextFactory<AppDbContext> dbFactory, ILogger<TransferStepExecutor> logger)
+    public TransferStepExecutor(IDbContextFactory<AppDbContext> dbFactory, CredentialProtector protector, ILogger<TransferStepExecutor> logger)
     {
         _dbFactory = dbFactory;
+        _protector = protector;
         _logger = logger;
     }
 
@@ -51,6 +54,14 @@ public class TransferStepExecutor : IStepExecutor
             return StepExecutionResult.Fail("Aucun hôte spécifié. Veuillez renseigner l'hôte dans la configuration de l'étape ou associer un Credential contenant l'adresse du serveur.");
         }
 
+        // Identifiant distinct (optionnel) pour authentifier l'accès au dossier local lorsqu'il s'agit
+        // d'un partage réseau UNC auquel le compte du service Windows n'a pas accès (section "Accès disque réseau").
+        var (localUsername, localSecret, localCredError) = await ResolveLocalCredentialAsync(config.LocalCredentialId, context.CancellationToken);
+        if (localCredError is not null)
+        {
+            return StepExecutionResult.Fail(localCredError);
+        }
+
         try
         {
             switch (context.Step.Type)
@@ -60,11 +71,12 @@ public class TransferStepExecutor : IStepExecutor
                         config, host, port, username, secret,
                         context.ResolvedCredential?.AuthType ?? CredentialAuthType.MotDePasse,
                         context.ResolvedCredential?.Passphrase,
+                        localUsername, localSecret,
                         context.CancellationToken);
 
                 case StepType.TransfertFtp:
                 case StepType.TransfertFtps:
-                    return await ExecuteFtpAsync(config, host, port, username, secret, context.Step.Type == StepType.TransfertFtps, context.CancellationToken);
+                    return await ExecuteFtpAsync(config, host, port, username, secret, context.Step.Type == StepType.TransfertFtps, localUsername, localSecret, context.CancellationToken);
 
                 case StepType.TransfertSmb:
                     return ExecuteSmbCopy(config, context.ResolvedCredential);
@@ -108,8 +120,9 @@ public class TransferStepExecutor : IStepExecutor
         return sb.ToString();
     }
 
-    private async Task<StepExecutionResult> ExecuteSftpAsync(TransferStepConfig config, string host, int port, string username, string secret, CredentialAuthType authType, string? passphrase, CancellationToken ct)
+    private async Task<StepExecutionResult> ExecuteSftpAsync(TransferStepConfig config, string host, int port, string username, string secret, CredentialAuthType authType, string? passphrase, string? localUsername, string? localSecret, CancellationToken ct)
     {
+        using var localConn = SmbConnectionScope.Connect(config.LocalPath, localUsername, localSecret);
         using var client = SftpClientFactory.Create(host, port, username, secret, authType, passphrase);
 
         // Vérification de la clé d'hôte (confiance à la première connexion, protection anti-usurpation).
@@ -177,7 +190,12 @@ public class TransferStepExecutor : IStepExecutor
                         .Where(f => f.IsRegularFile && FilePatternMatcher.IsMatch(f.Name, config.Filter));
                     foreach (var rf in remoteFiles)
                     {
-                        var localFile = Path.Combine(config.LocalPath, rf.Name);
+                        // Le nom vient du listing du serveur distant (non garanti fiable en cas de serveur
+                        // compromis/usurpé) : on ne garde que le segment nom-de-fichier avant Path.Combine
+                        // pour empêcher une traversée de chemin hors de LocalPath.
+                        var safeName = Path.GetFileName(rf.Name);
+                        if (string.IsNullOrWhiteSpace(safeName)) continue;
+                        var localFile = Path.Combine(config.LocalPath, safeName);
                         await using (var stream = File.Create(localFile))
                         {
                             await Task.Run(() => client.DownloadFile(rf.FullName, stream), ct);
@@ -241,15 +259,50 @@ public class TransferStepExecutor : IStepExecutor
         }
     }
 
+    /// <summary>
+    /// Résout l'identifiant réseau local (SMB) éventuellement associé à l'étape, distinct du Credential
+    /// serveur distant. Retourne (null, null) si aucun n'est configuré — l'identité du service est alors
+    /// utilisée telle quelle, comme un lecteur déjà mappé.
+    /// </summary>
+    private async Task<(string? Username, string? Secret, string? Error)> ResolveLocalCredentialAsync(Guid? localCredentialId, CancellationToken ct)
+    {
+        if (localCredentialId is null) return (null, null, null);
+
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        var cred = await db.Credentials.FirstOrDefaultAsync(c => c.Id == localCredentialId.Value, ct);
+        if (cred is null) return (null, null, "Le credential sélectionné pour l'accès réseau local n'existe plus (a peut-être été supprimé) — sélectionne-en un autre dans l'étape.");
+
+        // L'authentification SMB Windows (WNetAddConnection2) attend un mot de passe classique. Un credential
+        // configuré en clé privée SSH y enverrait la clé PEM en guise de mot de passe, systématiquement rejetée
+        // par le partage avec un message trompeur ("identifiants incorrects").
+        if (cred.AuthType == CredentialAuthType.ClePriveeSsh)
+        {
+            return (cred.Username, null,
+                $"Le credential « {cred.Name} » sélectionné pour l'accès réseau local est configuré en clé privée SSH — " +
+                "incompatible avec l'authentification SMB Windows, qui exige un mot de passe classique. " +
+                "Crée ou choisis un credential de type « Mot de passe » avec un compte Windows/domaine ayant accès à ce partage.");
+        }
+
+        try
+        {
+            return (cred.Username, _protector.Unprotect(cred.EncryptedSecret), null);
+        }
+        catch
+        {
+            return (cred.Username, null, $"Impossible de déchiffrer le secret du credential « {cred.Name} » — recrée-le avec un nouveau mot de passe.");
+        }
+    }
+
     private static string CombineRemotePath(string remoteDir, string fileName) => remoteDir.TrimEnd('/') + "/" + fileName;
 
     /// <summary>
     /// Compare l'empreinte reçue à celle mémorisée pour cet hôte (TOFU : "Trust On First Use").
-    /// Premher contact : la clé est enregistrée et acceptée. Contacts suivants : la clé DOIT correspondre,
-    /// sinon la connexion est refusée (l'hôte a pu être usurpé/intercepté, ou sa clé a légitimement changé
-    /// suite à une réinstallation — dans ce dernier cas un administrateur doit supprimer l'entrée mémorisée).
+    /// Utilisé pour les clés d'hôte SSH (SFTP) comme pour les certificats TLS (FTPS).
+    /// Premier contact : l'empreinte est enregistrée et acceptée. Contacts suivants : elle DOIT correspondre,
+    /// sinon la connexion est refusée (l'hôte a pu être usurpé/intercepté, ou sa clé/certificat a légitimement
+    /// changé suite à une réinstallation — dans ce dernier cas un administrateur doit supprimer l'entrée mémorisée).
     /// </summary>
-    private async Task<(bool Trusted, string? ErrorMessage)> VerifyHostKeyAsync(string host, int port, string fingerprint, CancellationToken ct)
+    private async Task<(bool Trusted, string? ErrorMessage)> VerifyHostKeyAsync(string host, int port, string fingerprint, CancellationToken ct, string protocolLabel = "SFTP")
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
         var known = await db.TrustedHostKeys.FirstOrDefaultAsync(k => k.Host == host && k.Port == port, ct);
@@ -258,7 +311,7 @@ public class TransferStepExecutor : IStepExecutor
         {
             db.TrustedHostKeys.Add(new TrustedHostKey { Host = host, Port = port, FingerprintSha256 = fingerprint });
             await db.SaveChangesAsync(ct);
-            _logger.LogInformation("Nouvelle clé d'hôte SFTP mémorisée pour {Host}:{Port} (empreinte {Fingerprint}).", host, port, fingerprint);
+            _logger.LogInformation("Nouvelle empreinte {Protocol} mémorisée pour {Host}:{Port} (empreinte {Fingerprint}).", protocolLabel, host, port, fingerprint);
             return (true, null);
         }
 
@@ -269,37 +322,58 @@ public class TransferStepExecutor : IStepExecutor
             return (true, null);
         }
 
-        _logger.LogWarning("ALERTE SECURITE : la clé d'hôte SFTP de {Host}:{Port} ne correspond pas à celle mémorisée. Connexion refusée.", host, port);
+        _logger.LogWarning("ALERTE SECURITE : l'empreinte {Protocol} de {Host}:{Port} ne correspond pas à celle mémorisée. Connexion refusée.", protocolLabel, host, port);
         return (false,
-            $"Clé d'hôte SFTP inattendue pour {host}:{port}. Empreinte reçue : {fingerprint}. " +
+            $"Empreinte {protocolLabel} inattendue pour {host}:{port}. Empreinte reçue : {fingerprint}. " +
             $"Empreinte connue : {known.FingerprintSha256}. Connexion refusée par sécurité (usurpation possible, " +
-            "ou le serveur a été réinstallé — un administrateur doit alors supprimer l'entrée mémorisée pour ce serveur).");
+            "ou le serveur a été réinstallé/son certificat renouvelé — un administrateur doit alors supprimer l'entrée mémorisée pour ce serveur).");
     }
 
-    private static async Task<StepExecutionResult> ExecuteFtpAsync(TransferStepConfig config, string host, int port, string username, string secret, bool useTls, CancellationToken ct)
+    private async Task<StepExecutionResult> ExecuteFtpAsync(TransferStepConfig config, string host, int port, string username, string secret, bool useTls, string? localUsername, string? localSecret, CancellationToken ct)
     {
+        using var localConn = SmbConnectionScope.Connect(config.LocalPath, localUsername, localSecret);
         using var client = new AsyncFtpClient(host, username, secret, port);
         client.Config.ConnectTimeout = 15000;
         client.Config.DataConnectionConnectTimeout = 20000;
         client.Config.ReadTimeout = 30000;
         client.Config.DataConnectionType = FtpDataConnectionType.AutoPassive;
 
+        string? certError = null;
         if (useTls || config.UseTls)
         {
             client.Config.EncryptionMode = FtpEncryptionMode.Explicit;
-            client.Config.ValidateAnyCertificate = true;
             client.Config.DataConnectionEncryption = true;
             client.Config.SslProtocols = System.Security.Authentication.SslProtocols.None;
+
+            // Confiance à la première connexion (TOFU) sur le certificat FTPS (cf. VerifyHostKeyAsync pour SFTP).
+            client.ValidateCertificate += (_, e) =>
+            {
+                if (e.PolicyErrors == System.Net.Security.SslPolicyErrors.None)
+                {
+                    e.Accept = true;
+                    return;
+                }
+
+                using var cert2 = new System.Security.Cryptography.X509Certificates.X509Certificate2(e.Certificate);
+                var fingerprint = Convert.ToHexString(SHA256.HashData(cert2.RawData));
+                var verdict = VerifyHostKeyAsync(host, port, fingerprint, ct, "TLS (FTPS)").GetAwaiter().GetResult();
+                e.Accept = verdict.Trusted;
+                if (!verdict.Trusted) certError = verdict.ErrorMessage;
+            };
         }
 
         try
         {
             await client.Connect(ct);
         }
-        catch (Exception) when ((useTls || config.UseTls) && port == 990)
+        catch (Exception) when ((useTls || config.UseTls) && port == 990 && certError is null)
         {
             client.Config.EncryptionMode = FtpEncryptionMode.Implicit;
             await client.Connect(ct);
+        }
+        catch (Exception) when (certError is not null)
+        {
+            throw new InvalidOperationException(certError);
         }
 
         try
@@ -339,7 +413,12 @@ public class TransferStepExecutor : IStepExecutor
                         .Where(f => f.Type == FtpObjectType.File && FilePatternMatcher.IsMatch(f.Name, config.Filter));
                     foreach (var rf in remoteFiles)
                     {
-                        var localFile = Path.Combine(config.LocalPath, rf.Name);
+                        // Le nom vient du listing du serveur distant (non garanti fiable en cas de serveur
+                        // compromis/usurpé) : on ne garde que le segment nom-de-fichier avant Path.Combine
+                        // pour empêcher une traversée de chemin hors de LocalPath.
+                        var safeName = Path.GetFileName(rf.Name);
+                        if (string.IsNullOrWhiteSpace(safeName)) continue;
+                        var localFile = Path.Combine(config.LocalPath, safeName);
                         var status = await client.DownloadFile(localFile, rf.FullName, FtpLocalExists.Overwrite, token: ct);
                         if (status != FtpStatus.Success)
                         {
@@ -404,7 +483,8 @@ public class TransferStepExecutor : IStepExecutor
     {
         try
         {
-            return await client.UploadFile(localPath, remotePath, FtpRemoteExists.Overwrite, true, token: ct);
+            var status = await client.UploadFile(localPath, remotePath, FtpRemoteExists.Overwrite, true, token: ct);
+            return NormalizeUploadStatus(client, status);
         }
         catch (Exception) when (client.Config.DataConnectionEncryption)
         {
@@ -413,7 +493,8 @@ public class TransferStepExecutor : IStepExecutor
             client.Config.DataConnectionEncryption = false;
             try
             {
-                return await client.UploadFile(localPath, remotePath, FtpRemoteExists.Overwrite, true, token: ct);
+                var status = await client.UploadFile(localPath, remotePath, FtpRemoteExists.Overwrite, true, token: ct);
+                return NormalizeUploadStatus(client, status);
             }
             catch
             {
@@ -424,6 +505,16 @@ public class TransferStepExecutor : IStepExecutor
     }
 
     /// <summary>
+    /// FluentFTP peut renvoyer FtpStatus.Failed alors que le serveur a explicitement confirmé la réception du
+    /// fichier ("226 Transfer complete") — typiquement quand sa vérification interne post-transfert (commande
+    /// SIZE) est refusée ou mal supportée par ce serveur précis. Dans ce cas, on fait confiance à la réponse
+    /// officielle du protocole FTP plutôt qu'à cette vérification secondaire, pour ne pas marquer en échec
+    /// (et déclencher retries/alertes) un transfert qui a en réalité réussi.
+    /// </summary>
+    private static FtpStatus NormalizeUploadStatus(AsyncFtpClient client, FtpStatus status) =>
+        status == FtpStatus.Failed && client.LastReply.Code == "226" ? FtpStatus.Success : status;
+
+    /// <summary>
     /// Copie "réseau SMB". Si un credential est associé à l'étape et que le partage est un chemin UNC
     /// (\\serveur\partage), une session authentifiée avec CE compte est établie explicitement via
     /// WNetAddConnection2 (équivalent de "net use ... /user:compte motdepasse"), puis libérée après
@@ -431,7 +522,7 @@ public class TransferStepExecutor : IStepExecutor
     /// pas un compte de service. Sans credential (ou pour un lecteur déjà mappé), l'identité du
     /// processus est utilisée directement, comme un lecteur réseau déjà connecté.
     /// </summary>
-    private static StepExecutionResult ExecuteSmbCopy(TransferStepConfig config, (string? Username, string? Secret, string? Host, int? Port, CredentialAuthType AuthType, string? Passphrase)? credential)
+    private static StepExecutionResult ExecuteSmbCopy(TransferStepConfig config, (string? Username, string? Secret, string? Host, int? Port, CredentialAuthType AuthType, string? Passphrase, string? OAuth2ClientId, string? OAuth2TenantId)? credential)
     {
         var shareOrPath = config.SmbShare ?? config.RemotePath;
 

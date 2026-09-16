@@ -33,6 +33,17 @@ public class WebhookStepExecutor : IStepExecutor
                 }
             }
 
+            // Credential de type "Clé API" sélectionné sur l'étape : ajoute automatiquement l'en-tête
+            // Authorization si non déjà fourni explicitement dans Headers ci-dessus — avant ce correctif, ce
+            // type de credential n'était utilisé par aucune étape (la clé devait être tapée en clair dans
+            // Headers pour être utilisable, ce qui rendait le coffre-fort inutile pour ce cas).
+            if (context.ResolvedCredential is { Secret: not null } cred &&
+                !request.Headers.Contains("Authorization"))
+            {
+                request.Headers.TryAddWithoutValidation("Authorization",
+                    string.IsNullOrWhiteSpace(cred.Username) ? $"Bearer {cred.Secret}" : $"{cred.Username} {cred.Secret}");
+            }
+
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken);
             cts.CancelAfter(TimeSpan.FromSeconds(config.TimeoutSeconds));
 
