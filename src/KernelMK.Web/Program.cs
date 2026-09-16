@@ -223,6 +223,34 @@ using (var scope = app.Services.CreateScope())
     await DbInitializer.SeedAsync(db, roleManager, userManager, logger);
 
     setupState.AdminExists = (await userManager.GetUsersInRoleAsync(nameof(AppRole.Administrateur))).Count > 0;
+
+    // Nettoyage des exécutions orphelines : si le service a été arrêté brutalement (crash, redémarrage,
+    // application d'un patch) pendant qu'un job tournait, sa ligne JobExecution restait bloquée pour toujours
+    // au statut "EnCours" en base — rien ne la faisait jamais basculer vers un état terminal. Le tableau de
+    // bord comptait ces lignes fantômes comme des jobs réellement en cours (KPI "En cours" qui ne fait
+    // qu'augmenter au fil des redémarrages), alors qu'aucun processus ne les exécute plus depuis le redémarrage.
+    var orphanedExecutions = await db.JobExecutions
+        .Where(e => e.Status == JobStatus.EnCours)
+        .Include(e => e.StepLogs)
+        .ToListAsync();
+    if (orphanedExecutions.Count > 0)
+    {
+        var now = DateTime.UtcNow;
+        foreach (var exec in orphanedExecutions)
+        {
+            exec.Status = JobStatus.Annule;
+            exec.FinishedAt = now;
+            exec.Message = "Exécution interrompue par un redémarrage du service (jamais reprise automatiquement).";
+            foreach (var step in exec.StepLogs.Where(s => s.Status == StepExecutionStatus.EnCours))
+            {
+                step.Status = StepExecutionStatus.Annule;
+                step.FinishedAt = now;
+                step.ErrorOutput ??= "Étape interrompue par un redémarrage du service.";
+            }
+        }
+        await db.SaveChangesAsync();
+        logger.LogWarning("{Count} exécution(s) orpheline(s) (bloquée(s) en \"EnCours\" suite à un arrêt brutal précédent) marquée(s) comme annulée(s) au démarrage.", orphanedExecutions.Count);
+    }
 }
 
 if (app.Environment.IsDevelopment())
