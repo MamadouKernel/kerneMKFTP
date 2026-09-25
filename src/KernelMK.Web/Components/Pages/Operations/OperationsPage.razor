@@ -47,19 +47,20 @@
 
         <div class="ops-columns">
             <section class="ops-panel">
-                <div class="ops-panel-title"><div><span class="ops-eyebrow">PERFORMANCE</span><h2>Chaque lecture compte.</h2></div><span class="ops-tag">Cache partagé</span></div>
-                <p class="ops-description">Les tableaux de bord réutilisent un même instantané. Les demandes simultanées partagent le même chargement.</p>
-                <div class="ops-cache-score"><strong>@ReuseRate.ToString("0")<small>%</small></strong><span>des demandes servies sans<br />nouveau chargement</span></div>
+                <div class="ops-panel-title"><div><span class="ops-eyebrow">PERFORMANCE</span><h2>Moins de lectures SQLite.</h2></div><span class="ops-tag">Cache mémoire</span></div>
+                <p class="ops-description">Les pages de suivi réutilisent leurs agrégats pendant quelques secondes. Les consultations simultanées partagent une seule lecture SQLite.</p>
+                <div class="ops-cache-score"><strong>@ReuseRate.ToString("0")<small>%</small></strong><span>des consultations servies sans<br />nouvelle lecture SQLite</span></div>
                 <div class="ops-meter" role="meter" aria-label="Taux de réutilisation du cache" aria-valuenow="@ReuseRate" aria-valuemin="0" aria-valuemax="100"><span style="@($"width:{ReuseRate.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}%")"></span></div>
                 <dl class="ops-data-list">
-                    <div><dt>Lectures en cache</dt><dd>@_statistics.Hits.ToString("N0")</dd></div>
-                    <div><dt>Demandes regroupées</dt><dd>@_statistics.CoalescedRequests.ToString("N0")</dd></div>
-                    <div><dt>Chargements réalisés</dt><dd>@_statistics.Loads.ToString("N0")</dd></div>
-                    <div><dt>Dernier chargement</dt><dd>@_statistics.LastLoadMilliseconds.ToString("N1") ms</dd></div>
+                    <div><dt>Consultations reçues</dt><dd>@_statistics.Requests.ToString("N0")</dd></div>
+                    <div><dt>Résultats mémoire réutilisés</dt><dd>@_statistics.Hits.ToString("N0")</dd></div>
+                    <div><dt>Consultations regroupées</dt><dd>@_statistics.CoalescedRequests.ToString("N0")</dd></div>
+                    <div><dt>Lectures SQLite réalisées</dt><dd>@_statistics.Loads.ToString("N0")</dd></div>
+                    <div><dt>Dernière lecture SQLite</dt><dd>@_statistics.LastLoadMilliseconds.ToString("N1") ms</dd></div>
                     <div><dt>Instantanés conservés</dt><dd>@_statistics.Entries / @_statistics.Capacity</dd></div>
                     <div><dt>Validité d’un instantané</dt><dd>@_statistics.TimeToLiveSeconds s</dd></div>
                 </dl>
-                <p class="ops-footnote">Compteurs depuis le démarrage. Le temps indiqué mesure le chargement serveur, pas la latence de votre navigateur.</p>
+                <p class="ops-footnote">Compteurs techniques depuis le démarrage du serveur. Ils augmentent lorsque les pages de suivi sont consultées, même si la base ne contient aucun job. Le temps indiqué mesure la lecture côté serveur.</p>
             </section>
             <div class="ops-stack">
                 <section class="ops-panel">
@@ -97,7 +98,7 @@
     private TimeSpan _uptime;
     private string? _error;
     private string SuccessRate => _snapshot is null || _snapshot.SuccessCount + _snapshot.FailedCount == 0 ? "—" : (100d * _snapshot.SuccessCount / (_snapshot.SuccessCount + _snapshot.FailedCount)).ToString("0.0");
-    private double ReuseRate => _statistics is null || _statistics.Hits + _statistics.Misses == 0 ? 0 : Math.Clamp(100d * (_statistics.Hits + _statistics.CoalescedRequests) / (_statistics.Hits + _statistics.Misses), 0, 100);
+    private double ReuseRate => _statistics?.ReuseRate ?? 0;
     private string UptimeLabel => _uptime.TotalDays >= 1 ? $"{(int)_uptime.TotalDays} j {_uptime.Hours} h" : $"{(int)_uptime.TotalHours} h {_uptime.Minutes} min";
 
     protected override async Task OnInitializedAsync()

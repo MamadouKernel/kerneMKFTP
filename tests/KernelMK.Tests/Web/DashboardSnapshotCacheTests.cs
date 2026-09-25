@@ -5,7 +5,16 @@ namespace KernelMK.Tests.Web;
 
 public sealed class DashboardSnapshotCacheTests
 {
-    [Fact]
+        [Fact]
+    public void StatisticsExposeConsistentRequestAndReuseTotals()
+    {
+        var statistics = new DashboardCacheStatistics(11, 8, 8, 0, 0, 7.7, 1, 3, 15, null, null);
+
+        Assert.Equal(19, statistics.Requests);
+        Assert.Equal(11, statistics.AvoidedLoads);
+        Assert.Equal(57.9, statistics.ReuseRate, 1);
+    }
+[Fact]
     public async Task ConcurrentReadersShareOneLoadAndCallerCancellationDoesNotCancelIt()
     {
         var source = new ControlledSource();

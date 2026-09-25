@@ -11,6 +11,9 @@ public sealed record DashboardCacheStatistics(long Hits, long Misses, long Loads
     long CoalescedRequests, double LastLoadMilliseconds, int Entries, int Capacity,
     int TimeToLiveSeconds, DateTime? OldestSnapshotAt, DateTime? NextExpirationAt)
 {
+    public long Requests => Hits + Misses;
+    public long AvoidedLoads => Hits + CoalescedRequests;
+    public double ReuseRate => Requests == 0 ? 0 : Math.Clamp(100.0 * AvoidedLoads / Requests, 0, 100);
     public double HitRate => Hits + Misses == 0 ? 0 : 100.0 * Hits / (Hits + Misses);
 }
 
