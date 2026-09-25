@@ -17,7 +17,10 @@ param(
     [string]$InstallDir,
 
     [Parameter()]
-    [string]$BackupFolder
+    [string]$BackupFolder,
+
+    [Parameter()]
+    [string]$BackupRoot
 )
 
 $ErrorActionPreference = "Stop"
@@ -67,7 +70,10 @@ if (-not (Test-Path (Join-Path $InstallDir "KernelMK.exe"))) {
 }
 
 # 2. Recherche des sauvegardes de patch
-$patchesRoot = Join-Path $InstallDir "backups\patches"
+if (-not $BackupRoot) {
+    $BackupRoot = Join-Path $InstallDir "backups\patches"
+}
+$patchesRoot = $BackupRoot
 if (-not (Test-Path $patchesRoot)) {
     throw "Aucun dossier de sauvegarde de patch trouve dans '$patchesRoot'."
 }
@@ -121,9 +127,22 @@ if ($runningProc) {
     Start-Sleep -Seconds 1
 }
 
-# 4. Restauration de l'ancien KernelMK.exe
+# 4. Restauration de l'ancien executable et de ses ressources web
 Write-Host "Restauration de KernelMK.exe..." -ForegroundColor Cyan
 Copy-Item $backupExe -Destination (Join-Path $InstallDir "KernelMK.exe") -Force
+
+$backupWwwroot = Join-Path $selectedBackup.FullName "wwwroot"
+if (Test-Path $backupWwwroot) {
+    $installWwwroot = Join-Path $InstallDir "wwwroot"
+    Write-Host "Restauration des ressources web (wwwroot)..." -ForegroundColor Cyan
+    if (Test-Path $installWwwroot) {
+        Remove-Item -LiteralPath $installWwwroot -Recurse -Force
+    }
+    Copy-Item $backupWwwroot -Destination $installWwwroot -Recurse -Force
+}
+else {
+    Write-Host "[ATTENTION] Cette sauvegarde ne contient pas wwwroot ; seul l'executable est restaure." -ForegroundColor Yellow
+}
 
 # 5. Redemarrage du service Windows
 if ($service -or $serviceWasRunning) {

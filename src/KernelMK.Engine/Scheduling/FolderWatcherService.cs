@@ -2,6 +2,7 @@ using KernelMK.Core;
 using KernelMK.Core.Entities;
 using KernelMK.Data;
 using KernelMK.Engine.Execution;
+using KernelMK.Engine.Queue;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -73,41 +74,60 @@ public class FolderWatcherService : BackgroundService
             var watcher = new FileSystemWatcher(trigger.FolderPath!)
             {
                 Filter = trigger.FolderFilter ?? "*.*",
-                NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite,
-                EnableRaisingEvents = true
+                NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite
             };
 
             var jobId = trigger.JobId;
             var watchEvent = trigger.FolderWatchEvent ?? FolderWatchEventType.Arrivee;
 
-            void Handler(object sender, FileSystemEventArgs e) => OnFileEvent(jobId, watchEvent, e.ChangeType, e.FullPath);
+            void Handler(object sender, FileSystemEventArgs e) => OnFileEvent(jobId, watchEvent, e.ChangeType, e.FullPath, trigger.FolderFilter);
 
-            if (watchEvent == FolderWatchEventType.Arrivee) watcher.Created += Handler;
+            if (watchEvent == FolderWatchEventType.Arrivee)
+            {
+                watcher.Created += Handler;
+                // Transfers are published by renaming a temporary file in this same directory.
+                // That produces Renamed, not Created, on the watched filesystem.
+                watcher.Renamed += Handler;
+            }
             if (watchEvent == FolderWatchEventType.Modification) watcher.Changed += Handler;
             if (watchEvent == FolderWatchEventType.Suppression) watcher.Deleted += Handler;
 
             _watchers[trigger.Id] = watcher;
+            watcher.EnableRaisingEvents = true;
             _logger.LogInformation("Surveillance activée sur {Path} (job {JobId}, événement {Event}).", trigger.FolderPath, jobId, watchEvent);
         }
     }
 
-    private void OnFileEvent(Guid jobId, FolderWatchEventType expected, WatcherChangeTypes changeType, string path)
+    private static bool MatchesEvent(FolderWatchEventType expected, WatcherChangeTypes changeType, string path, string? filter)
     {
-        var matches = expected switch
+        var fileName = Path.GetFileName(path);
+        if (fileName.StartsWith(TransferFilePublisher.TemporaryFilePrefix, StringComparison.OrdinalIgnoreCase)) return false;
+        // FileSystemWatcher can report a rename when only the OLD name matches its filter.
+        // An arrival must match the published (new) name as well.
+        if (!FilePatternMatcher.IsMatch(fileName, filter)) return false;
+        return expected switch
         {
-            FolderWatchEventType.Arrivee => changeType == WatcherChangeTypes.Created,
+            FolderWatchEventType.Arrivee => changeType is WatcherChangeTypes.Created or WatcherChangeTypes.Renamed,
             FolderWatchEventType.Modification => changeType == WatcherChangeTypes.Changed,
             FolderWatchEventType.Suppression => changeType == WatcherChangeTypes.Deleted,
             _ => false
         };
-        if (!matches) return;
+    }
+
+    private void OnFileEvent(Guid jobId, FolderWatchEventType expected, WatcherChangeTypes changeType, string path, string? filter)
+    {
+        if (!MatchesEvent(expected, changeType, path, filter)) return;
 
         _logger.LogInformation("Événement dossier détecté ({ChangeType}) sur {Path}, déclenchement du job {JobId}.", changeType, path, jobId);
         _ = Task.Run(async () =>
         {
-            using var scope = _scopeFactory.CreateScope();
-            var jobRunner = scope.ServiceProvider.GetRequiredService<IJobRunner>();
-            await jobRunner.RunAsync(jobId, $"Événement dossier ({changeType})");
+            try
+            {
+                await using var scope = _scopeFactory.CreateAsyncScope();
+                await scope.ServiceProvider.GetRequiredService<JobQueueService>()
+                    .EnqueueAsync(jobId, $"Événement dossier ({changeType})");
+            }
+            catch (Exception error) { _logger.LogError(error, "Impossible de mettre en file le job {JobId} après événement dossier.", jobId); }
         });
     }
 }

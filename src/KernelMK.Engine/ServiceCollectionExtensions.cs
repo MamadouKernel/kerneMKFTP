@@ -1,4 +1,5 @@
 using KernelMK.Engine.Assistant;
+using KernelMK.Engine.Archiving;
 using KernelMK.Engine.Audit;
 using KernelMK.Engine.Backup;
 using KernelMK.Engine.Execution;
@@ -7,6 +8,7 @@ using KernelMK.Engine.Infrastructure;
 using KernelMK.Engine.Notifications;
 using KernelMK.Engine.Scheduling;
 using KernelMK.Engine.Workflow;
+using KernelMK.Engine.Queue;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -17,6 +19,7 @@ public static class ServiceCollectionExtensions
 {
     public static IServiceCollection AddKernelMKEngine(this IServiceCollection services, IConfiguration configuration)
     {
+        services.Configure<HistoryArchiveOptions>(configuration.GetSection(HistoryArchiveOptions.SectionName));
         services.Configure<SmtpOptions>(configuration.GetSection(SmtpOptions.SectionName));
         services.AddSingleton<IPostConfigureOptions<SmtpOptions>, SmtpPasswordProtector>();
 
@@ -50,14 +53,21 @@ public static class ServiceCollectionExtensions
         services.AddScoped<NotificationDispatcher>();
         services.AddScoped<AuditService>();
         services.AddScoped<BackupService>();
+        services.AddScoped<HistoryArchiveService>();
         services.AddScoped<AssistantService>();
         services.AddScoped<ConnectionTestService>();
         services.AddScoped<RemoteFileBrowserService>();
-        services.AddScoped<IJobRunner, JobRunner>();
+        services.AddScoped<JobRunner>();
+        services.AddScoped<IJobRunner>(sp => sp.GetRequiredService<JobRunner>());
+        services.AddScoped<IQueuedJobRunner>(sp => sp.GetRequiredService<JobRunner>());
+        services.AddScoped<JobQueueService>();
+        services.AddScoped<JobVersionService>();
+        services.AddHostedService<JobQueueDispatcher>();
 
         services.AddHostedService<JobSchedulerService>();
         services.AddHostedService<FolderWatcherService>();
         services.AddHostedService<AccountLifecycleService>();
+        services.AddHostedService<HistoryArchiveHostedService>();
 
         return services;
     }

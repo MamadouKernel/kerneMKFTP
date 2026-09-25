@@ -128,9 +128,18 @@ if ($Zip) {
     $zipPath = "$OutputDir.zip"
     if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
     Write-Host "Compression de l'archive de patch : $zipPath" -ForegroundColor Cyan
-    Compress-Archive -Path (Join-Path $OutputDir "*") -DestinationPath $zipPath -CompressionLevel Optimal
-    
-    $zipSize = (Get-Item $zipPath).Length / 1MB
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::CreateFromDirectory(
+        $OutputDir,
+        $zipPath,
+        [System.IO.Compression.CompressionLevel]::Optimal,
+        $false)
+
+    if (-not (Test-Path -LiteralPath $zipPath) -or (Get-Item -LiteralPath $zipPath).Length -eq 0) {
+        throw "La creation du ZIP de patch a echoue ou produit une archive vide."
+    }
+
+    $zipSize = (Get-Item -LiteralPath $zipPath).Length / 1MB
     Write-Host ("Archive de patch prete : {0} ({1:N1} Mo)" -f $zipPath, $zipSize) -ForegroundColor Green
 }
 

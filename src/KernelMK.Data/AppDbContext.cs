@@ -17,6 +17,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<JobTrigger> JobTriggers => Set<JobTrigger>();
     public DbSet<JobDependency> JobDependencies => Set<JobDependency>();
     public DbSet<JobExecution> JobExecutions => Set<JobExecution>();
+    public DbSet<JobExecutionRequest> JobExecutionRequests => Set<JobExecutionRequest>();
+    public DbSet<JobDefinitionVersion> JobDefinitionVersions => Set<JobDefinitionVersion>();
     public DbSet<StepExecutionLog> StepExecutionLogs => Set<StepExecutionLog>();
     public DbSet<Credential> Credentials => Set<Credential>();
     public DbSet<NotificationRule> NotificationRules => Set<NotificationRule>();
@@ -68,6 +70,24 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             // statut (Succès/Échec/EnCours) — sans index, chaque appel scanne la table entière, ce qui devient
             // très lent en production dès que l'historique grossit (constaté : lenteur après déploiement réel).
             e.HasIndex(x => new { x.StartedAt, x.Status });
+            e.Property(x => x.JobDefinitionHash).HasMaxLength(64);
+        });
+
+        builder.Entity<JobDefinitionVersion>(e =>
+        {
+            e.HasOne(v => v.Job).WithMany().HasForeignKey(v => v.JobId).OnDelete(DeleteBehavior.Cascade);
+            e.Property(v => v.DefinitionHash).HasMaxLength(64);
+            e.Property(v => v.ChangeSummary).HasMaxLength(500);
+            e.HasIndex(v => new { v.JobId, v.VersionNumber }).IsUnique();
+        });
+        builder.Entity<JobExecutionRequest>(e =>
+        {
+            e.HasOne(r => r.Job).WithMany().HasForeignKey(r => r.JobId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(r => r.Execution).WithMany().HasForeignKey(r => r.ExecutionId).OnDelete(DeleteBehavior.SetNull);
+            e.Property(r => r.IdempotencyKey).HasMaxLength(200);
+            e.Property(r => r.ExpectedJobDefinitionHash).HasMaxLength(64);
+            e.HasIndex(r => r.IdempotencyKey).IsUnique();
+            e.HasIndex(r => new { r.Status, r.Priority, r.RequestedAt });
         });
 
         builder.Entity<StepExecutionLog>()

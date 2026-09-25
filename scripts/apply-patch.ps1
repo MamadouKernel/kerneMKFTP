@@ -15,7 +15,9 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [string]$InstallDir
+    [string]$InstallDir,
+    [Parameter()]
+    [string]$BackupRoot
 )
 
 $ErrorActionPreference = "Stop"
@@ -94,13 +96,22 @@ if ($runningProc) {
 }
 
 # 4. Sauvegarde de securite pre-patch (Rollback garanti)
-$backupDir = Join-Path $InstallDir "backups\patches\patch_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
+if (-not $BackupRoot) {
+    $BackupRoot = Join-Path $InstallDir "backups\patches"
+}
+$backupDir = Join-Path $BackupRoot "patch_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
 New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
 
 $currentExe = Join-Path $InstallDir "KernelMK.exe"
 if (Test-Path $currentExe) {
     Copy-Item $currentExe -Destination (Join-Path $backupDir "KernelMK.exe") -Force
     Write-Host "[SAUVEGARDE] Ancien KernelMK.exe archive dans : $backupDir" -ForegroundColor Gray
+}
+
+$currentWwwroot = Join-Path $InstallDir "wwwroot"
+if (Test-Path $currentWwwroot) {
+    Copy-Item $currentWwwroot -Destination (Join-Path $backupDir "wwwroot") -Recurse -Force
+    Write-Host "[SAUVEGARDE] Ancien dossier wwwroot archive dans : $backupDir" -ForegroundColor Gray
 }
 
 # 5. Application des fichiers mis a jour

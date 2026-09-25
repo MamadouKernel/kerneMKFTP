@@ -15,7 +15,7 @@ namespace KernelMK.Data.Migrations
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "9.0.17");
+            modelBuilder.HasAnnotation("ProductVersion", "10.0.12");
 
             modelBuilder.Entity("KernelMK.Core.Entities.AuditLogEntry", b =>
                 {
@@ -175,6 +175,45 @@ namespace KernelMK.Data.Migrations
                     b.ToTable("Jobs");
                 });
 
+            modelBuilder.Entity("KernelMK.Core.Entities.JobDefinitionVersion", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ChangeSummary")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CreatedBy")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DefinitionHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DefinitionJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("JobId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("VersionNumber")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("JobId", "VersionNumber")
+                        .IsUnique();
+
+                    b.ToTable("JobDefinitionVersions");
+                });
+
             modelBuilder.Entity("KernelMK.Core.Entities.JobDependency", b =>
                 {
                     b.Property<Guid>("Id")
@@ -212,6 +251,10 @@ namespace KernelMK.Data.Migrations
                     b.Property<DateTime?>("FinishedAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("JobDefinitionHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
                     b.Property<Guid>("JobId")
                         .HasColumnType("TEXT");
 
@@ -241,6 +284,75 @@ namespace KernelMK.Data.Migrations
                     b.HasIndex("StartedAt", "Status");
 
                     b.ToTable("JobExecutions");
+                });
+
+            modelBuilder.Entity("KernelMK.Core.Entities.JobExecutionRequest", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AncestorJobIdsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("ExecutionId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ExpectedJobDefinitionHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("FinishedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("IdempotencyKey")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("JobId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Message")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Priority")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("RequestedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ResumeCompletedStepIdsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("ResumeOfExecutionId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("RetryOfRequestId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("StartedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("TriggeredBy")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExecutionId");
+
+                    b.HasIndex("IdempotencyKey")
+                        .IsUnique();
+
+                    b.HasIndex("JobId");
+
+                    b.HasIndex("Status", "Priority", "RequestedAt");
+
+                    b.ToTable("JobExecutionRequests");
                 });
 
             modelBuilder.Entity("KernelMK.Core.Entities.JobStep", b =>
@@ -756,6 +868,17 @@ namespace KernelMK.Data.Migrations
                     b.ToTable("AspNetUserTokens", (string)null);
                 });
 
+            modelBuilder.Entity("KernelMK.Core.Entities.JobDefinitionVersion", b =>
+                {
+                    b.HasOne("KernelMK.Core.Entities.Job", "Job")
+                        .WithMany()
+                        .HasForeignKey("JobId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Job");
+                });
+
             modelBuilder.Entity("KernelMK.Core.Entities.JobDependency", b =>
                 {
                     b.HasOne("KernelMK.Core.Entities.Job", "DependsOnJob")
@@ -782,6 +905,24 @@ namespace KernelMK.Data.Migrations
                         .HasForeignKey("JobId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.Navigation("Job");
+                });
+
+            modelBuilder.Entity("KernelMK.Core.Entities.JobExecutionRequest", b =>
+                {
+                    b.HasOne("KernelMK.Core.Entities.JobExecution", "Execution")
+                        .WithMany()
+                        .HasForeignKey("ExecutionId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("KernelMK.Core.Entities.Job", "Job")
+                        .WithMany()
+                        .HasForeignKey("JobId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Execution");
 
                     b.Navigation("Job");
                 });

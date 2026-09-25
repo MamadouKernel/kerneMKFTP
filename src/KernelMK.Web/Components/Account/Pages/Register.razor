@@ -1,4 +1,4 @@
-﻿@page "/Account/Register"
+@page "/Account/Register"
 @attribute [AllowAnonymous]
 @layout KernelMK.Web.Components.Layout.EmptyLayout
 
@@ -85,7 +85,7 @@
 </div>
 
 @code {
-    private IEnumerable<IdentityError>? identityErrors;
+    private IEnumerable<IdentityError>? identityErrors = null;
 
     [SupplyParameterFromForm]
     private InputModel Input { get; set; } = new();

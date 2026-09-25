@@ -8,14 +8,14 @@ using KernelMK.Data.Identity;
 namespace KernelMK.Web.Components.Account;
 
 // This is a server-side AuthenticationStateProvider that revalidates the security stamp for the connected user
-// every 30 minutes an interactive circuit is connected.
+// every minute an interactive circuit is connected.
 internal sealed class IdentityRevalidatingAuthenticationStateProvider(
         ILoggerFactory loggerFactory,
         IServiceScopeFactory scopeFactory,
         IOptions<IdentityOptions> options)
     : RevalidatingServerAuthenticationStateProvider(loggerFactory)
 {
-    protected override TimeSpan RevalidationInterval => TimeSpan.FromMinutes(30);
+    protected override TimeSpan RevalidationInterval => TimeSpan.FromMinutes(1);
 
     protected override async Task<bool> ValidateAuthenticationStateAsync(
         AuthenticationState authenticationState, CancellationToken cancellationToken)
@@ -29,7 +29,7 @@ internal sealed class IdentityRevalidatingAuthenticationStateProvider(
     private async Task<bool> ValidateSecurityStampAsync(UserManager<ApplicationUser> userManager, ClaimsPrincipal principal)
     {
         var user = await userManager.GetUserAsync(principal);
-        if (user is null)
+        if (user is null || !user.Active || !user.TwoFactorEnabled || await userManager.IsLockedOutAsync(user))
         {
             return false;
         }

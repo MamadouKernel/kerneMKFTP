@@ -5,4 +5,7 @@
     <Project Path="src/KernelMK.Engine/KernelMK.Engine.csproj" />
     <Project Path="src/KernelMK.Web/KernelMK.Web.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/KernelMK.Tests/KernelMK.Tests.csproj" />
+  </Folder>
 </Solution>

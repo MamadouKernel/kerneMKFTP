@@ -37,10 +37,11 @@ public class EmailStepExecutor : IStepExecutor
             message.Subject = config.Subject;
 
             var builder = new BodyBuilder { TextBody = config.Body };
-            var attachmentSent = !string.IsNullOrWhiteSpace(config.AttachmentPath) && File.Exists(config.AttachmentPath);
+            var attachmentPath = config.AttachmentPath;
+            var attachmentSent = !string.IsNullOrWhiteSpace(attachmentPath) && File.Exists(attachmentPath);
             if (attachmentSent)
             {
-                builder.Attachments.Add(config.AttachmentPath);
+                builder.Attachments.Add(attachmentPath!);
             }
             message.Body = builder.ToMessageBody();
 
@@ -71,7 +72,7 @@ public class EmailStepExecutor : IStepExecutor
 
             return StepExecutionResult.Ok(
                 $"Email envoyé à {config.ToCsv}.",
-                filesProcessedCsv: attachmentSent ? config.AttachmentPath : null);
+                filesProcessedCsv: attachmentSent ? attachmentPath : null);
         }
         catch (Exception ex)
         {

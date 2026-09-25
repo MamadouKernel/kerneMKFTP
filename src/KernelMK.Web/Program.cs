@@ -4,8 +4,14 @@ using KernelMK.Data;
 using KernelMK.Data.Identity;
 using KernelMK.Engine;
 using KernelMK.Engine.Execution;
+using KernelMK.Engine.Queue;
 using KernelMK.Engine.Notifications;
 using KernelMK.Web;
+using KernelMK.Web.Security;
+using KernelMK.Web.Services;
+using Microsoft.AspNetCore.Antiforgery;
+using Microsoft.AspNetCore.RateLimiting;
+using System.Threading.RateLimiting;
 using KernelMK.Web.Components;
 using KernelMK.Web.Components.Account;
 using Microsoft.AspNetCore.Components.Authorization;
@@ -142,44 +148,15 @@ try
     Directory.CreateDirectory(Path.Combine(AppContext.BaseDirectory, "App_Data"));
     Directory.CreateDirectory(Path.Combine(AppContext.BaseDirectory, "backups"));
 
-    // Applique une restauration de base de données mise en attente (page /backup → BackupService.
-    // StagePendingDatabaseRestoreAsync) — fait ici, avant toute connexion SQLite, car remplacer le fichier
-    // pendant que l'application tourne risquerait un verrou Windows ou une corruption. La base courante est
-    // sauvegardée avant d'être écrasée, pour permettre un retour arrière si la restauration était une erreur.
+    // Before data services open SQLite, validate and atomically apply a staged restore with WAL safety.
+    try
     {
-        // La chaîne de connexion réelle porte des paramètres après le chemin (ex. "...db;Cache=Shared") : ne
-        // retirer que le préfixe "Data Source=" par Replace() laissait ce suffixe collé au chemin, ce qui faisait
-        // échouer silencieusement toute restauration en attente (File.Exists/File.Copy sur un chemin invalide,
-        // capturé par le catch ci-dessous et journalisé comme "Échec" sans jamais appliquer la restauration
-        // demandée). SqliteConnectionStringBuilder analyse correctement la chaîne quel que soit son format.
-        var dbConnString = builder.Configuration.GetConnectionString("Default") ?? "Data Source=automation-platform.db";
-        var dbPath = new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(dbConnString).DataSource;
-        if (!Path.IsPathRooted(dbPath)) dbPath = Path.Combine(AppContext.BaseDirectory, dbPath);
-        var dbDir = Path.GetDirectoryName(dbPath) ?? AppContext.BaseDirectory;
-        var pendingRestorePath = Path.Combine(dbDir, KernelMK.Engine.Backup.BackupService.PendingRestoreFileName);
-
-        if (File.Exists(pendingRestorePath))
-        {
-            Log.Information("Restauration de base de données en attente détectée ({Path}) — application avant démarrage.", pendingRestorePath);
-            try
-            {
-                if (File.Exists(dbPath))
-                {
-                    var safetyBackupDir = Path.Combine(AppContext.BaseDirectory, "backups");
-                    Directory.CreateDirectory(safetyBackupDir);
-                    var safetyBackupPath = Path.Combine(safetyBackupDir, $"automation-platform_avant-restauration_{DateTime.UtcNow:yyyyMMdd_HHmmss}.db");
-                    File.Copy(dbPath, safetyBackupPath, overwrite: true);
-                    Log.Information("Base actuelle sauvegardée avant restauration : {Path}", safetyBackupPath);
-                }
-                File.Copy(pendingRestorePath, dbPath, overwrite: true);
-                File.Delete(pendingRestorePath);
-                Log.Information("Restauration de base de données appliquée avec succès.");
-            }
-            catch (Exception ex)
-            {
-                Log.Error(ex, "Échec de l'application de la restauration de base de données en attente — démarrage avec la base existante.");
-            }
-        }
+        if (KernelMK.Engine.Backup.BackupService.ApplyPendingDatabaseRestore(builder.Configuration))
+            Log.Information("Restauration de base de données appliquée avec succès.");
+    }
+    catch (Exception ex)
+    {
+        Log.Error(ex, "Restauration refusée ; la base existante et la demande de restauration sont conservées.");
     }
 
     builder.Services.AddRazorComponents()
@@ -190,7 +167,17 @@ builder.Services.AddScoped<IdentityUserAccessor>();
 builder.Services.AddScoped<IdentityRedirectManager>();
 builder.Services.AddScoped<AuthenticationStateProvider, IdentityRevalidatingAuthenticationStateProvider>();
 
+builder.Services.AddAntiforgery(options => options.HeaderName = "X-CSRF-TOKEN");
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddPolicy("webhook", context => RateLimitPartition.GetFixedWindowLimiter(
+        context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 30, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+});
+
 builder.Services.AddAuthorizationBuilder()
+    .AddPolicy("ApplicationAccess", p => p.RequireAuthenticatedUser().RequireClaim("TwoFactorEnabled", "true"))
     .AddPolicy("Administrateur", p => p.RequireRole("Administrateur"))
     .AddPolicy("Superviseur", p => p.RequireRole("Administrateur", "Superviseur"))
     .AddPolicy("Exploitant", p => p.RequireRole("Administrateur", "Superviseur", "Exploitant"))
@@ -205,13 +192,18 @@ builder.Services.AddAuthorizationBuilder()
 
 builder.Services.AddKernelMKData(builder.Configuration);
 builder.Services.AddKernelMKEngine(builder.Configuration);
+builder.Services.AddDashboardSnapshots();
 
 builder.Services.AddSingleton<IEmailSender<ApplicationUser>, IdentityNoOpEmailSender>();
 builder.Services.AddSingleton<SetupState>();
 
 var app = builder.Build();
 
-app.UseSerilogRequestLogging();
+app.UseMiddleware<SecurityHeadersMiddleware>();
+
+// Legacy webhook URLs contain a bearer secret. Never record those paths in HTTP request logs.
+app.UseWhen(context => !context.Request.Path.StartsWithSegments("/api/triggers"),
+    pipeline => pipeline.UseSerilogRequestLogging());
 
 var setupState = app.Services.GetRequiredService<SetupState>();
 using (var scope = app.Services.CreateScope())
@@ -224,33 +216,9 @@ using (var scope = app.Services.CreateScope())
 
     setupState.AdminExists = (await userManager.GetUsersInRoleAsync(nameof(AppRole.Administrateur))).Count > 0;
 
-    // Nettoyage des exécutions orphelines : si le service a été arrêté brutalement (crash, redémarrage,
-    // application d'un patch) pendant qu'un job tournait, sa ligne JobExecution restait bloquée pour toujours
-    // au statut "EnCours" en base — rien ne la faisait jamais basculer vers un état terminal. Le tableau de
-    // bord comptait ces lignes fantômes comme des jobs réellement en cours (KPI "En cours" qui ne fait
-    // qu'augmenter au fil des redémarrages), alors qu'aucun processus ne les exécute plus depuis le redémarrage.
-    var orphanedExecutions = await db.JobExecutions
-        .Where(e => e.Status == JobStatus.EnCours)
-        .Include(e => e.StepLogs)
-        .ToListAsync();
-    if (orphanedExecutions.Count > 0)
-    {
-        var now = DateTime.UtcNow;
-        foreach (var exec in orphanedExecutions)
-        {
-            exec.Status = JobStatus.Annule;
-            exec.FinishedAt = now;
-            exec.Message = "Exécution interrompue par un redémarrage du service (jamais reprise automatiquement).";
-            foreach (var step in exec.StepLogs.Where(s => s.Status == StepExecutionStatus.EnCours))
-            {
-                step.Status = StepExecutionStatus.Annule;
-                step.FinishedAt = now;
-                step.ErrorOutput ??= "Étape interrompue par un redémarrage du service.";
-            }
-        }
-        await db.SaveChangesAsync();
-        logger.LogWarning("{Count} exécution(s) orpheline(s) (bloquée(s) en \"EnCours\" suite à un arrêt brutal précédent) marquée(s) comme annulée(s) au démarrage.", orphanedExecutions.Count);
-    }
+    // Recovery runs before hosted dispatchers: queued work survives, uncertain effects require review.
+    var recovered = await scope.ServiceProvider.GetRequiredService<JobQueueService>().RecoverInterruptedAsync();
+    if (recovered > 0) logger.LogWarning("{Count} élément(s) interrompu(s) signalé(s) au démarrage.", recovered);
 }
 
 if (app.Environment.IsDevelopment())
@@ -272,7 +240,8 @@ app.Use(async (context, next) =>
     var path = context.Request.Path;
     var isSetupRoute = path.StartsWithSegments("/setup");
     var isFrameworkAsset = path.StartsWithSegments("/_blazor") || path.StartsWithSegments("/_framework")
-        || path.StartsWithSegments("/css") || path.StartsWithSegments("/js") || path.StartsWithSegments("/favicon.png")
+        || path.StartsWithSegments("/css") || path.StartsWithSegments("/js") || path.StartsWithSegments("/images")
+        || path.StartsWithSegments("/favicon.png") || path.StartsWithSegments("/favicon.ico")
         || path.StartsWithSegments("/sw.js") || path.StartsWithSegments("/manifest.json");
 
     if (!setupState.AdminExists && !isSetupRoute && !isFrameworkAsset)
@@ -287,29 +256,6 @@ app.Use(async (context, next) =>
         return;
     }
 
-    await next();
-});
-
-// Court-circuite le pipeline avant UseAuthentication/UseAuthorization : la FallbackPolicy globale
-// (RequireAuthenticatedUser) s'applique aussi aux endpoints de MapStaticAssets(), donc même avec ces chemins
-// exemptés dans les middlewares personnalisés ci-dessus, manifest.json et sw.js restaient redirigés (302) vers
-// /Account/Login pour tout visiteur non authentifié — y compris sur l'écran de connexion lui-même, où le
-// <link rel="manifest"> les référence avant toute authentification possible : le navigateur recevait du HTML
-// au lieu du JSON attendu, d'où l'erreur console "Manifest: ... Syntax error" permanente. Servir le fichier ici,
-// avant que l'autorisation n'entre en jeu, élimine le problème à la racine plutôt que de rivaliser avec
-// MapStaticAssets() sur la même route via un MapGet().AllowAnonymous() (essayé, inefficace : la requête restait
-// bloquée, signe que ce chemin ne passait jamais par le point d'exécution des endpoints applicatifs).
-app.Use(async (context, next) =>
-{
-    var path = context.Request.Path;
-    if (path == "/manifest.json" || path == "/sw.js")
-    {
-        var env = context.RequestServices.GetRequiredService<IWebHostEnvironment>();
-        var fileName = path == "/manifest.json" ? "manifest.json" : "sw.js";
-        context.Response.ContentType = fileName.EndsWith(".json") ? "application/manifest+json" : "text/javascript";
-        await context.Response.SendFileAsync(Path.Combine(env.WebRootPath, fileName));
-        return;
-    }
     await next();
 });
 
@@ -366,9 +312,11 @@ app.Use(async (context, next) =>
     await next();
 });
 
+app.UseRateLimiter();
 app.UseAntiforgery();
 
-app.MapStaticAssets();
+// Login/setup also need styles, scripts and images before a user has a session.
+app.MapStaticAssets().AllowAnonymous();
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 
@@ -379,10 +327,13 @@ app.MapAdditionalIdentityEndpoints();
 // AllowAnonymous explicite : un système externe appelant ce webhook n'a pas de cookie de session ASP.NET Core —
 // son authentification passe uniquement par le jeton dans l'URL, vérifié ci-dessous. Sans cet attribut, la
 // FallbackPolicy globale (RequireAuthenticatedUser) bloquerait l'appel avant même que le jeton soit vérifié.
-app.MapPost("/api/triggers/{token}", async (string token, IDbContextFactory<AppDbContext> dbFactory, IJobRunner jobRunner) =>
+app.MapPost("/api/triggers/{token}", async (string token, HttpContext context, IDbContextFactory<AppDbContext> dbFactory, JobQueueService queue) =>
 {
+    if (string.IsNullOrEmpty(token) || token.Length > 512) return Results.NotFound();
     await using var db = await dbFactory.CreateDbContextAsync();
-    var candidates = await db.JobTriggers.Where(t => t.Type == TriggerType.Api && t.Enabled).ToListAsync();
+    var candidates = await db.JobTriggers.AsNoTracking()
+        .Where(t => t.Type == TriggerType.Api && t.Enabled && t.Job!.Enabled)
+        .Select(t => new { t.Id, t.JobId, t.WebhookToken }).ToListAsync();
 
     var tokenBytes = System.Text.Encoding.UTF8.GetBytes(token);
     var trigger = candidates.FirstOrDefault(t =>
@@ -392,59 +343,44 @@ app.MapPost("/api/triggers/{token}", async (string token, IDbContextFactory<AppD
 
     if (trigger is null) return Results.NotFound();
 
-    var execution = await jobRunner.RunAsync(trigger.JobId, "API/Webhook");
-    return Results.Ok(new { execution.Id, Status = execution.Status.ToString() });
+    var suppliedKey = context.Request.Headers["Idempotency-Key"];
+    if (suppliedKey.Count > 1 || suppliedKey.ToString().Length > 200)
+        return Results.BadRequest("Clé d'idempotence invalide (200 caractères maximum).");
+    string? key = string.IsNullOrWhiteSpace(suppliedKey.ToString()) ? null :
+        $"webhook:{trigger.Id:N}:{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(suppliedKey.ToString())))}";
+    var request = await queue.EnqueueAsync(trigger.JobId, "API/Webhook", idempotencyKey: key, ct: context.RequestAborted);
+    return Results.Accepted(value: new { RequestId = request.Id, Status = request.Status.ToString() });
 })
-.AllowAnonymous();
+.AllowAnonymous()
+.RequireRateLimiting("webhook");
 
 // Notifications push navigateur (Web Push) : clé publique VAPID nécessaire côté client pour s'abonner, puis
 // abonnement/désabonnement par appareil. Ces trois endpoints restent soumis à la FallbackPolicy globale
 // (RequireAuthenticatedUser) — pas de .AllowAnonymous() ici, contrairement au webhook ci-dessus, car un
 // abonnement push est toujours rattaché à un utilisateur kernelMK authentifié.
 app.MapGet("/api/push/vapid-public-key", (Microsoft.Extensions.Options.IOptionsMonitor<VapidOptions> vapid) =>
-    Results.Text(vapid.CurrentValue.PublicKey ?? string.Empty, "text/plain"));
+    Results.Text(vapid.CurrentValue.PublicKey ?? string.Empty, "text/plain"))
+    .RequireAuthorization("ApplicationAccess");
 
-app.MapPost("/api/push/subscribe", async (PushSubscribeRequest req, HttpContext http, IDbContextFactory<AppDbContext> dbFactory, UserManager<ApplicationUser> userManager) =>
+app.MapGet("/api/security/antiforgery", (HttpContext context, IAntiforgery antiforgery) =>
 {
-    var userId = userManager.GetUserId(http.User);
-    if (userId is null) return Results.Unauthorized();
-    if (string.IsNullOrWhiteSpace(req.Endpoint) || req.Keys is null
-        || string.IsNullOrWhiteSpace(req.Keys.P256dh) || string.IsNullOrWhiteSpace(req.Keys.Auth))
-    {
-        return Results.BadRequest();
-    }
+    context.Response.Headers.CacheControl = "no-store";
+    return Results.Ok(new { token = antiforgery.GetAndStoreTokens(context).RequestToken });
+}).RequireAuthorization("ApplicationAccess");
 
-    await using var db = await dbFactory.CreateDbContextAsync();
-    var existing = await db.PushSubscriptions.FirstOrDefaultAsync(p => p.Endpoint == req.Endpoint);
-    if (existing is not null)
-    {
-        existing.UserId = userId;
-        existing.P256dh = req.Keys.P256dh;
-        existing.Auth = req.Keys.Auth;
-        existing.UserAgent = http.Request.Headers.UserAgent.ToString();
-    }
-    else
-    {
-        db.PushSubscriptions.Add(new PushSubscription
-        {
-            UserId = userId,
-            Endpoint = req.Endpoint,
-            P256dh = req.Keys.P256dh,
-            Auth = req.Keys.Auth,
-            UserAgent = http.Request.Headers.UserAgent.ToString()
-        });
-    }
-    await db.SaveChangesAsync();
-    return Results.Ok();
-});
-
-app.MapPost("/api/push/unsubscribe", async (PushUnsubscribeRequest req, IDbContextFactory<AppDbContext> dbFactory) =>
+var pushGroup = app.MapGroup("/api/push").RequireAuthorization("ApplicationAccess");
+pushGroup.AddEndpointFilter(async (context, next) =>
 {
-    if (string.IsNullOrWhiteSpace(req.Endpoint)) return Results.BadRequest();
-    await using var db = await dbFactory.CreateDbContextAsync();
-    await db.PushSubscriptions.Where(p => p.Endpoint == req.Endpoint).ExecuteDeleteAsync();
-    return Results.Ok();
+    try
+    {
+        await context.HttpContext.RequestServices.GetRequiredService<IAntiforgery>()
+            .ValidateRequestAsync(context.HttpContext);
+    }
+    catch (AntiforgeryValidationException) { return Results.BadRequest("Jeton de sécurité absent ou invalide."); }
+    return await next(context);
 });
+pushGroup.MapPost("/subscribe", PushSubscriptionSecurity.SubscribeAsync);
+pushGroup.MapPost("/unsubscribe", PushSubscriptionSecurity.UnsubscribeAsync);
 
     app.Run();
 }

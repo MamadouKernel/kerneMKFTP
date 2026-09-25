@@ -1,4 +1,5 @@
 using System.Text.Json;
+using KernelMK.Core;
 using KernelMK.Core.Entities;
 using KernelMK.Data;
 using Microsoft.Data.Sqlite;
@@ -28,6 +29,7 @@ public class BackupService
             .Include(j => j.Dependencies)
             .Include(j => j.NotificationRules)
             .AsNoTracking()
+            .AsSplitQuery()
             .ToListAsync();
 
         return JsonSerializer.Serialize(jobs, new JsonSerializerOptions { WriteIndented = true, ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles });
@@ -39,84 +41,171 @@ public class BackupService
                    ?? new List<Job>();
 
         await using var db = await _dbFactory.CreateDbContextAsync();
-        // Une seule transaction pour tout l'import : avant ce correctif, chaque job supprimé était validé par
-        // son propre SaveChangesAsync avant réinsertion — un échec en cours de boucle pouvait laisser des jobs
-        // supprimés sans être réimportés, sans possibilité de retour arrière.
+        if (jobs.Count > 5000 || jobs.Any(j => j.Id == Guid.Empty || string.IsNullOrWhiteSpace(j.Name))
+            || jobs.Select(j => j.Id).Distinct().Count() != jobs.Count)
+            throw new InvalidOperationException("Configuration invalide : identifiants dupliqués, nom absent ou plus de 5000 jobs.");
         await using var transaction = await db.Database.BeginTransactionAsync();
-        var imported = 0;
-
-        try
+        foreach (var job in jobs)
         {
-            foreach (var job in jobs)
-            {
-                var existing = await db.Jobs.FirstOrDefaultAsync(j => j.Id == job.Id);
-                if (existing is not null)
-                {
-                    // Le remove et le re-add partagent le même Id : EF Core ne tolère pas de suivre deux
-                    // instances différentes sous la même clé en même temps, donc ce SaveChanges intermédiaire
-                    // (qui détache l'entité supprimée) reste nécessaire — mais il est maintenant à l'intérieur
-                    // de la transaction globale, donc annulé avec le reste en cas d'échec plus loin dans la boucle.
-                    db.Jobs.Remove(existing);
-                    await db.SaveChangesAsync();
-                }
+            // Import is a configuration update, never a delete-and-recreate of execution history.
+            var existing = await db.Jobs.Include(j => j.Steps).Include(j => j.Triggers)
+                .Include(j => j.Dependencies).Include(j => j.NotificationRules).AsSplitQuery()
+                .SingleOrDefaultAsync(j => j.Id == job.Id);
+            if (await db.JobExecutions.AnyAsync(e => e.JobId == job.Id && e.Status == JobStatus.EnCours))
+                throw new InvalidOperationException($"Le job '{job.Name}' est en cours d'exécution. Arrêtez-le avant l'import.");
 
+            job.Executions.Clear();
+            job.Enabled = false; // Imported scripts/schedules require deliberate review before activation.
+            job.NextRunAt = null;
+            foreach (var step in job.Steps) { step.Job = null; step.Credential = null; step.JobId = job.Id; }
+            foreach (var trigger in job.Triggers) { trigger.Job = null; trigger.JobId = job.Id; trigger.NextRunAt = null; }
+            foreach (var dependency in job.Dependencies) { dependency.Job = null; dependency.DependsOnJob = null; dependency.JobId = job.Id; }
+            foreach (var rule in job.NotificationRules) { rule.Job = null; rule.JobId = job.Id; }
+            if (existing is null)
+            {
                 job.CreatedBy = importedBy;
                 job.CreatedAt = DateTime.UtcNow;
+                job.LastRunAt = null;
+                job.LastStatus = JobStatus.EnAttente;
                 db.Jobs.Add(job);
-                imported++;
             }
-
-            await db.SaveChangesAsync();
-            await transaction.CommitAsync();
-            return imported;
+            else
+            {
+                job.CreatedAt = existing.CreatedAt;
+                job.CreatedBy = existing.CreatedBy;
+                job.LastRunAt = existing.LastRunAt;
+                job.LastStatus = existing.LastStatus;
+                job.UpdatedAt = DateTime.UtcNow;
+                job.UpdatedBy = importedBy;
+                db.JobSteps.RemoveRange(existing.Steps);
+                db.JobTriggers.RemoveRange(existing.Triggers);
+                db.JobDependencies.RemoveRange(existing.Dependencies);
+                db.NotificationRules.RemoveRange(existing.NotificationRules);
+                await db.SaveChangesAsync();
+                db.Entry(existing).CurrentValues.SetValues(job);
+                db.JobSteps.AddRange(job.Steps);
+                db.JobTriggers.AddRange(job.Triggers);
+                db.JobDependencies.AddRange(job.Dependencies);
+                db.NotificationRules.AddRange(job.NotificationRules);
+            }
         }
-        catch
-        {
-            await transaction.RollbackAsync();
-            throw;
-        }
+        await db.SaveChangesAsync();
+        await transaction.CommitAsync();
+        return jobs.Count;
     }
 
-    /// <summary>Copie physique du fichier SQLite vers un dossier de sauvegarde horodaté.</summary>
+    /// <summary>Consistent online SQLite snapshot, including committed WAL transactions.</summary>
     public string BackupDatabaseFile()
     {
-        var dbPath = ResolveDatabaseFilePath();
-
         var backupDir = Path.Combine(AppContext.BaseDirectory, "backups");
         Directory.CreateDirectory(backupDir);
-
-        var backupPath = Path.Combine(backupDir, $"automation-platform_{DateTime.UtcNow:yyyyMMdd_HHmmss}.db");
-        File.Copy(dbPath, backupPath, true);
+        var backupPath = Path.Combine(backupDir, $"automation-platform_{DateTime.UtcNow:yyyyMMdd_HHmmss_fff}_{Guid.NewGuid():N}.db");
+        CreateDatabaseSnapshot(ResolveDatabaseFilePath(), backupPath);
         return backupPath;
     }
 
-    /// <summary>
-    /// Nom du fichier "restauration en attente" — un fichier .db déposé ici est appliqué au tout prochain
-    /// démarrage de kernelMK (voir Program.cs), pas immédiatement. Remplacer le fichier SQLite en cours
-    /// d'utilisation pendant que l'application tourne (connexions ouvertes, verrous Windows) est risqué ; passer
-    /// par un redémarrage garantit qu'aucune connexion n'est active au moment du remplacement.
-    /// </summary>
     public const string PendingRestoreFileName = "pending-restore.db";
 
-    /// <summary>
-    /// Valide et met en attente un fichier de base SQLite fourni par l'utilisateur pour restauration au
-    /// prochain démarrage. Ne touche jamais le fichier de base actuellement utilisé par l'application.
-    /// </summary>
+    public static void CreateDatabaseSnapshot(string sourcePath, string destinationPath)
+    {
+        using var source = new SqliteConnection(new SqliteConnectionStringBuilder
+        { DataSource = sourcePath, Mode = SqliteOpenMode.ReadWrite, Pooling = false }.ConnectionString);
+        using var destination = new SqliteConnection(new SqliteConnectionStringBuilder
+        { DataSource = destinationPath, Mode = SqliteOpenMode.ReadWriteCreate, Pooling = false }.ConnectionString);
+        source.Open();
+        destination.Open();
+        source.BackupDatabase(destination);
+        using var command = destination.CreateCommand();
+        command.CommandText = "PRAGMA journal_mode=DELETE;";
+        command.ExecuteNonQuery();
+    }
+
     public async Task StagePendingDatabaseRestoreAsync(Stream uploadedFile)
     {
-        // "SQLite format 3\0" : signature de 16 octets en tête de tout fichier de base SQLite valide — rejette
-        // immédiatement un fichier qui n'est manifestement pas une base SQLite plutôt que de le mettre en attente
-        // et de casser le démarrage au redémarrage suivant.
-        var header = new byte[16];
-        var read = await uploadedFile.ReadAsync(header.AsMemory(0, 16));
-        if (read < 16 || System.Text.Encoding.ASCII.GetString(header) != "SQLite format 3\0")
+        var pendingPath = GetPendingRestorePath();
+        var temporaryPath = pendingPath + "." + Guid.NewGuid().ToString("N") + ".upload";
+        try
         {
-            throw new InvalidOperationException("Le fichier fourni ne semble pas être une base de données SQLite valide (en-tête incorrect).");
+            await using (var output = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, true))
+            {
+                var buffer = new byte[81920];
+                long total = 0;
+                int read;
+                while ((read = await uploadedFile.ReadAsync(buffer)) > 0)
+                {
+                    total += read;
+                    if (total > 500_000_000) throw new InvalidOperationException("La sauvegarde dépasse 500 Mo.");
+                    await output.WriteAsync(buffer.AsMemory(0, read));
+                }
+                await output.FlushAsync();
+            }
+            ValidateDatabase(temporaryPath);
+            File.Move(temporaryPath, pendingPath, overwrite: true);
         }
+        finally { if (File.Exists(temporaryPath)) File.Delete(temporaryPath); }
+    }
 
-        await using var fileStream = File.Create(GetPendingRestorePath());
-        await fileStream.WriteAsync(header.AsMemory(0, read));
-        await uploadedFile.CopyToAsync(fileStream);
+    public static void ValidateDatabase(string databasePath)
+    {
+        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        { DataSource = databasePath, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ConnectionString);
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA trusted_schema=OFF;";
+        command.ExecuteNonQuery();
+        command.CommandText = "PRAGMA integrity_check;";
+        if (!string.Equals(command.ExecuteScalar()?.ToString(), "ok", StringComparison.Ordinal))
+            throw new InvalidOperationException("La sauvegarde SQLite est corrompue.");
+        command.CommandText = "SELECT name FROM sqlite_master WHERE type='table';";
+        var tables = new HashSet<string>(StringComparer.Ordinal);
+        using (var reader = command.ExecuteReader())
+            while (reader.Read()) tables.Add(reader.GetString(0));
+        string[] required = ["Jobs", "JobSteps", "JobTriggers", "JobExecutions", "AspNetUsers", "AspNetRoles", "AspNetUserRoles", "__EFMigrationsHistory"];
+        if (required.Any(table => !tables.Contains(table)))
+            throw new InvalidOperationException("Ce fichier n'est pas une sauvegarde kernelMK compatible.");
+        // Reject backups from a newer unknown schema before replacing the current database.
+        var knownMigrations = typeof(AppDbContext).Assembly.GetTypes()
+            .Select(t => t.GetCustomAttributes(typeof(Microsoft.EntityFrameworkCore.Migrations.MigrationAttribute), false)
+                .OfType<Microsoft.EntityFrameworkCore.Migrations.MigrationAttribute>().FirstOrDefault()?.Id)
+            .Where(id => id is not null).ToHashSet(StringComparer.Ordinal);
+        command.CommandText = "SELECT MigrationId FROM __EFMigrationsHistory;";
+        using var migrations = command.ExecuteReader();
+        var count = 0;
+        while (migrations.Read())
+        {
+            count++;
+            if (!knownMigrations.Contains(migrations.GetString(0)))
+                throw new InvalidOperationException("Cette sauvegarde utilise une version de schéma inconnue. Mettez à jour l'application avant de la restaurer.");
+        }
+        if (count == 0) throw new InvalidOperationException("Historique des migrations absent de la sauvegarde.");
+    }
+
+    /// <summary>Only called before any application connection/worker starts.</summary>
+    public static bool ApplyPendingDatabaseRestore(IConfiguration configuration)
+    {
+        var dbPath = ResolveDatabaseFilePath(configuration);
+        var pendingPath = Path.Combine(Path.GetDirectoryName(dbPath)!, PendingRestoreFileName);
+        if (!File.Exists(pendingPath)) return false;
+        ValidateDatabase(pendingPath);
+        if (File.Exists(dbPath))
+        {
+            var backupDirectory = Path.Combine(AppContext.BaseDirectory, "backups");
+            Directory.CreateDirectory(backupDirectory);
+            CreateDatabaseSnapshot(dbPath, Path.Combine(backupDirectory, $"avant-restauration_{DateTime.UtcNow:yyyyMMdd_HHmmss_fff}_{Guid.NewGuid():N}.db"));
+            // Recover/checkpoint the previous WAL before removing its sidecars; old WAL pages must never
+            // be replayed onto the newly restored database.
+            using var current = new SqliteConnection(new SqliteConnectionStringBuilder
+            { DataSource = dbPath, Mode = SqliteOpenMode.ReadWrite, Pooling = false }.ConnectionString);
+            current.Open();
+            using var checkpoint = current.CreateCommand();
+            checkpoint.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
+            if (Convert.ToInt32(checkpoint.ExecuteScalar()) != 0)
+                throw new IOException("La base est utilisée par un autre processus. Restauration annulée.");
+        }
+        foreach (var suffix in new[] { "-wal", "-shm" })
+            if (File.Exists(dbPath + suffix)) File.Delete(dbPath + suffix);
+        File.Move(pendingPath, dbPath, overwrite: true);
+        return true;
     }
 
     /// <summary>Annule une restauration précédemment mise en attente (si l'admin change d'avis avant le redémarrage).</summary>
@@ -149,9 +238,11 @@ public class BackupService
     /// introuvable) qui faisait planter tout le circuit Blazor — sauvegarde et restauration étaient donc totalement
     /// inutilisables dès qu'un paramètre supplémentaire suivait "Data Source=" dans la chaîne de connexion.
     /// </summary>
-    private string ResolveDatabaseFilePath()
+    private string ResolveDatabaseFilePath() => ResolveDatabaseFilePath(_configuration);
+
+    private static string ResolveDatabaseFilePath(IConfiguration configuration)
     {
-        var connectionString = _configuration.GetConnectionString("Default") ?? "Data Source=automation-platform.db";
+        var connectionString = configuration.GetConnectionString("Default") ?? "Data Source=automation-platform.db";
         var dbPath = new SqliteConnectionStringBuilder(connectionString).DataSource;
         if (!Path.IsPathRooted(dbPath)) dbPath = Path.Combine(AppContext.BaseDirectory, dbPath);
         return dbPath;

@@ -59,6 +59,9 @@ public static class ServiceCollectionExtensions
             .AddClaimsPrincipalFactory<AppUserClaimsPrincipalFactory>()
             .AddErrorDescriber<FrenchIdentityErrorDescriber>();
 
+        services.Configure<SecurityStampValidatorOptions>(options => options.ValidationInterval = TimeSpan.FromMinutes(1));
+        services.AddSingleton<UserAccessService>();
+
         return services;
     }
 

@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Text;
 using System.Text.Json;
 using KernelMK.Core;
 using KernelMK.Core.StepConfigs;
@@ -44,16 +43,10 @@ public class RobotFrameworkStepExecutor : IStepExecutor
             CreateNoWindow = true
         };
 
-        using var process = new Process { StartInfo = psi };
-        var stdout = new StringBuilder();
-        var stderr = new StringBuilder();
-
-        process.OutputDataReceived += (_, e) => { if (e.Data is not null) stdout.AppendLine(e.Data); };
-        process.ErrorDataReceived += (_, e) => { if (e.Data is not null) stderr.AppendLine(e.Data); };
-
+        (int ExitCode, string Output, string Error) result;
         try
         {
-            process.Start();
+            result = await ProcessExecution.RunAsync(psi, context.CancellationToken);
         }
         catch (System.ComponentModel.Win32Exception ex)
         {
@@ -63,22 +56,18 @@ public class RobotFrameworkStepExecutor : IStepExecutor
                 $"le chemin complet de l'exécutable dans la configuration de l'étape. Détail : {ex.Message}");
         }
 
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
-        await process.WaitForExitAsync(context.CancellationToken);
-
         var reportPath = Path.Combine(outputDir, "report.html");
         var summary = $"Rapport Robot Framework : {reportPath}";
 
         // Code retour Robot Framework : 0 = tous les tests réussis. Tout autre code (nombre de tests en échec,
         // ou 250+/252/255 pour une erreur de framework/arguments) est traité comme un échec de l'étape.
-        if (process.ExitCode == 0)
+        if (result.ExitCode == 0)
         {
-            return StepExecutionResult.Ok($"{stdout}\n{summary}", process.ExitCode);
+            return StepExecutionResult.Ok($"{result.Output}\n{summary}", result.ExitCode);
         }
 
-        var errorDetail = stderr.Length > 0 ? stderr.ToString() : stdout.ToString();
-        return StepExecutionResult.Fail($"{errorDetail}\n{summary}", process.ExitCode);
+        var errorDetail = result.Error.Length > 0 ? result.Error : result.Output;
+        return StepExecutionResult.Fail($"{errorDetail}\n{summary}", result.ExitCode);
     }
 
     private static string BuildArguments(RobotFrameworkStepConfig config, string outputDir)

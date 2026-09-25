@@ -63,15 +63,17 @@ public class FileOpsStepExecutor : IStepExecutor
                         // emplacement d'origine (fonctionne aussi entre deux lecteurs différents, .NET bascule
                         // automatiquement sur une copie+suppression quand un déplacement direct n'est pas possible).
                         ArchiveIfConfigured(config.ArchiveDirectory, file);
-                        if (config.Overwrite && File.Exists(dest)) File.Delete(dest);
-                        File.Move(file, dest);
+                        // Ne pas supprimer la destination avant le déplacement : elle peut être
+                        // la source elle-même, et un déplacement refusé doit préserver les fichiers.
+                        File.Move(file, dest, config.Overwrite);
                         processed.Add(dest);
                     }
                     break;
 
                 case StepType.FichierRenommer:
-                    ArchiveIfConfigured(config.ArchiveDirectory, config.SourcePath);
-                    File.Move(config.SourcePath, config.DestinationPath!, config.Overwrite);
+                    var sourcePath = RequirePath(config.SourcePath, "source");
+                    ArchiveIfConfigured(config.ArchiveDirectory, sourcePath);
+                    File.Move(sourcePath, config.DestinationPath!, config.Overwrite);
                     processed.Add(config.DestinationPath!);
                     break;
 
@@ -88,15 +90,16 @@ public class FileOpsStepExecutor : IStepExecutor
 
                 case StepType.FichierCompresser:
                     if (File.Exists(config.DestinationPath) && config.Overwrite) File.Delete(config.DestinationPath!);
-                    ZipFile.CreateFromDirectory(config.SourcePath, config.DestinationPath!);
+                    ZipFile.CreateFromDirectory(RequirePath(config.SourcePath, "source"), config.DestinationPath!);
                     ArchiveIfConfigured(config.ArchiveDirectory, config.DestinationPath!);
                     processed.Add(config.DestinationPath!);
                     break;
 
                 case StepType.FichierDecompresser:
-                    ArchiveIfConfigured(config.ArchiveDirectory, config.SourcePath);
+                    var archiveSourcePath = RequirePath(config.SourcePath, "source");
+                    ArchiveIfConfigured(config.ArchiveDirectory, archiveSourcePath);
                     Directory.CreateDirectory(config.DestinationPath!);
-                    ZipFile.ExtractToDirectory(config.SourcePath, config.DestinationPath!, config.Overwrite);
+                    ZipFile.ExtractToDirectory(archiveSourcePath, config.DestinationPath!, config.Overwrite);
                     processed.Add(config.DestinationPath!);
                     break;
 
@@ -125,6 +128,9 @@ public class FileOpsStepExecutor : IStepExecutor
     /// demandée — jamais à la place. Le dossier d'archive peut être sur un lecteur/volume différent : File.Copy
     /// gère nativement la copie entre volumes distincts sous Windows.
     /// </summary>
+    private static string RequirePath(string? value, string name) =>
+        !string.IsNullOrWhiteSpace(value) ? value : throw new InvalidOperationException($"Chemin {name} requis.");
+
     private static void ArchiveIfConfigured(string? archiveDirectory, string sourceFile)
     {
         if (string.IsNullOrWhiteSpace(archiveDirectory) || !File.Exists(sourceFile)) return;
@@ -138,8 +144,11 @@ public class FileOpsStepExecutor : IStepExecutor
         if (Directory.Exists(config.SourcePath))
         {
             var searchOption = config.Recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
+            // Figer les entrées avant toute écriture : une destination/archive sous la source
+            // ne doit pas être découverte pendant l'opération et traitée à son tour.
             return Directory.EnumerateFiles(config.SourcePath, "*", searchOption)
-                .Where(f => FilePatternMatcher.IsMatch(Path.GetFileName(f), config.Filter));
+                .Where(f => FilePatternMatcher.IsMatch(Path.GetFileName(f), config.Filter))
+                .ToArray();
         }
 
         return File.Exists(config.SourcePath) ? new[] { config.SourcePath } : Enumerable.Empty<string>();

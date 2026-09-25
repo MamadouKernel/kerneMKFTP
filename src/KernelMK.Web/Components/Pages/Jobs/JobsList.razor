@@ -4,11 +4,13 @@
 @implements IDisposable
 @using Microsoft.EntityFrameworkCore
 @using System.Text
-@using KernelMK.Engine.Execution
+@using KernelMK.Engine.Queue
 @using KernelMK.Engine.Workflow
 @using KernelMK.Engine.Audit
 @inject IDbContextFactory<AppDbContext> DbFactory
-@inject IJobRunner JobRunner
+@inject JobQueueService JobQueue
+@inject IAuthorizationService Authorization
+@inject ILogger<JobsList> Logger
 @inject IJobExecutionCoordinator ExecutionCoordinator
 @inject AuditService Audit
 @inject AuthenticationStateProvider AuthState
@@ -66,13 +68,24 @@
     </div>
 </div>
 
+@if (_queueNotice is not null)
+{
+    <div class="kmk-card p-4 mb-5 text-sm text-emerald-800 bg-emerald-50 border-emerald-200" role="status">
+        @_queueNotice <a href="queue" class="font-semibold underline">Voir la file d'attente</a>
+    </div>
+}
+@if (_queueError is not null)
+{
+    <div class="kmk-card p-4 mb-5 text-sm text-rose-800 bg-rose-50 border-rose-200" role="alert">@_queueError</div>
+}
+
 <!-- Key Metric Stat Cards -->
 @if (!_loading)
 {
     var total = _jobs.Count;
     var actives = _jobs.Count(j => j.Enabled);
     var paused = _jobs.Count(j => !j.Enabled);
-    var runningCount = _jobs.Count(j => ExecutionCoordinator.IsJobRunning(j.Id) || _running.Contains(j.Id) || j.LastStatus == JobStatus.EnCours);
+    var runningCount = _jobs.Count(j => ExecutionCoordinator.IsJobRunning(j.Id) || j.LastStatus == JobStatus.EnCours);
     var failedCount = _jobs.Count(j => j.LastStatus == JobStatus.Echec);
 
     <div class="grid grid-cols-2 lg:grid-cols-5 gap-3.5 mb-6">
@@ -216,7 +229,7 @@ else
             <tbody>
                 @foreach (var job in PagedJobs)
                 {
-                    var isCurrentlyRunning = ExecutionCoordinator.IsJobRunning(job.Id) || _running.Contains(job.Id) || job.LastStatus == JobStatus.EnCours;
+                    var isCurrentlyRunning = ExecutionCoordinator.IsJobRunning(job.Id) || job.LastStatus == JobStatus.EnCours;
 
                     <tr class="@(!job.Enabled ? "bg-slate-50/50 opacity-85" : "")">
                         <!-- Nom et Description -->
@@ -382,11 +395,12 @@ else
                                         <!-- Bouton LANCER -->
                                         <button type="button" class="kmk-btn-run kmk-btn-sm flex items-center gap-1"
                                                 @onclick="() => RunNow(job)"
-                                                title="Lancer une exécution manuelle de ce traitement">
+                                                disabled="@(_enqueuing.Contains(job.Id) || _queued.Contains(job.Id) || !job.Enabled)"
+                                                title="Enregistrer une demande dans la file persistante (job actif requis)">
                                             <svg class="h-3.5 w-3.5 text-emerald-700" xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 24 24">
                                                 <path d="M8 5v14l11-7z" />
                                             </svg>
-                                            <span>Lancer</span>
+                                            <span>@(_enqueuing.Contains(job.Id) ? "Envoi…" : _queued.Contains(job.Id) ? "En file" : "Lancer")</span>
                                         </button>
                                     }
 
@@ -535,7 +549,10 @@ else
     private string _filterName = "";
     private string _filterMode = "";
     private string _filterStatus = "";
-    private readonly HashSet<Guid> _running = new();
+    private readonly HashSet<Guid> _enqueuing = new();
+    private HashSet<Guid> _queued = new();
+    private string? _queueNotice;
+    private string? _queueError;
     private string? _currentUser;
     private Job? _jobToDelete;
     private PeriodicTimer? _refreshTimer;
@@ -601,9 +618,15 @@ else
     {
         await using var db = await DbFactory.CreateDbContextAsync();
         _jobs = await db.Jobs
+            .AsNoTracking()
             .Include(j => j.Steps)
             .OrderBy(j => j.Name)
             .ToListAsync();
+        _queued = (await db.JobExecutionRequests.AsNoTracking()
+            .Where(r => r.Status == JobRequestStatus.Pending)
+            .Select(r => r.JobId)
+            .Distinct()
+            .ToListAsync()).ToHashSet();
     }
 
     private void ResetFilters()
@@ -669,22 +692,41 @@ else
     }
 
     /// <summary>
-    /// Lance l'exécution manuelle du job.
+    /// Enregistre une demande durable sans attendre la fin de l'exécution.
     /// </summary>
     private async Task RunNow(Job job)
     {
-        _running.Add(job.Id);
-        StateHasChanged();
+        if (_queued.Contains(job.Id) || !_enqueuing.Add(job.Id)) return;
+        _queueError = null;
+        _queueNotice = null;
         try
         {
-            await Audit.LogAsync(AuditAction.ExecutionManuelle, nameof(Job), job.Id.ToString(), job.Name, null, _currentUser);
-            await JobRunner.RunAsync(job.Id, $"Manuel ({_currentUser})");
-            await LoadSilentAsync();
+            var user = (await AuthState.GetAuthenticationStateAsync()).User;
+            if (!(await Authorization.AuthorizeAsync(user, "ApplicationAccess")).Succeeded ||
+                !(await Authorization.AuthorizeAsync(user, "Exploitant")).Succeeded)
+            {
+                _queueError = "Votre compte n'est pas autorisé à lancer des jobs.";
+                return;
+            }
+
+            var request = await JobQueue.EnqueueAsync(job.Id, $"Manuel ({user.Identity?.Name ?? "utilisateur"})");
+            _queued.Add(job.Id);
+            _queueNotice = $"La demande pour « {job.Name} » est enregistrée. Elle démarrera dès qu'une place sera disponible.";
+            await Audit.LogAsync(AuditAction.ExecutionManuelle, nameof(JobExecutionRequest), request.Id.ToString(),
+                job.Name, null, user.Identity?.Name, "Demande manuelle enregistrée dans la file persistante");
+        }
+        catch (InvalidOperationException ex)
+        {
+            _queueError = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Impossible d'enregistrer la demande manuelle du job {JobId}", job.Id);
+            _queueError = "La demande n'a pas pu être confirmée. Consultez la file avant de réessayer.";
         }
         finally
         {
-            _running.Remove(job.Id);
-            StateHasChanged();
+            _enqueuing.Remove(job.Id);
         }
     }
 

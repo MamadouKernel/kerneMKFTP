@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Text;
 using System.Text.Json;
 using KernelMK.Core;
 using KernelMK.Core.StepConfigs;
@@ -45,23 +44,11 @@ public class ScriptStepExecutor : IStepExecutor
                 }
             }
 
-            using var process = new Process { StartInfo = psi };
-            var stdout = new StringBuilder();
-            var stderr = new StringBuilder();
-
-            process.OutputDataReceived += (_, e) => { if (e.Data is not null) stdout.AppendLine(e.Data); };
-            process.ErrorDataReceived += (_, e) => { if (e.Data is not null) stderr.AppendLine(e.Data); };
-
-            process.Start();
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-
-            await process.WaitForExitAsync(context.CancellationToken);
-
-            var success = config.SuccessExitCodes.Contains(process.ExitCode);
+            var result = await ProcessExecution.RunAsync(psi, context.CancellationToken);
+            var success = config.SuccessExitCodes.Contains(result.ExitCode);
             return success
-                ? StepExecutionResult.Ok(stdout.ToString(), process.ExitCode)
-                : StepExecutionResult.Fail(stderr.Length > 0 ? stderr.ToString() : stdout.ToString(), process.ExitCode);
+                ? StepExecutionResult.Ok(result.Output, result.ExitCode)
+                : StepExecutionResult.Fail(result.Error.Length > 0 ? result.Error : result.Output, result.ExitCode);
         }
         finally
         {

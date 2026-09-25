@@ -173,7 +173,7 @@ public class RemoteFileBrowserService
         {
             await client.Connect(ct);
         }
-        catch (Exception) when (useTls && port == 990 && certError is null)
+        catch (Exception) when (useTls && port == 990 && certError is null && !ct.IsCancellationRequested)
         {
             client.Config.EncryptionMode = FtpEncryptionMode.Implicit;
             await client.Connect(ct);
@@ -211,31 +211,6 @@ public class RemoteFileBrowserService
                 .OrderByDescending(f => f.IsDirectory)
                 .ThenBy(f => f.Name)
                 .ToList();
-        }
-        catch (Exception ex) when (useTls && client.Config.DataConnectionEncryption)
-        {
-            try
-            {
-                client.Config.DataConnectionEncryption = false;
-                var items = await client.GetListing(remotePath, FtpListOption.Auto, ct);
-                return items
-                    .Where(f => f.Name != "." && f.Name != "..")
-                    .Select(f => new RemoteItemInfo(
-                        Name: f.Name,
-                        FullPath: f.FullName,
-                        IsDirectory: f.Type == FtpObjectType.Directory,
-                        SizeBytes: f.Size,
-                        LastModified: f.Modified.ToLocalTime(),
-                        Extension: f.Type == FtpObjectType.Directory ? null : Path.GetExtension(f.Name).ToLowerInvariant()
-                    ))
-                    .OrderByDescending(f => f.IsDirectory)
-                    .ThenBy(f => f.Name)
-                    .ToList();
-            }
-            catch
-            {
-                throw ex;
-            }
         }
         finally
         {

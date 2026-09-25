@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using System.Text.Json;
 using KernelMK.Core;
 using KernelMK.Core.StepConfigs;
+using KernelMK.Engine.Queue;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -90,30 +91,11 @@ public class ControlStepExecutor : IStepExecutor
                 }
                 else
                 {
-                    var jobName = context.Job.Name;
-                    CallChain.Value = newChain;
-                    _ = Task.Run(async () =>
-                    {
-                        try
-                        {
-                            using var scope = _scopeFactory.CreateScope();
-                            var jobRunner = scope.ServiceProvider.GetRequiredService<IJobRunner>();
-                            var childExecution = await jobRunner.RunAsync(targetJobId, $"Appel depuis job {jobName}", CancellationToken.None);
-                            if (childExecution.Status != JobStatus.Succes)
-                            {
-                                // Avant ce correctif, un job appelé en asynchrone qui échouait ou plantait était
-                                // invisible : l'étape appelante avait déjà rendu "succès" sans savoir ce qui
-                                // s'était réellement passé côté job appelé.
-                                _logger.LogWarning("Job {TargetJobId} déclenché en asynchrone depuis {JobName} terminé en {Status}.", targetJobId, jobName, childExecution.Status);
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogError(ex, "Échec du job {TargetJobId} déclenché en asynchrone depuis {JobName}.", targetJobId, jobName);
-                        }
-                    });
-                    CallChain.Value = currentChain;
-                    return StepExecutionResult.Ok($"Job {targetJobId} déclenché en asynchrone.");
+                    await using var scope = _scopeFactory.CreateAsyncScope();
+                    var request = await scope.ServiceProvider.GetRequiredService<JobQueueService>()
+                        .EnqueueAsync(targetJobId, $"Appel depuis job {context.Job.Name}",
+                            idempotencyKey: $"child:{context.Execution.Id:N}:{context.Step.Id:N}", ct: context.CancellationToken);
+                    return StepExecutionResult.Ok($"Job {targetJobId} mis en file (demande {request.Id}).");
                 }
 
             default:

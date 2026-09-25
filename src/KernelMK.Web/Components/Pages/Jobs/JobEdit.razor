@@ -12,7 +12,10 @@
 @using KernelMK.Engine.Execution
 @inject IDbContextFactory<AppDbContext> DbFactory
 @inject AuditService Audit
+@inject KernelMK.Engine.Queue.JobVersionService JobVersions
 @inject AuthenticationStateProvider AuthState
+@inject IAuthorizationService Authorization
+@inject ILogger<JobEdit> Logger
 @inject NavigationManager Nav
 @inject ConnectionTestService TestService
 @inject CredentialProtector Protector
@@ -26,8 +29,18 @@
 }
 else
 {
-    <h1 class="mb-6">@(IsNew ? "Nouveau job" : $"Job : {_job.Name}")</h1>
+    <div class="flex items-center justify-between gap-3 mb-6">
+        <h1>@(IsNew ? "Nouveau job" : $"Job : {_job.Name}")</h1>
+        @if (!IsNew)
+        {
+            <a class="kmk-btn-secondary text-xs" href="@($"/jobs/{_job.Id}/versions")">Historique des versions</a>
+        }
+    </div>
 
+    @if (_saveError is not null)
+    {
+        <p role="alert" class="mb-4 text-sm text-red-700">@_saveError</p>
+    }
     <EditForm Model="_job" OnValidSubmit="SaveAsync">
         <div class="kmk-card mb-5">
             <div class="kmk-card-header">Informations générales</div>
@@ -1100,7 +1113,7 @@ else
         </div>
 
         <div class="flex gap-3 mb-8">
-            <button type="submit" class="kmk-btn-primary">Enregistrer</button>
+            <button type="submit" class="kmk-btn-primary" disabled="@_saving">@(_saving ? "Enregistrement..." : "Enregistrer")</button>
             <a class="kmk-btn-secondary" href="jobs">Annuler</a>
         </div>
     </EditForm>
@@ -1115,6 +1128,8 @@ else
     private List<Credential> _credentials = new();
     private List<Job> _otherJobs = new();
     private string? _currentUser;
+    private string? _saveError;
+    private bool _saving;
 
     private static readonly TriggerType[] TriggerTypeChoices =
     {
@@ -1128,7 +1143,8 @@ else
         _currentUser = authState.User.Identity?.Name;
 
         await using var db = await DbFactory.CreateDbContextAsync();
-        _credentials = await db.Credentials.OrderBy(c => c.Name).ToListAsync();
+        _credentials = (await db.Credentials.AsNoTracking().OrderBy(c => c.Name).ToListAsync())
+            .Where(c => CredentialAccess.CanUse(authState.User, c)).ToList();
 
         if (JobId is { } id)
         {
@@ -1568,6 +1584,26 @@ else
 
     private async Task TestStepConnectionAsync(JobStep step)
     {
+        if (_isTesting.GetValueOrDefault(step)) return;
+        var user = (await AuthState.GetAuthenticationStateAsync()).User;
+        if (!(await Authorization.AuthorizeAsync(user, "ApplicationAccess")).Succeeded ||
+            !(user.IsInRole("Administrateur") || user.IsInRole("Developpeur")))
+        {
+            _testResults[step] = ConnectionTestResult.Fail("Votre rôle ne permet plus de tester cette connexion.");
+            return;
+        }
+        if (step.CredentialId is { } credentialId)
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var credential = await db.Credentials.AsNoTracking().FirstOrDefaultAsync(c => c.Id == credentialId);
+            if (credential is null || !CredentialAccess.CanUse(user, credential))
+            {
+                _testResults[step] = ConnectionTestResult.Fail("Cet identifiant n'est plus disponible pour votre rôle.");
+                return;
+            }
+            _credentials.RemoveAll(c => c.Id == credentialId);
+            _credentials.Add(credential);
+        }
         _isTesting[step] = true;
         _testResults[step] = null;
         StateHasChanged();
@@ -1760,6 +1796,35 @@ else
 
     private async Task SaveAsync()
     {
+        if (_saving) return;
+        _saving = true;
+        _saveError = null;
+        try
+        {
+            await SaveCoreAsync();
+        }
+        catch (JsonException)
+        {
+            _saveError = "La configuration JSON d'une étape est invalide. Corrigez-la avant d'enregistrer.";
+        }
+        catch (DbUpdateException ex)
+        {
+            Logger.LogWarning(ex, "Échec de l'enregistrement du job");
+            _saveError = "L'enregistrement a échoué. Actualisez les données et réessayez.";
+        }
+        finally { _saving = false; }
+    }
+
+    private async Task SaveCoreAsync()
+    {
+        var user = (await AuthState.GetAuthenticationStateAsync()).User;
+        if (!(await Authorization.AuthorizeAsync(user, "ApplicationAccess")).Succeeded ||
+            !(user.IsInRole("Administrateur") || user.IsInRole("Developpeur")))
+        {
+            _saveError = "Votre rôle ne permet plus de modifier ce job.";
+            return;
+        }
+
         // Synchroniser tous les formulaires visuels (transfert, opérations fichiers) vers le ConfigJson
         foreach (var s in _job.Steps)
         {
@@ -1774,12 +1839,33 @@ else
 
         await using var db = await DbFactory.CreateDbContextAsync();
 
+        var referencedCredentials = _job.Steps.Where(s => s.CredentialId.HasValue)
+            .Select(s => s.CredentialId!.Value).ToHashSet();
+        foreach (var step in _job.Steps.Where(s => IsTransferStep(s.Type)))
+        {
+            var transfer = JsonSerializer.Deserialize<TransferStepConfig>(step.ConfigJson);
+            if (transfer?.LocalCredentialId is { } localId) referencedCredentials.Add(localId);
+        }
+        var availableCredentials = await db.Credentials.AsNoTracking()
+            .Where(c => referencedCredentials.Contains(c.Id)).ToListAsync();
+        if (availableCredentials.Count != referencedCredentials.Count ||
+            availableCredentials.Any(c => !CredentialAccess.CanUse(user, c)))
+        {
+            _saveError = "Une étape utilise un identifiant supprimé ou non autorisé pour votre rôle. Sélectionnez un identifiant autorisé.";
+            return;
+        }
+
+        await using var transaction = await db.Database.BeginTransactionAsync();
+
         if (IsNew)
         {
             _job.CreatedAt = DateTime.UtcNow;
             _job.CreatedBy = _currentUser;
             db.Jobs.Add(_job);
             await db.SaveChangesAsync();
+            await JobVersions.CaptureAsync(db, _job, _currentUser, "Création du job");
+            await db.SaveChangesAsync();
+            await transaction.CommitAsync();
             await Audit.LogAsync(AuditAction.Creation, nameof(Job), _job.Id.ToString(), _job.Name, null, _currentUser);
         }
         else
@@ -1848,6 +1934,9 @@ else
             }
 
             await db.SaveChangesAsync();
+            await JobVersions.CaptureAsync(db, existing, _currentUser, "Modification du job");
+            await db.SaveChangesAsync();
+            await transaction.CommitAsync();
             await Audit.LogAsync(AuditAction.Modification, nameof(Job), existing.Id.ToString(), existing.Name, null, _currentUser);
             _job = existing;
         }

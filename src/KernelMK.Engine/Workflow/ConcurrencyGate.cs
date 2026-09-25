@@ -1,37 +1,41 @@
-using System.Collections.Concurrent;
-
 namespace KernelMK.Engine.Workflow;
 
-/// <summary>Bloque le lancement simultané d'un même job (section 8 "Concurrence") et limite le nombre global de jobs en parallèle.</summary>
+/// <summary>Limite globale et suivi de toutes les exécutions, même concurrentes, d'un job.</summary>
 public class ConcurrencyGate
 {
-    private readonly ConcurrentDictionary<Guid, byte> _runningJobs = new();
-    private readonly SemaphoreSlim _globalLimit;
+    private readonly Dictionary<Guid, int> _runningJobs = new();
+    private readonly object _sync = new();
+    private readonly int _maxParallelJobs;
+    private int _runningCount;
 
     public ConcurrencyGate(int maxParallelJobs = 20)
     {
-        _globalLimit = new SemaphoreSlim(maxParallelJobs, maxParallelJobs);
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxParallelJobs, 1);
+        _maxParallelJobs = maxParallelJobs;
     }
 
     public bool TryEnter(Guid jobId, bool allowConcurrent)
     {
-        if (!allowConcurrent && !_runningJobs.TryAdd(jobId, 0))
+        lock (_sync)
         {
-            return false;
+            _runningJobs.TryGetValue(jobId, out var count);
+            if ((!allowConcurrent && count > 0) || _runningCount >= _maxParallelJobs)
+                return false;
+            _runningJobs[jobId] = count + 1;
+            _runningCount++;
+            return true;
         }
-
-        if (!_globalLimit.Wait(0))
-        {
-            if (!allowConcurrent) _runningJobs.TryRemove(jobId, out _);
-            return false;
-        }
-
-        return true;
     }
 
     public void Exit(Guid jobId)
     {
-        _runningJobs.TryRemove(jobId, out _);
-        _globalLimit.Release();
+        lock (_sync)
+        {
+            if (!_runningJobs.TryGetValue(jobId, out var count))
+                throw new InvalidOperationException("Le job ne possède aucun créneau d'exécution actif.");
+            if (count == 1) _runningJobs.Remove(jobId);
+            else _runningJobs[jobId] = count - 1;
+            _runningCount--;
+        }
     }
 }

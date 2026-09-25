@@ -3,17 +3,19 @@
 @inject IDbContextFactory<AppDbContext> DbFactory
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
+@inject AuthenticationStateProvider AuthState
+@inject ILogger<GlobalSearch> Logger
 
 @if (_isOpen)
 {
     <div class="fixed inset-0 z-[100] flex items-start justify-center pt-24 px-4 bg-slate-900/50 backdrop-blur-xs" @onclick="Close">
-        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-xl border border-slate-200 overflow-hidden" @onclick:stopPropagation="true">
+        <div role="dialog" aria-modal="true" aria-label="Recherche globale" class="bg-white rounded-2xl shadow-2xl w-full max-w-xl border border-slate-200 overflow-hidden" @onclick:stopPropagation="true">
             <div class="flex items-center gap-2.5 px-4 py-3 border-b border-slate-100">
                 <svg class="h-4 w-4 text-slate-400 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                     <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
                 </svg>
                 <input id="kmk-global-search-input" class="flex-1 text-sm outline-none placeholder:text-slate-400"
-                       placeholder="Rechercher un job, un partenaire, un credential..." value="@_query"
+                       aria-label="Rechercher" maxlength="100" placeholder="Rechercher un job, un partenaire..." value="@_query"
                        @oninput="OnQueryChanged" @onkeydown="OnKeyDown" />
                 <kbd class="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-400 border border-slate-200 shrink-0">Échap</kbd>
             </div>
@@ -22,6 +24,14 @@
                 @if (string.IsNullOrWhiteSpace(_query))
                 {
                     <div class="p-6 text-center text-xs text-slate-400">Tape pour chercher parmi les jobs, armateurs et credentials.</div>
+                }
+                else if (_searching)
+                {
+                    <div class="p-6 text-center text-xs text-slate-400" role="status">Recherche en cours…</div>
+                }
+                else if (_error is not null)
+                {
+                    <div class="p-6 text-center text-xs text-rose-600" role="alert">@_error</div>
                 }
                 else if (_results.Count == 0)
                 {
@@ -51,20 +61,31 @@
 
 @code {
     private bool _isOpen;
+    private bool _searching;
+    private string? _error;
+    private CancellationTokenSource? _searchCts;
     private string _query = "";
     private List<SearchResult> _results = new();
     private int _selectedIndex = 0;
     private DotNetObjectReference<GlobalSearch>? _selfRef;
+    private bool _jsRegistered;
+    private Task? _registrationTask;
+    private bool _disposed;
 
     private record SearchResult(string Label, string SubLabel, string Url, string Icon);
 
-    protected override async Task OnAfterRenderAsync(bool firstRender)
+    protected override Task OnAfterRenderAsync(bool firstRender)
     {
-        if (firstRender)
-        {
-            _selfRef = DotNetObjectReference.Create(this);
-            await JS.InvokeVoidAsync("kernelMK.globalSearch.register", _selfRef);
-        }
+        if (!firstRender || _disposed) return Task.CompletedTask;
+        _selfRef = DotNetObjectReference.Create(this);
+        _registrationTask = RegisterAsync();
+        return _registrationTask;
+    }
+
+    private async Task RegisterAsync()
+    {
+        await JS.InvokeVoidAsync("kernelMK.globalSearch.register", _selfRef);
+        _jsRegistered = true;
     }
 
     [JSInvokable]
@@ -81,6 +102,8 @@
 
     private void Close()
     {
+        _searchCts?.Cancel();
+        _searching = false;
         _isOpen = false;
         _query = "";
         _results.Clear();
@@ -88,35 +111,60 @@
 
     private async Task OnQueryChanged(ChangeEventArgs e)
     {
-        _query = e.Value?.ToString() ?? "";
+        _searchCts?.Cancel();
+        using var request = new CancellationTokenSource();
+        _searchCts = request;
+        var ct = request.Token;
+        _query = (e.Value?.ToString() ?? "")[..Math.Min(e.Value?.ToString()?.Length ?? 0, 100)];
         _selectedIndex = 0;
-
-        if (string.IsNullOrWhiteSpace(_query) || _query.Trim().Length < 2)
+        _results.Clear();
+        _error = null;
+        _searching = false;
+        try
         {
-            _results.Clear();
-            return;
+            var q = _query.Trim();
+            if (q.Length < 2) return;
+            _searching = true;
+            await Task.Delay(300, ct);
+            var user = (await AuthState.GetAuthenticationStateAsync()).User;
+            if (user.Identity?.IsAuthenticated != true) return;
+            var canEdit = user.IsInRole("Administrateur") || user.IsInRole("Developpeur");
+            await using var db = await DbFactory.CreateDbContextAsync(ct);
+            var jobs = await db.Jobs.AsNoTracking()
+                .Where(j => j.Name.Contains(q) || (j.Description != null && j.Description.Contains(q)))
+                .OrderBy(j => j.Name).Take(5)
+                .Select(j => new { j.Id, j.Name, j.Description }).ToListAsync(ct);
+            var results = jobs.Select(j => new SearchResult(j.Name, j.Description ?? "Job",
+                canEdit ? $"jobs/{j.Id}/edit" : "jobs", "⚙️")).ToList();
+            if (canEdit)
+            {
+                var credentials = await db.Credentials.AsNoTracking()
+                    .Where(c => c.Name.Contains(q) || (c.Host != null && c.Host.Contains(q)))
+                    .OrderBy(c => c.Name).Take(30)
+                    .Select(c => new { c.Name, c.Host, c.AllowedRolesCsv }).ToListAsync(ct);
+                results.AddRange(credentials.Where(c => user.IsInRole("Administrateur")
+                        || string.IsNullOrWhiteSpace(c.AllowedRolesCsv)
+                        || c.AllowedRolesCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Any(user.IsInRole))
+                    .Take(5).Select(c => new SearchResult(c.Name, c.Host ?? "Connexion", "credentials", "🔑")));
+            }
+            ct.ThrowIfCancellationRequested();
+            _results = results;
         }
-
-        var q = _query.Trim();
-        await using var db = await DbFactory.CreateDbContextAsync();
-
-        var jobs = await db.Jobs
-            .Where(j => EF.Functions.Like(j.Name, $"%{q}%") || (j.Description != null && EF.Functions.Like(j.Description, $"%{q}%")))
-            .OrderBy(j => j.Name)
-            .Take(5)
-            .ToListAsync();
-
-        var credentials = await db.Credentials
-            .Where(c => EF.Functions.Like(c.Name, $"%{q}%") || (c.Host != null && EF.Functions.Like(c.Host, $"%{q}%")))
-            .OrderBy(c => c.Name)
-            .Take(5)
-            .ToListAsync();
-
-        _results = jobs.Select(j => new SearchResult(j.Name, j.Description ?? "Job", $"jobs/{j.Id}/edit", "⚙️"))
-            .Concat(credentials.Select(c => new SearchResult(c.Name, c.Host ?? "Credential", "credentials", "🔑")))
-            .ToList();
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Échec de la recherche globale");
+            if (!ct.IsCancellationRequested) _error = "Recherche indisponible. Réessayez dans un instant.";
+        }
+        finally
+        {
+            if (ReferenceEquals(_searchCts, request))
+            {
+                _searchCts = null;
+                _searching = false;
+            }
+        }
     }
-
     private async Task OnKeyDown(KeyboardEventArgs e)
     {
         switch (e.Key)
@@ -144,7 +192,25 @@
 
     public async ValueTask DisposeAsync()
     {
-        _selfRef?.Dispose();
-        await Task.CompletedTask;
+        if (_disposed) return;
+        _disposed = true;
+        _searchCts?.Cancel();
+        try
+        {
+            // Finish an in-flight registration before releasing its callback reference.
+            if (_registrationTask is not null) await _registrationTask;
+            // Static server rendering never runs OnAfterRenderAsync and cannot use JS interop.
+            if (_jsRegistered)
+            {
+                _jsRegistered = false;
+                await JS.InvokeVoidAsync("kernelMK.globalSearch.unregister");
+            }
+        }
+        catch (JSDisconnectedException) { }
+        finally
+        {
+            _selfRef?.Dispose();
+            _selfRef = null;
+        }
     }
 }

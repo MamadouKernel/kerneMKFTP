@@ -2,12 +2,14 @@
 @rendermode InteractiveServer
 @attribute [Authorize]
 @implements IDisposable
-@using System.Text.Json
 @using System.Text
 @using Microsoft.EntityFrameworkCore
-@using KernelMK.Core.StepConfigs
+@using KernelMK.Web.Services
 @using KernelMK.Engine.Workflow
 @inject IDbContextFactory<AppDbContext> DbFactory
+@inject DashboardSnapshotCache DashboardCache
+@inject OrphanedExecutionRecoveryService OrphanedExecutionRecovery
+@inject AuthenticationStateProvider AuthenticationState
 @inject IJobExecutionCoordinator ExecutionCoordinator
 @inject NavigationManager Navigation
 @inject ILogger<Home> Logger
@@ -38,7 +40,7 @@
             {
                 <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-sm">
                     <span class="h-2 w-2 rounded-full bg-indigo-500"></span>
-                    En attente de flux (aucun run 24h)
+                    En attente de flux (aucune exécution @PeriodLabel)
                 </span>
             }
             else
@@ -75,6 +77,14 @@
             <span>Bilan CSV</span>
         </button>
 
+        <AuthorizeView Roles="Administrateur,Superviseur,Exploitant">
+            @if (_runningCount > 0)
+            {
+                <button class="kmk-btn-secondary flex items-center gap-1.5 text-xs py-2 text-amber-700" @onclick="CleanOrphanedExecutionsAsync" disabled="@_cleaningOrphans" title="Annule uniquement les exécutions en base qui ne sont plus suivies par le moteur">
+                    @(_cleaningOrphans ? "Nettoyage..." : "Nettoyer exécutions bloquées")
+                </button>
+            }
+        </AuthorizeView>
         <button class="kmk-btn-secondary flex items-center gap-1.5 text-xs py-2" @onclick="LoadDashboardAsync" disabled="@_refreshing">
             <svg class="h-3.5 w-3.5 @(_refreshing ? "animate-spin text-brand-600" : "text-slate-500")" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
@@ -96,17 +106,31 @@
     </div>
 </div>
 
+@if (!string.IsNullOrEmpty(_recoveryNotice))
+{
+    <div class="mb-4 p-3 rounded-xl bg-sky-50 border border-sky-200 text-sky-800 text-sm">@_recoveryNotice</div>
+}
 @if (!string.IsNullOrEmpty(_loadError))
 {
     <div class="mb-6 p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-sm flex items-center justify-between">
         <div class="flex items-center gap-2">
             <span>⚠</span>
-            <span>Chargement partiel des métriques : @_loadError</span>
+            <span>@_loadError</span>
         </div>
         <button class="text-xs font-semibold text-amber-900 underline" @onclick="LoadDashboardAsync">Réessayer</button>
     </div>
 }
 
+@if (_hasLoaded)
+{
+<div class="mb-4 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500" role="status">
+    <span>Instantané mutualisé · @_snapshotAt.ToLocalTime().ToString("HH:mm:ss") · validité 15 s</span>
+    <a href="operations" class="font-semibold text-brand-600">Centre des opérations →</a>
+</div>
+@if (_failedCount > _recentIncidents.Count)
+{
+    <p class="mb-4 text-xs text-amber-700">Le diagnostic détaille les @_recentIncidents.Count derniers incidents parmi @_failedCount sur la période. Les indicateurs globaux comptent toute la période.</p>
+}
 <!-- Diagnostic Global : y a-t-il une anomalie, et de quel côté ? -->
 <div class="mb-6 rounded-xl border @(_citSideCount + _armateurSideCount + _indetermineSideCount == 0 ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-white") p-4 shadow-sm">
     @if (_citSideCount + _armateurSideCount + _indetermineSideCount == 0)
@@ -570,7 +594,7 @@
                             <td class="px-5 py-3 font-semibold text-slate-900">
                                 <a href="executions/@ex.Id" class="hover:underline flex items-center gap-2">
                                     <span class="text-slate-400">⚡</span>
-                                    @ex.Job?.Name
+                                    @ex.JobName
                                 </a>
                             </td>
                             <td class="py-3">
@@ -591,9 +615,7 @@
                             </td>
                             <td class="py-3">
                                 @{
-                                    var fileCount = ex.StepLogs
-                                        .Where(l => !string.IsNullOrEmpty(l.FilesProcessedCsv))
-                                        .Sum(l => l.FilesProcessedCsv!.Split(new[] { ';', ',' }, StringSplitOptions.RemoveEmptyEntries).Length);
+                                    var fileCount = ex.FileCount;
                                 }
                                 @if (fileCount > 0)
                                 {
@@ -673,12 +695,12 @@
                                         <AuthorizeView Roles="Administrateur,Developpeur" Context="jobCtx">
                                             <Authorized>
                                                 <a href="jobs/@t.JobId" class="hover:underline text-slate-800 hover:text-brand-600">
-                                                    @t.Job?.Name
+                                                    @t.JobName
                                                 </a>
                                             </Authorized>
                                             <NotAuthorized>
                                                 <span class="text-slate-800">
-                                                    @t.Job?.Name
+                                                    @t.JobName
                                                 </span>
                                             </NotAuthorized>
                                         </AuthorizeView>
@@ -896,7 +918,7 @@
                     <svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" /></svg>
                 </div>
                 <div class="font-semibold text-slate-800 text-sm">Tout est au vert !</div>
-                <p class="text-xs text-slate-400 max-w-sm mt-0.5">Aucun échec de traitement n'a été enregistré sur les dernières 24 heures. Vos flux automatisés tournent sans encombre.</p>
+                <p class="text-xs text-slate-400 max-w-sm mt-0.5">Aucun échec de traitement n'a été enregistré sur la période @PeriodLabel. Vos flux automatisés tournent sans encombre.</p>
             </div>
         }
         else
@@ -915,25 +937,21 @@
                 <tbody class="divide-y divide-slate-100">
                     @foreach (var e in PagedIncidents)
                     {
-                        var failingStep = e.StepLogs
-                            .Where(l => l.Status is StepExecutionStatus.Echec or StepExecutionStatus.Timeout)
-                            .OrderBy(l => l.Order)
-                            .FirstOrDefault();
-                        var side = _incidentSideByExecution.TryGetValue(e.Id, out var sideInfo) ? sideInfo : (Diag: ClassifySide(null), Armateur: "—");
+                        var side = (Diag: e.Diagnosis, Armateur: e.Armateur);
 
                         <tr class="hover:bg-rose-50/20 transition-colors">
                             <td class="px-5 py-3">
                                 <a href="executions/@e.Id" class="font-bold text-rose-800 hover:underline flex items-center gap-1.5">
                                     <span class="text-rose-500">⚠</span>
-                                    @e.Job?.Name
+                                    @e.JobName
                                 </a>
                             </td>
                             <td class="py-3 text-slate-500 text-xs">@e.StartedAt.ToLocalTime().ToString("g")</td>
                             <td class="py-3 text-slate-700 font-medium text-xs">
-                                @(failingStep?.StepName ?? "Étape inconnue")
+                                @e.StepName
                             </td>
-                            <td class="py-3 text-slate-500 text-xs max-w-xs truncate" title="@(failingStep?.ErrorOutput ?? e.Message)">
-                                @(failingStep?.ErrorOutput ?? e.Message ?? "Erreur indéterminée")
+                            <td class="py-3 text-slate-500 text-xs max-w-xs truncate" title="Ouvrir le diagnostic pour consulter les détails">
+                                @e.Diagnosis.Label
                             </td>
                             <td class="py-3">
                                 <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold @side.Diag.CssClass" title="@(side.Armateur != "—" ? $"Partenaire concerné : {side.Armateur}" : "")">
@@ -956,8 +974,18 @@
     </div>
 </div>
 
+}
+else if (_loadError is null)
+{
+    <div class="kmk-card p-8 text-sm text-slate-500" role="status" aria-live="polite">Chargement de la supervision…</div>
+}
+
 @code {
-    private bool _refreshing = false;
+    private bool _refreshing;
+    private bool _hasLoaded;
+    private bool _disposed;
+    private DateTime _snapshotAt;
+    private readonly CancellationTokenSource _lifetime = new();
     private string? _loadError = null;
     private int _periodHours = 24;
 
@@ -967,22 +995,25 @@
     {
         if (_periodHours == hours) return;
         _periodHours = hours;
+        _armateurPage = _incidentsPage = 1;
+        _hasLoaded = false;
         await LoadDashboardAsync();
     }
     private int _totalJobs;
-    private int _activeJobs, _inactiveJobs, _runningCount, _successCount, _failedCount, _filesProcessed;
+    private int _activeJobs, _inactiveJobs, _runningCount, _successCount, _failedCount;
+    private long _filesProcessed;
     private int? _successRate = null;
     private double _avgDurationSeconds;
-    private List<JobTrigger> _upcoming = new();
-    private List<JobExecution> _recentIncidents = new();
-    private List<JobExecution> _recentExecutions = new();
-    private List<Credential> _remoteCredentials = new();
+    private IReadOnlyList<DashboardTrigger> _upcoming = [];
+    private IReadOnlyList<DashboardIncident> _recentIncidents = [];
+    private IReadOnlyList<DashboardExecution> _recentExecutions = [];
+    private IReadOnlyList<RemoteServer> _remoteCredentials = [];
 
     // Armateur Flux Statistics (Sent vs Received)
-    private List<ArmateurStat> _armateurStats = new();
+    private IReadOnlyList<DashboardPartner> _armateurStats = [];
     private int _armateurPage = 1;
     private int _armateurPageSize = 10;
-    private IEnumerable<ArmateurStat> PagedArmateurStats => _armateurStats.Skip((_armateurPage - 1) * _armateurPageSize).Take(_armateurPageSize);
+    private IEnumerable<DashboardPartner> PagedArmateurStats => _armateurStats.Skip((_armateurPage - 1) * _armateurPageSize).Take(_armateurPageSize);
 
     private const int SilenceAttentionDays = 3;
     private const int SilenceAlerteDays = 7;
@@ -997,116 +1028,50 @@
         return (label, "bg-emerald-100 text-emerald-700");
     }
 
-    private int _totalEnvoyes = 0;
-    private int _totalRecuperes = 0;
+    private long _totalEnvoyes;
+    private long _totalRecuperes;
 
     // Nouveaux indicateurs (jobs jamais exécutés, alertes proactives, fiabilité par partenaire)
-    private List<Job> _neverRunJobs = new();
-    private List<Notification> _recentNotifications = new();
-    private List<PartnerReliability> _leastReliablePartners = new();
+    private IReadOnlyList<DashboardJob> _neverRunJobs = [];
+    private IReadOnlyList<DashboardNotification> _recentNotifications = [];
+    private IReadOnlyList<DashboardReliability> _leastReliablePartners = [];
 
     // Pagination des listes du dashboard (chargées avec une borne large côté DB, paginées côté client)
     private int _neverRunPage = 1;
     private int _neverRunPageSize = 10;
-    private IEnumerable<Job> PagedNeverRunJobs => _neverRunJobs.Skip((_neverRunPage - 1) * _neverRunPageSize).Take(_neverRunPageSize);
+    private IEnumerable<DashboardJob> PagedNeverRunJobs => _neverRunJobs.Skip((_neverRunPage - 1) * _neverRunPageSize).Take(_neverRunPageSize);
 
     private int _notificationsPage = 1;
     private int _notificationsPageSize = 10;
-    private IEnumerable<Notification> PagedNotifications => _recentNotifications.Skip((_notificationsPage - 1) * _notificationsPageSize).Take(_notificationsPageSize);
+    private IEnumerable<DashboardNotification> PagedNotifications => _recentNotifications.Skip((_notificationsPage - 1) * _notificationsPageSize).Take(_notificationsPageSize);
 
     private int _recentExecPage = 1;
     private int _recentExecPageSize = 10;
-    private IEnumerable<JobExecution> PagedRecentExecutions => _recentExecutions.Skip((_recentExecPage - 1) * _recentExecPageSize).Take(_recentExecPageSize);
+    private IEnumerable<DashboardExecution> PagedRecentExecutions => _recentExecutions.Skip((_recentExecPage - 1) * _recentExecPageSize).Take(_recentExecPageSize);
 
     private int _upcomingPage = 1;
     private int _upcomingPageSize = 10;
-    private IEnumerable<JobTrigger> PagedUpcoming => _upcoming.Skip((_upcomingPage - 1) * _upcomingPageSize).Take(_upcomingPageSize);
+    private IEnumerable<DashboardTrigger> PagedUpcoming => _upcoming.Skip((_upcomingPage - 1) * _upcomingPageSize).Take(_upcomingPageSize);
 
     private int _credentialsPage = 1;
     private int _credentialsPageSize = 10;
-    private IEnumerable<Credential> PagedRemoteCredentials => _remoteCredentials.Skip((_credentialsPage - 1) * _credentialsPageSize).Take(_credentialsPageSize);
+    private IEnumerable<RemoteServer> PagedRemoteCredentials => _remoteCredentials.Skip((_credentialsPage - 1) * _credentialsPageSize).Take(_credentialsPageSize);
 
     private int _incidentsPage = 1;
     private int _incidentsPageSize = 10;
-    private IEnumerable<JobExecution> PagedIncidents => _recentIncidents.Skip((_incidentsPage - 1) * _incidentsPageSize).Take(_incidentsPageSize);
+    private IEnumerable<DashboardIncident> PagedIncidents => _recentIncidents.Skip((_incidentsPage - 1) * _incidentsPageSize).Take(_incidentsPageSize);
 
     // Diagnostic global : classification de chaque incident par origine probable (CIT vs partenaire/armateur)
-    private enum AnomalySide { Cit, Armateur, Indetermine, FauxPositif }
-    private record SideClassification(AnomalySide Side, string Label, string CssClass, string Icon);
     private Dictionary<Guid, (SideClassification Diag, string Armateur)> _incidentSideByExecution = new();
     private int _citSideCount, _armateurSideCount, _indetermineSideCount;
     private List<(string Label, int Count)> _citSideDetails = new();
     private List<(string Label, int Count)> _armateurSideDetails = new();
 
-    // Réutilise les mêmes signatures d'erreur que ExecutionDetail.razor (GetStepDiagnostic), condensées ici
-    // en une classification CIT vs armateur pour que n'importe quel utilisateur du dashboard sache d'un coup
-    // d'œil de quel côté chercher, sans avoir à ouvrir le détail de l'exécution.
-    private static SideClassification ClassifySide(string? errorOutput)
-    {
-        if (string.IsNullOrWhiteSpace(errorOutput))
-            return new(AnomalySide.Indetermine, "Indéterminé", "bg-slate-100 text-slate-600", "❓");
-
-        var err = errorOutput;
-
-        // Faux négatif FTP : le serveur a confirmé "226 Transfer complete" malgré le statut Échec — transfert OK.
-        if (err.Contains("226", StringComparison.OrdinalIgnoreCase) &&
-            err.Contains("Transfer complete", StringComparison.OrdinalIgnoreCase) &&
-            err.Contains("statut : Failed", StringComparison.OrdinalIgnoreCase))
-            return new(AnomalySide.FauxPositif, "Faux positif (transfert OK)", "bg-emerald-100 text-emerald-700", "✓");
-
-        // Côté CIT : infrastructure locale (lecteur réseau, dossier local, fichier verrouillé, partage SMB local).
-        if (err.Contains("DirectoryNotFoundException", StringComparison.OrdinalIgnoreCase) ||
-            err.Contains("FileNotFoundException", StringComparison.OrdinalIgnoreCase) ||
-            err.Contains("Could not find a part of the path", StringComparison.OrdinalIgnoreCase) ||
-            err.Contains("used by another process", StringComparison.OrdinalIgnoreCase) ||
-            err.Contains("being used", StringComparison.OrdinalIgnoreCase) ||
-            err.Contains("Authentification refusée par le partage", StringComparison.OrdinalIgnoreCase) ||
-            err.Contains("SmbConnectionScope", StringComparison.OrdinalIgnoreCase) ||
-            err.Contains("clé privée SSH est configuré", StringComparison.OrdinalIgnoreCase) ||
-            err.Contains("incompatible avec l'authentification SMB", StringComparison.OrdinalIgnoreCase))
-            return new(AnomalySide.Cit, "Côté CIT (infra locale)", "bg-orange-100 text-orange-700", "🏭");
-
-        // Côté partenaire/armateur : le serveur distant a explicitement rejeté la connexion ou le chemin.
-        if (err.Contains("Authentication failed", StringComparison.OrdinalIgnoreCase) ||
-            err.Contains("Permission denied", StringComparison.OrdinalIgnoreCase) ||
-            err.Contains("530", StringComparison.OrdinalIgnoreCase) ||
-            err.Contains("SshAuthenticationException", StringComparison.OrdinalIgnoreCase) ||
-            err.Contains("550", StringComparison.OrdinalIgnoreCase) ||
-            err.Contains("SftpPathNotFoundException", StringComparison.OrdinalIgnoreCase) ||
-            err.Contains("No such file", StringComparison.OrdinalIgnoreCase))
-            return new(AnomalySide.Armateur, "Côté partenaire", "bg-amber-100 text-amber-700", "🚢");
-
-        // Indéterminé : timeout/réseau/pare-feu — peut venir des deux côtés, nécessite investigation.
-        if (err.Contains("timed out", StringComparison.OrdinalIgnoreCase) ||
-            err.Contains("TimeoutException", StringComparison.OrdinalIgnoreCase) ||
-            err.Contains("A task was canceled", StringComparison.OrdinalIgnoreCase) ||
-            err.Contains("data connection", StringComparison.OrdinalIgnoreCase) ||
-            err.Contains("PASV", StringComparison.OrdinalIgnoreCase) ||
-            err.Contains("PROT P", StringComparison.OrdinalIgnoreCase))
-            return new(AnomalySide.Indetermine, "Réseau (indéterminé)", "bg-slate-100 text-slate-600", "🌐");
-
-        return new(AnomalySide.Indetermine, "Indéterminé", "bg-slate-100 text-slate-600", "❓");
-    }
-
-    private record PartnerReliability(string Armateur, int Ok, int Fail)
-    {
-        public double SuccessRate => (Ok + Fail) > 0 ? 100.0 * Ok / (Ok + Fail) : 100;
-    }
-
     // Live Real-Time Auto-Refresh
     private bool _autoRefresh = true;
     private CancellationTokenSource? _cts;
 
-    public class ArmateurStat
-    {
-        public string Armateur { get; set; } = string.Empty;
-        public int FichiersEnvoyes { get; set; }   // Uploads
-        public int FichiersRecuperes { get; set; } // Downloads
-        public int TotalFichiers => FichiersEnvoyes + FichiersRecuperes;
-        public int TotalExecutions { get; set; }
-        public DateTime? DernierEchange { get; set; }
-        public string? DernierFichier { get; set; }
-    }
+    private sealed record RemoteServer(string Name, CredentialType Type, string? Host, int? Port, string? Username);
 
     protected override async Task OnInitializedAsync()
     {
@@ -1116,27 +1081,33 @@
 
     private void StartRealTimeTimer()
     {
+        if (_disposed) return;
         _cts?.Cancel();
+        _cts?.Dispose();
         _cts = new CancellationTokenSource();
         _ = RunRealTimeLoopAsync(_cts.Token);
     }
 
     private async Task RunRealTimeLoopAsync(CancellationToken ct)
     {
-        // 15s (et non 5s) : ce rafraîchissement relance ~15 requêtes DB à chaque tick, pour chaque onglet
-        // ouvert sur le dashboard — à 5s, plusieurs utilisateurs connectés simultanément en production
-        // saturaient le serveur SQLite. Reste suffisamment "temps réel" pour un tableau de bord de supervision.
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(15));
-        while (!ct.IsCancellationRequested && await timer.WaitForNextTickAsync(ct))
+        try
         {
-            if (_autoRefresh && !_refreshing)
+            while (await timer.WaitForNextTickAsync(ct))
             {
+                if (!_autoRefresh || _disposed) continue;
                 await InvokeAsync(async () =>
                 {
                     await LoadDashboardAsync();
-                    StateHasChanged();
+                    if (!_disposed) StateHasChanged();
                 });
             }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        catch (ObjectDisposedException) when (_disposed) { }
+        catch (Exception error)
+        {
+            Logger.LogError(error, "Arrêt du rafraîchissement automatique du tableau de bord.");
         }
     }
 
@@ -1147,276 +1118,85 @@
 
     private async Task LoadDashboardAsync()
     {
+        if (_disposed) return;
+        if (_refreshing) { _reloadRequested = true; return; }
         _refreshing = true;
         _loadError = null;
-
+        var requestedPeriod = _periodHours;
         try
         {
-            await using var db = await DbFactory.CreateDbContextAsync();
-
-            _totalJobs = await db.Jobs.CountAsync();
-            _activeJobs = await db.Jobs.CountAsync(j => j.Enabled);
-            _inactiveJobs = await db.Jobs.CountAsync(j => !j.Enabled);
-            _runningCount = await db.JobExecutions.CountAsync(e => e.Status == JobStatus.EnCours);
-
-            var since = DateTime.UtcNow.AddHours(-_periodHours);
-            var recent = db.JobExecutions.AsNoTracking().Where(e => e.StartedAt >= since && e.FinishedAt != null);
-            _successCount = await recent.CountAsync(e => e.Status == JobStatus.Succes);
-            _failedCount = await recent.CountAsync(e => e.Status == JobStatus.Echec);
-
-            var totalRuns = _successCount + _failedCount;
-            _successRate = totalRuns > 0 ? (_successCount * 100 / totalRuns) : null;
-
-            var timestamps = await recent.Select(e => new { e.StartedAt, e.FinishedAt }).ToListAsync();
-            _avgDurationSeconds = timestamps.Count > 0
-                ? timestamps.Where(t => t.FinishedAt.HasValue).Select(t => (t.FinishedAt!.Value - t.StartedAt).TotalSeconds).DefaultIfEmpty(0).Average()
-                : 0;
-
-            // Fichiers traités
-            var executionIds = await db.JobExecutions
-                .AsNoTracking()
-                .Where(e => e.StartedAt >= since)
-                .Select(e => e.Id)
-                .ToListAsync();
-
-            var fileLogs = await db.StepExecutionLogs
-                .AsNoTracking()
-                .Where(l => executionIds.Contains(l.JobExecutionId) && !string.IsNullOrEmpty(l.FilesProcessedCsv))
-                .Select(l => l.FilesProcessedCsv)
-                .ToListAsync();
-
-            _filesProcessed = fileLogs.Sum(csv => csv!.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries).Length);
-
-            // Prochaines planifications
-            _upcoming = await db.JobTriggers
-                .AsNoTracking()
-                .Include(t => t.Job)
-                .Where(t => t.Enabled && t.NextRunAt != null && t.Job != null && t.Job.Enabled)
-                .OrderBy(t => t.NextRunAt)
-                .Take(50)
-                .ToListAsync();
-
-            // Flux récent
-            _recentExecutions = await db.JobExecutions
-                .AsNoTracking()
-                .Include(e => e.Job)
-                .Include(e => e.StepLogs)
-                .OrderByDescending(e => e.StartedAt)
-                .Take(50)
-                .ToListAsync();
-
-            // Jobs jamais exécutés (au moins une fois) — trigger oublié/mal configuré probable
-            _neverRunJobs = await db.Jobs
-                .AsNoTracking()
-                .Where(j => j.LastRunAt == null)
-                .OrderBy(j => j.Name)
-                .Take(50)
-                .ToListAsync();
-
-            // Alertes proactives récentes (Job manquant / Anomalie de durée) — invisibles ailleurs dans l'app
-            _recentNotifications = await db.Notifications
-                .AsNoTracking()
-                .OrderByDescending(n => n.CreatedAt)
-                .Take(50)
-                .ToListAsync();
-
-            // Incidents récents
-            _recentIncidents = await db.JobExecutions
-                .AsNoTracking()
-                .Include(e => e.Job)
-                .Include(e => e.StepLogs)
-                .Where(e => e.Status == JobStatus.Echec)
-                .OrderByDescending(e => e.StartedAt)
-                .Take(50)
-                .ToListAsync();
-
-            // Serveurs distants configurés
-            _remoteCredentials = await db.Credentials
-                .AsNoTracking()
-                .Where(c => !string.IsNullOrEmpty(c.Host))
-                .OrderBy(c => c.Name)
-                .Take(50)
-                .ToListAsync();
-
-            // CALCUL DU NOMBRE DE FICHIERS ENVOYÉS ET RÉCUPÉRÉS PAR ARMATEUR
-            var transferSteps = await db.JobSteps
-                .AsNoTracking()
-                .Include(s => s.Job)
-                .Include(s => s.Credential)
-                .Where(s => s.Type == StepType.TransfertSftp || s.Type == StepType.TransfertFtp || s.Type == StepType.TransfertFtps || s.Type == StepType.TransfertSmb)
-                .ToListAsync();
-
-            var stepConfigs = new Dictionary<Guid, (string Armateur, bool Upload)>();
-            foreach (var step in transferSteps)
-            {
-                try
-                {
-                    var cfg = JsonSerializer.Deserialize<TransferStepConfig>(step.ConfigJson);
-                    var upload = cfg?.Upload ?? true;
-                    var armateur = cfg?.Armateur;
-                    if (string.IsNullOrWhiteSpace(armateur))
-                    {
-                        armateur = DetectArmateur(step.Credential?.Name, step.Job?.Name, step.Name);
-                    }
-                    stepConfigs[step.Id] = (armateur, upload);
-                }
-                catch
-                {
-                    stepConfigs[step.Id] = (DetectArmateur(step.Credential?.Name, step.Job?.Name, step.Name), true);
-                }
-            }
-
-            // Diagnostic global : classe chaque incident récent par origine probable (CIT vs partenaire) pour
-            // que n'importe quel utilisateur sache d'un coup d'œil de quel côté chercher.
-            _incidentSideByExecution = new Dictionary<Guid, (SideClassification Diag, string Armateur)>();
-            foreach (var inc in _recentIncidents)
-            {
-                var failingStep = inc.StepLogs
-                    .Where(l => l.Status is StepExecutionStatus.Echec or StepExecutionStatus.Timeout)
-                    .OrderBy(l => l.Order)
-                    .FirstOrDefault();
-                var diag = ClassifySide(failingStep?.ErrorOutput ?? inc.Message);
-                var armateur = failingStep != null && stepConfigs.TryGetValue(failingStep.JobStepId, out var stepInfo)
-                    ? stepInfo.Armateur
-                    : "—";
-                _incidentSideByExecution[inc.Id] = (diag, armateur);
-            }
-            _citSideCount = _incidentSideByExecution.Values.Count(v => v.Diag.Side == AnomalySide.Cit);
-            _armateurSideCount = _incidentSideByExecution.Values.Count(v => v.Diag.Side == AnomalySide.Armateur);
-            _indetermineSideCount = _incidentSideByExecution.Values.Count(v => v.Diag.Side == AnomalySide.Indetermine);
-
-            // Détail par job (côté CIT) / par partenaire (côté armateur) — pour répondre directement à
-            // "quel job ?" / "quel partenaire ?" sans devoir ouvrir chaque incident un par un.
-            _citSideDetails = _recentIncidents
-                .Where(e => _incidentSideByExecution.TryGetValue(e.Id, out var s) && s.Diag.Side == AnomalySide.Cit)
-                .GroupBy(e => e.Job?.Name ?? "Job inconnu")
-                .Select(g => (Label: g.Key, Count: g.Count()))
-                .OrderByDescending(x => x.Count)
-                .ToList();
-            _armateurSideDetails = _recentIncidents
-                .Where(e => _incidentSideByExecution.TryGetValue(e.Id, out var s) && s.Diag.Side == AnomalySide.Armateur)
-                .Select(e => _incidentSideByExecution[e.Id].Armateur)
-                .Where(a => a != "—")
-                .GroupBy(a => a, StringComparer.OrdinalIgnoreCase)
-                .Select(g => (Label: g.Key, Count: g.Count()))
-                .OrderByDescending(x => x.Count)
-                .ToList();
-
-            // Taux de succès de connexion par partenaire (sur la période sélectionnée) — repère les partenaires
-            // les moins fiables sans devoir ouvrir le Rapport des flux.
-            var connLogs = await db.StepExecutionLogs
-                .AsNoTracking()
-                .Where(l => l.StartedAt >= since)
-                .Select(l => new { l.JobStepId, l.Status })
-                .ToListAsync();
-
-            var connStats = new Dictionary<string, (int Ok, int Fail)>(StringComparer.OrdinalIgnoreCase);
-            foreach (var cl in connLogs)
-            {
-                if (!stepConfigs.TryGetValue(cl.JobStepId, out var info)) continue;
-                connStats.TryGetValue(info.Armateur, out var cs);
-                if (cl.Status == StepExecutionStatus.Succes) cs.Ok++;
-                else if (cl.Status == StepExecutionStatus.Echec) cs.Fail++;
-                connStats[info.Armateur] = cs;
-            }
-            _leastReliablePartners = connStats
-                .Where(kv => kv.Value.Ok + kv.Value.Fail >= 3)
-                .Select(kv => new PartnerReliability(kv.Key, kv.Value.Ok, kv.Value.Fail))
-                .OrderBy(p => p.SuccessRate)
-                .Take(4)
-                .ToList();
-
-            var logs = await db.StepExecutionLogs
-                .AsNoTracking()
-                .Where(l => !string.IsNullOrEmpty(l.FilesProcessedCsv))
-                .OrderByDescending(l => l.FinishedAt ?? l.StartedAt)
-                .Take(500)
-                .ToListAsync();
-
-            var dict = new Dictionary<string, ArmateurStat>(StringComparer.OrdinalIgnoreCase);
-
-            foreach (var log in logs)
-            {
-                var files = log.FilesProcessedCsv!.Split(new[] { ';', ',' }, StringSplitOptions.RemoveEmptyEntries);
-                if (files.Length == 0) continue;
-
-                string armateur;
-                bool isUpload = true;
-
-                if (stepConfigs.TryGetValue(log.JobStepId, out var info))
-                {
-                    armateur = info.Armateur;
-                    isUpload = info.Upload;
-                }
-                else
-                {
-                    armateur = DetectArmateur(log.StepName);
-                }
-
-                if (!dict.TryGetValue(armateur, out var stat))
-                {
-                    stat = new ArmateurStat { Armateur = armateur };
-                    dict[armateur] = stat;
-                }
-
-                stat.TotalExecutions++;
-                if (isUpload)
-                {
-                    stat.FichiersEnvoyes += files.Length;
-                }
-                else
-                {
-                    stat.FichiersRecuperes += files.Length;
-                }
-
-                var logDate = log.FinishedAt ?? log.StartedAt;
-                if (stat.DernierEchange == null || logDate > stat.DernierEchange)
-                {
-                    stat.DernierEchange = logDate;
-                    stat.DernierFichier = Path.GetFileName(files.Last().Trim());
-                }
-            }
-
-            // Si des armateurs sont configurés dans les étapes sans logs récents, les inclure avec 0
-            foreach (var step in transferSteps)
-            {
-                if (stepConfigs.TryGetValue(step.Id, out var info) && !string.IsNullOrWhiteSpace(info.Armateur))
-                {
-                    if (!dict.ContainsKey(info.Armateur))
-                    {
-                        dict[info.Armateur] = new ArmateurStat { Armateur = info.Armateur };
-                    }
-                }
-            }
-
-            _armateurStats = dict.Values.OrderByDescending(s => s.TotalFichiers).ToList();
-            _totalEnvoyes = _armateurStats.Sum(s => s.FichiersEnvoyes);
-            _totalRecuperes = _armateurStats.Sum(s => s.FichiersRecuperes);
+            var snapshot = await DashboardCache.GetAsync(requestedPeriod, _lifetime.Token);
+            if (_disposed || requestedPeriod != _periodHours) return;
+            _totalJobs = snapshot.TotalJobs;
+            _activeJobs = snapshot.ActiveJobs;
+            _inactiveJobs = snapshot.TotalJobs - snapshot.ActiveJobs;
+            _runningCount = snapshot.RunningCount;
+            _successCount = snapshot.SuccessCount;
+            _failedCount = snapshot.FailedCount;
+            _successRate = snapshot.SuccessRate;
+            _avgDurationSeconds = snapshot.AverageDurationSeconds;
+            _filesProcessed = snapshot.FilesProcessed;
+            _upcoming = snapshot.Upcoming;
+            _recentExecutions = snapshot.RecentExecutions;
+            _recentIncidents = snapshot.RecentIncidents;
+            _neverRunJobs = snapshot.NeverRunJobs;
+            _recentNotifications = snapshot.Notifications;
+            _leastReliablePartners = snapshot.LeastReliablePartners;
+            _armateurStats = snapshot.Partners;
+            _totalEnvoyes = snapshot.TotalFilesSent;
+            _totalRecuperes = snapshot.TotalFilesReceived;
+            _snapshotAt = snapshot.GeneratedAt;
+            _incidentSideByExecution = snapshot.RecentIncidents.ToDictionary(e => e.Id, e => (e.Diagnosis, e.Armateur));
+            _citSideCount = snapshot.RecentIncidents.Count(e => e.Diagnosis.Side == AnomalySide.Cit);
+            _armateurSideCount = snapshot.RecentIncidents.Count(e => e.Diagnosis.Side == AnomalySide.Armateur);
+            _indetermineSideCount = snapshot.RecentIncidents.Count(e => e.Diagnosis.Side == AnomalySide.Indetermine);
+            _citSideDetails = snapshot.RecentIncidents.Where(e => e.Diagnosis.Side == AnomalySide.Cit)
+                .GroupBy(e => e.JobName).Select(g => (Label: g.Key, Count: g.Count())).OrderByDescending(x => x.Count).ToList();
+            _armateurSideDetails = snapshot.RecentIncidents.Where(e => e.Diagnosis.Side == AnomalySide.Armateur && e.Armateur != "—")
+                .GroupBy(e => e.Armateur, StringComparer.OrdinalIgnoreCase).Select(g => (Label: g.Key, Count: g.Count())).OrderByDescending(x => x.Count).ToList();
+            _hasLoaded = true;
+            await LoadRemoteServersAsync();
         }
-        catch (Exception ex)
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
+        catch (Exception error)
         {
-            Logger.LogError(ex, "Erreur lors du chargement des métriques du tableau de bord.");
-            _loadError = ex.Message;
+            Logger.LogError(error, "Erreur lors du chargement des métriques du tableau de bord.");
+            _loadError = _hasLoaded
+                ? "Actualisation indisponible. Les dernières données affichées peuvent être anciennes. Réessayez dans quelques instants."
+                : "La supervision est temporairement indisponible. Réessayez dans quelques instants.";
         }
         finally
         {
             _refreshing = false;
+            if (_reloadRequested && !_disposed)
+            {
+                _reloadRequested = false;
+                await LoadDashboardAsync();
+            }
         }
     }
 
-    private static string DetectArmateur(params string?[] candidates)
+    private bool _reloadRequested;
+
+    private async Task LoadRemoteServersAsync()
     {
-        var known = new[] { "GUCE", "MSC", "CMA CGM", "CMA-CGM", "MAERSK", "HAPAG-LLOYD", "HAPAG", "COSCO", "ONE", "GRIMALDI", "PIL", "ARKAS", "BOLUDA" };
-        foreach (var text in candidates)
+        // Access rules are evaluated per circuit, on every refresh, outside the shared cache.
+        _remoteCredentials = [];
+        var user = (await AuthenticationState.GetAuthenticationStateAsync()).User;
+        if (!new[] { "Administrateur", "Developpeur", "Superviseur", "Exploitant" }.Any(user.IsInRole)) return;
+        await using var db = await DbFactory.CreateDbContextAsync(_lifetime.Token);
+        var visible = new List<RemoteServer>(50);
+        await foreach (var server in db.Credentials.AsNoTracking()
+            .Where(c => c.Host != null && c.Host != "").OrderBy(c => c.Name)
+            .Select(c => new { c.Name, c.Type, c.Host, c.Port, c.Username, c.AllowedRolesCsv })
+            .AsAsyncEnumerable().WithCancellation(_lifetime.Token))
         {
-            if (string.IsNullOrWhiteSpace(text)) continue;
-            foreach (var k in known)
-            {
-                if (text.Contains(k, StringComparison.OrdinalIgnoreCase)) return k.ToUpper();
-            }
+            if (!string.IsNullOrWhiteSpace(server.AllowedRolesCsv) &&
+                !server.AllowedRolesCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Any(user.IsInRole)) continue;
+            visible.Add(new(server.Name, server.Type, server.Host, server.Port, server.Username));
+            if (visible.Count == 50) break;
         }
-        var fallback = candidates.FirstOrDefault(c => !string.IsNullOrWhiteSpace(c));
-        return !string.IsNullOrWhiteSpace(fallback) ? fallback.Trim() : "Partenaire Général";
+        _remoteCredentials = visible;
     }
 
     private static string StatusBadge(JobStatus status) => status switch
@@ -1445,11 +1225,40 @@
         return $"dans {(int)remaining.TotalDays}j {remaining.Hours}h";
     }
 
-    private async Task StopRunningExecution(JobExecution ex)
+    private bool _cleaningOrphans;
+    private string? _recoveryNotice;
+
+    private async Task CleanOrphanedExecutionsAsync()
     {
+        if (_cleaningOrphans) return;
+        _cleaningOrphans = true;
+        try
+        {
+            var canceled = await OrphanedExecutionRecovery.CancelOrphanedAsync(_lifetime.Token);
+            _recoveryNotice = canceled == 0
+                ? "Aucune exécution bloquée à nettoyer : les traitements restants sont suivis par le moteur."
+                : $"{canceled} exécution(s) bloquée(s) ont été annulée(s).";
+            DashboardCache.Invalidate();
+            await LoadDashboardAsync();
+        }
+        catch (Exception error)
+        {
+            Logger.LogError(error, "Échec du nettoyage des exécutions orphelines.");
+            _recoveryNotice = "Le nettoyage n'a pas pu être exécuté. Consultez le journal du service.";
+        }
+        finally
+        {
+            _cleaningOrphans = false;
+        }
+    }
+    private async Task StopRunningExecution(DashboardExecution ex)
+    {
+        var user = (await AuthenticationState.GetAuthenticationStateAsync()).User;
+        if (!new[] { "Administrateur", "Superviseur", "Exploitant" }.Any(user.IsInRole)) return;
         ExecutionCoordinator.TryStopExecution(ex.Id);
         ExecutionCoordinator.TryStopJob(ex.JobId);
-        await Task.Delay(400);
+        await Task.Delay(400, _lifetime.Token);
+        DashboardCache.Invalidate();
         await LoadDashboardAsync();
     }
 
@@ -1514,6 +1323,9 @@
 
     public void Dispose()
     {
+        _disposed = true;
+        _lifetime.Cancel();
+        _lifetime.Dispose();
         _cts?.Cancel();
         _cts?.Dispose();
     }

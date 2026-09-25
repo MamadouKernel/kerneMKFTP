@@ -10,6 +10,10 @@
 @inject RemoteFileBrowserService BrowserService
 @inject CredentialProtector Protector
 @inject IJSRuntime JS
+@inject AuthenticationStateProvider AuthState
+@inject IAuthorizationService Authorization
+@inject ILogger<RemoteExplorer> Logger
+@implements IDisposable
 
 <PageTitle>Explorateur Distant · kernelMK</PageTitle>
 
@@ -31,8 +35,8 @@
 <div class="kmk-card mb-6">
     <div class="kmk-card-body flex flex-wrap items-end gap-3">
         <div class="flex-1 min-w-[240px]">
-            <label class="kmk-label">Serveur / Identifiant enregistré</label>
-            <select class="kmk-select" @bind="_selectedCredId">
+            <label class="kmk-label" for="remote-credential">Serveur / Identifiant enregistré</label>
+            <select id="remote-credential" class="kmk-select" @bind="_selectedCredId" disabled="@(_isConnected || _busy)">
                 <option value="">Sélectionnez un serveur...</option>
                 @foreach (var c in _credentials)
                 {
@@ -42,8 +46,8 @@
         </div>
 
         <div>
-            <label class="kmk-label">Protocole</label>
-            <select class="kmk-select" @bind="_protocol">
+            <label class="kmk-label" for="remote-protocol">Protocole</label>
+            <select id="remote-protocol" class="kmk-select" @bind="_protocol" disabled="@(_isConnected || _busy)">
                 <option value="@StepType.TransfertSftp">SFTP (port 22)</option>
                 <option value="@StepType.TransfertFtps">FTPS (TLS explicite)</option>
                 <option value="@StepType.TransfertFtp">FTP standard (port 21)</option>
@@ -54,7 +58,7 @@
         <div>
             @if (!_isConnected)
             {
-                <button type="button" class="kmk-btn-primary" disabled="@(_loading || _selectedCredId is null)" @onclick="ConnectAsync">
+                <button type="button" class="kmk-btn-primary" disabled="@(_busy || _selectedCredId is null)" @onclick="ConnectAsync">
                     @if (_loading)
                     {
                         <svg class="animate-spin h-4 w-4 mr-1 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg>
@@ -68,7 +72,7 @@
             }
             else
             {
-                <button type="button" class="kmk-btn-secondary" @onclick="Disconnect">Déconnexion</button>
+                <button type="button" class="kmk-btn-secondary" disabled="@_busy" @onclick="Disconnect">Déconnexion</button>
             }
         </div>
     </div>
@@ -76,13 +80,13 @@
 
 @if (!string.IsNullOrWhiteSpace(_errorMessage))
 {
-    <div class="mb-6 p-4 rounded-xl bg-red-50 border border-red-200 text-sm text-red-800 flex items-start gap-3 shadow-sm">
+    <div role="alert" class="mb-6 p-4 rounded-xl bg-red-50 border border-red-200 text-sm text-red-800 flex items-start gap-3 shadow-sm">
         <span class="text-red-600 font-bold text-base">⚠️</span>
         <div class="flex-1">
             <div class="font-semibold">Erreur de navigation distante</div>
             <div class="text-red-700 mt-0.5">@_errorMessage</div>
         </div>
-        <button class="text-red-500 hover:text-red-700 text-xs font-semibold" @onclick="() => _errorMessage = null">✕</button>
+        <button aria-label="Fermer le message" class="text-red-500 hover:text-red-700 text-xs font-semibold" @onclick="() => _errorMessage = null">✕</button>
     </div>
 }
 
@@ -94,13 +98,13 @@
         <div class="kmk-card-header flex flex-wrap items-center justify-between gap-3 bg-slate-50/50">
             <!-- Fil d'Ariane -->
             <div class="flex items-center gap-1.5 text-xs overflow-x-auto py-1">
-                <button type="button" class="text-brand-600 hover:underline font-semibold flex items-center gap-1" @onclick='() => NavigateTo("/")'>
+                <button type="button" class="text-brand-600 hover:underline font-semibold flex items-center gap-1" disabled="@_busy" @onclick='() => NavigateTo("/")'>
                     <span>🏠</span> <span>/</span>
                 </button>
                 @foreach (var crumb in GetBreadcrumbs())
                 {
                     <span class="text-slate-400">/</span>
-                    <button type="button" class="text-brand-600 hover:underline font-medium" @onclick="() => NavigateTo(crumb.Path)">
+                    <button type="button" class="text-brand-600 hover:underline font-medium" disabled="@_busy" @onclick="() => NavigateTo(crumb.Path)">
                         @crumb.Name
                     </button>
                 }
@@ -108,17 +112,17 @@
 
             <!-- Actions de barre d'outils -->
             <div class="flex items-center gap-2">
-                <button type="button" class="kmk-btn-secondary kmk-btn-sm" disabled="@(_currentPath == "/" || _currentPath == "")" @onclick="NavigateUp">
+                <button type="button" class="kmk-btn-secondary kmk-btn-sm" disabled="@(_busy || _currentPath == "/" || _currentPath == "")" @onclick="NavigateUp">
                     ⬆️ Dossier parent
                 </button>
 
-                <button type="button" class="kmk-btn-secondary kmk-btn-sm" @onclick="RefreshAsync">
+                <button type="button" class="kmk-btn-secondary kmk-btn-sm" disabled="@_busy" @onclick="RefreshAsync">
                     🔄 Actualiser
                 </button>
 
                 @if (_canWrite)
                 {
-                    <button type="button" class="kmk-btn-secondary kmk-btn-sm" @onclick="() => _showNewFolderModal = true">
+                    <button type="button" class="kmk-btn-secondary kmk-btn-sm" disabled="@_busy" @onclick="() => _showNewFolderModal = true">
                         📁 Nouveau dossier
                     </button>
 
@@ -128,7 +132,7 @@
                             <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
                         </svg>
                         <span>Envoyer un fichier</span>
-                        <InputFile OnChange="UploadFileAsync" class="hidden" />
+                        <InputFile disabled="@_busy" aria-label="Envoyer un fichier" OnChange="UploadFileAsync" class="sr-only" />
                     </label>
                 }
                 else
@@ -158,7 +162,7 @@
         {
             <!-- Zone Drag & Drop de dépôt de fichiers -->
             <div class="m-4 relative rounded-xl border-2 border-dashed border-indigo-200 bg-indigo-50/25 hover:bg-indigo-50/60 transition-all p-4 text-center flex flex-col items-center justify-center gap-1.5 group cursor-pointer">
-                <InputFile OnChange="UploadFileAsync" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" multiple />
+                <InputFile disabled="@_busy" aria-label="Envoyer des fichiers dans le dossier courant" OnChange="UploadFileAsync" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" multiple />
                 <div class="h-8 w-8 rounded-lg bg-white text-indigo-600 shadow-xs flex items-center justify-center group-hover:scale-110 transition-transform">
                     <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
@@ -202,7 +206,7 @@
                             <td>
                                 @if (item.IsDirectory)
                                 {
-                                    <button type="button" class="font-semibold text-brand-600 hover:text-brand-800 text-left hover:underline" @onclick="() => NavigateTo(item.FullPath)">
+                                    <button type="button" class="font-semibold text-brand-600 hover:text-brand-800 text-left hover:underline" disabled="@_busy" @onclick="() => NavigateTo(item.FullPath)">
                                         @item.Name
                                     </button>
                                 }
@@ -216,16 +220,16 @@
                             <td class="text-right space-x-1.5 whitespace-nowrap">
                                 @if (!item.IsDirectory)
                                 {
-                                    <button type="button" class="kmk-btn-secondary kmk-btn-sm" title="Aperçu instantané" @onclick="() => PreviewFileAsync(item)">
+                                    <button type="button" class="kmk-btn-secondary kmk-btn-sm" title="Aperçu instantané" disabled="@_busy" @onclick="() => PreviewFileAsync(item)">
                                         👁️ Aperçu
                                     </button>
-                                    <button type="button" class="kmk-btn-secondary kmk-btn-sm" title="Télécharger sur votre poste" @onclick="() => DownloadFileAsync(item)">
+                                    <button type="button" class="kmk-btn-secondary kmk-btn-sm" title="Télécharger sur votre poste" disabled="@_busy" @onclick="() => DownloadFileAsync(item)">
                                         ⬇️ Télécharger
                                     </button>
                                 }
                                 @if (_canWrite)
                                 {
-                                    <button type="button" class="kmk-btn-danger kmk-btn-sm" title="Supprimer définitivement" @onclick="() => ConfirmDelete(item)">
+                                    <button type="button" class="kmk-btn-danger kmk-btn-sm" title="Supprimer définitivement" aria-label="Supprimer @item.Name" disabled="@_busy" @onclick="() => ConfirmDelete(item)">
                                         🗑️
                                     </button>
                                 }
@@ -271,7 +275,11 @@ else
                 || _previewContent.Contains("UNA:");
 
     <div class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
-        <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+        <div role="dialog" aria-modal="true" aria-label="Aperçu du fichier" class="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            @if (_errorMessage is not null)
+            {
+                <p role="alert" class="p-4 text-sm text-red-700 bg-red-50">@_errorMessage</p>
+            }
             <!-- Modal Header -->
             <div class="px-5 py-3.5 bg-slate-900 text-white flex flex-wrap items-center justify-between gap-3 shrink-0">
                 <div class="flex items-center gap-2.5">
@@ -398,13 +406,17 @@ else
 @if (_showNewFolderModal)
 {
     <div class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-        <div class="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-md p-5">
+        <div role="dialog" aria-modal="true" aria-label="Créer un répertoire" class="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-md p-5">
             <h4 class="mb-3">Créer un nouveau répertoire</h4>
-            <label class="kmk-label">Nom du dossier</label>
-            <input class="kmk-input mb-4" placeholder="ex: archives ou factures" @bind="_newFolderName" />
+            @if (_errorMessage is not null)
+            {
+                <p role="alert" class="mb-3 text-sm text-red-700">@_errorMessage</p>
+            }
+            <label class="kmk-label" for="remote-folder-name">Nom du dossier</label>
+            <input id="remote-folder-name" maxlength="255" class="kmk-input mb-4" placeholder="ex: archives ou factures" @bind="_newFolderName" />
             <div class="flex justify-end gap-2">
                 <button type="button" class="kmk-btn-secondary" @onclick="() => _showNewFolderModal = false">Annuler</button>
-                <button type="button" class="kmk-btn-primary" disabled="@string.IsNullOrWhiteSpace(_newFolderName)" @onclick="CreateFolderAsync">Créer</button>
+                <button type="button" class="kmk-btn-primary" disabled="@(_busy || string.IsNullOrWhiteSpace(_newFolderName))" @onclick="CreateFolderAsync">Créer</button>
             </div>
         </div>
     </div>
@@ -414,21 +426,29 @@ else
 @if (_itemToDelete is not null)
 {
     <div class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-        <div class="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-md p-5">
+        <div role="alertdialog" aria-modal="true" aria-label="Confirmer la suppression" class="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-md p-5">
             <h4 class="text-red-600 mb-2">Confirmer la suppression</h4>
+            @if (_errorMessage is not null)
+            {
+                <p role="alert" class="mb-3 text-sm text-red-700">@_errorMessage</p>
+            }
             <p class="text-sm text-slate-600 mb-4">
                 Êtes-vous sûr de vouloir supprimer définitivement <strong>@_itemToDelete.Name</strong> du serveur distant ? Cette action est irréversible.
             </p>
             <div class="flex justify-end gap-2">
                 <button type="button" class="kmk-btn-secondary" @onclick="() => _itemToDelete = null">Annuler</button>
-                <button type="button" class="kmk-btn-danger" @onclick="DeleteConfirmedAsync">Supprimer</button>
+                <button type="button" class="kmk-btn-danger" disabled="@_busy" @onclick="DeleteConfirmedAsync">Supprimer</button>
             </div>
         </div>
     </div>
 }
 
 @code {
-    [CascadingParameter] private Task<AuthenticationState>? AuthStateTask { get; set; }
+    private readonly CancellationTokenSource _lifetime = new();
+    private bool _disposed;
+    private bool _busy;
+    private Credential? _connectedCredential;
+    private StepType _connectedProtocol;
 
     /// <summary>Le Superviseur est un rôle de consultation seule (section 3 "Rôles") : il peut parcourir,
     /// prévisualiser et télécharger, mais pas envoyer, supprimer ou créer de dossier sur les serveurs distants.</summary>
@@ -464,211 +484,188 @@ else
 
     protected override async Task OnInitializedAsync()
     {
-        var userRoles = new HashSet<string>();
-        if (AuthStateTask is not null)
-        {
-            var state = await AuthStateTask;
-            _canWrite = state.User.IsInRole("Administrateur") || state.User.IsInRole("Developpeur") || state.User.IsInRole("Exploitant");
-            foreach (var role in Enum.GetValues<AppRole>())
-            {
-                if (state.User.IsInRole(role.ToString())) userRoles.Add(role.ToString());
-            }
-        }
-
-        await using var db = await DbFactory.CreateDbContextAsync();
-        _credentials = (await db.Credentials.OrderBy(c => c.Name).ToListAsync())
-            .Where(c => string.IsNullOrWhiteSpace(c.AllowedRolesCsv) ||
-                        c.AllowedRolesCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Any(userRoles.Contains))
-            .ToList();
-        if (_credentials.Count > 0)
-        {
-            var sftpCred = _credentials.FirstOrDefault(c => c.Type == CredentialType.FtpSftp) ?? _credentials.First();
-            _selectedCredId = sftpCred.Id;
-        }
+        var user = (await AuthState.GetAuthenticationStateAsync()).User;
+        _canWrite = CanWrite(user);
+        if (!(await Authorization.AuthorizeAsync(user, "ApplicationAccess")).Succeeded || !CanRead(user)) return;
+        await using var db = await DbFactory.CreateDbContextAsync(_lifetime.Token);
+        _credentials = (await db.Credentials.AsNoTracking()
+            .Where(c => c.Type == CredentialType.FtpSftp || c.Type == CredentialType.CompteService)
+            .OrderBy(c => c.Name).ToListAsync(_lifetime.Token))
+            .Where(c => CredentialAccess.CanUse(user, c)).ToList();
+        _selectedCredId = (_credentials.FirstOrDefault(c => c.Type == CredentialType.FtpSftp)
+            ?? _credentials.FirstOrDefault())?.Id;
     }
 
-    private Credential? CurrentCredential => _selectedCredId is null ? null : _credentials.FirstOrDefault(c => c.Id == _selectedCredId);
+    private static bool CanWrite(System.Security.Claims.ClaimsPrincipal user) =>
+        user.IsInRole("Administrateur") || user.IsInRole("Developpeur") || user.IsInRole("Exploitant");
 
-    private async Task ConnectAsync()
+    private static bool CanRead(System.Security.Claims.ClaimsPrincipal user) =>
+        CanWrite(user) || user.IsInRole("Superviseur");
+
+    private async Task RunOperationAsync(Func<Credential, StepType, Task> action, bool write = false, bool connecting = false)
     {
-        var cred = CurrentCredential;
-        if (cred is null || string.IsNullOrWhiteSpace(cred.Host))
-        {
-            _errorMessage = "Veuillez choisir un identifiant avec un hôte configuré.";
-            return;
-        }
-
-        _loading = true;
+        if (_busy || _disposed || (!connecting && !_isConnected)) return;
+        _busy = true;
         _errorMessage = null;
-        StateHasChanged();
-
+        var credentialId = connecting ? _selectedCredId : _connectedCredential?.Id;
+        var protocol = connecting ? _protocol : _connectedProtocol;
         try
         {
-            var secret = Protector.Unprotect(cred.EncryptedSecret);
-            var passphrase = string.IsNullOrEmpty(cred.EncryptedPassphrase) ? null : Protector.Unprotect(cred.EncryptedPassphrase);
-            var port = cred.Port is > 0 ? cred.Port.Value : (_protocol == StepType.TransfertSftp ? 22 : 21);
+            var user = (await AuthState.GetAuthenticationStateAsync()).User;
+            _canWrite = CanWrite(user);
+            if (!(await Authorization.AuthorizeAsync(user, "ApplicationAccess")).Succeeded ||
+                !CanRead(user) || (write && !_canWrite))
+                throw new UnauthorizedAccessException("Votre accès ne permet plus cette opération.");
 
-            _items = await BrowserService.ListItemsAsync(_protocol, cred.Host, port, cred.Username ?? "anonymous", secret, _currentPath, cred.AuthType, passphrase);
-            _isConnected = true;
+            await using var db = await DbFactory.CreateDbContextAsync(_lifetime.Token);
+            var cred = await db.Credentials.AsNoTracking().FirstOrDefaultAsync(c => c.Id == credentialId, _lifetime.Token);
+            if (cred is null || !CredentialAccess.CanUse(user, cred))
+                throw new UnauthorizedAccessException("Cet identifiant n'est plus disponible pour votre rôle.");
+            if (string.IsNullOrWhiteSpace(cred.Host))
+                throw new InvalidOperationException("Renseignez un hôte sur l'identifiant sélectionné.");
+            if (!connecting && _connectedCredential is { } connected &&
+                (cred.Host != connected.Host || cred.Port != connected.Port || cred.Username != connected.Username ||
+                 cred.AuthType != connected.AuthType || cred.Type != connected.Type))
+            {
+                ResetConnection();
+                throw new InvalidOperationException("La configuration du serveur a changé. Reconnectez-vous avant de continuer.");
+            }
+
+            await action(cred, protocol);
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
+        catch (UnauthorizedAccessException ex)
+        {
+            ResetConnection();
+            _errorMessage = ex.Message;
         }
         catch (Exception ex)
         {
-            _errorMessage = $"Échec de connexion au serveur ({cred.Host}) : {ex.Message}";
-            _isConnected = false;
-        }
-        finally
-        {
-            _loading = false;
-            StateHasChanged();
-        }
-    }
-
-    private void Disconnect()
-    {
-        _isConnected = false;
-        _items.Clear();
-        _currentPath = "/";
-    }
-
-    private async Task NavigateTo(string path)
-    {
-        _currentPath = string.IsNullOrWhiteSpace(path) ? "/" : path;
-        await RefreshAsync();
-    }
-
-    private async Task NavigateUp()
-    {
-        if (_currentPath == "/" || string.IsNullOrWhiteSpace(_currentPath)) return;
-        var trimmed = _currentPath.TrimEnd('/');
-        var lastSlash = trimmed.LastIndexOf('/');
-        var parent = lastSlash <= 0 ? "/" : trimmed.Substring(0, lastSlash);
-        await NavigateTo(parent);
-    }
-
-    private async Task RefreshAsync()
-    {
-        var cred = CurrentCredential;
-        if (cred is null) return;
-
-        _loading = true;
-        _errorMessage = null;
-        StateHasChanged();
-
-        try
-        {
-            var host = cred.Host ?? "";
-            if (string.IsNullOrWhiteSpace(host))
-            {
-                _errorMessage = "L'adresse du serveur (hôte) n'est pas renseignée sur cet identifiant.";
-                return;
-            }
-
-            var secret = Protector.Unprotect(cred.EncryptedSecret);
-            var passphrase = string.IsNullOrEmpty(cred.EncryptedPassphrase) ? null : Protector.Unprotect(cred.EncryptedPassphrase);
-            var port = cred.Port is > 0 ? cred.Port.Value : (_protocol == StepType.TransfertSftp ? 22 : 21);
-            _items = await BrowserService.ListItemsAsync(_protocol, host, port, cred.Username ?? "anonymous", secret, _currentPath, cred.AuthType, passphrase);
-        }
-        catch (Exception ex)
-        {
+            Logger.LogWarning(ex, "Échec d'une opération dans l'explorateur distant");
             _errorMessage = ex.Message;
         }
         finally
         {
+            _busy = false;
             _loading = false;
-            StateHasChanged();
-        }
-    }
-
-    private async Task DownloadFileAsync(RemoteItemInfo item)
-    {
-        var cred = CurrentCredential;
-        if (cred is null) return;
-        var host = cred.Host ?? "";
-        if (string.IsNullOrWhiteSpace(host)) return;
-
-        try
-        {
-            var secret = Protector.Unprotect(cred.EncryptedSecret);
-            var passphrase = string.IsNullOrEmpty(cred.EncryptedPassphrase) ? null : Protector.Unprotect(cred.EncryptedPassphrase);
-            var port = cred.Port is > 0 ? cred.Port.Value : (_protocol == StepType.TransfertSftp ? 22 : 21);
-            var bytes = await BrowserService.DownloadFileBytesAsync(_protocol, host, port, cred.Username ?? "anonymous", secret, item.FullPath, cred.AuthType, passphrase);
-
-            await JS.InvokeVoidAsync("kernelMK.downloadFile", item.Name, "application/octet-stream", Convert.ToBase64String(bytes));
-        }
-        catch (Exception ex)
-        {
-            _errorMessage = $"Erreur lors du téléchargement : {ex.Message}";
-        }
-    }
-
-    private async Task PreviewFileAsync(RemoteItemInfo item)
-    {
-        var cred = CurrentCredential;
-        if (cred is null) return;
-        var host = cred.Host ?? "";
-        if (string.IsNullOrWhiteSpace(host)) return;
-
-        _previewItem = item;
-        _previewContent = "";
-        _loadingPreview = true;
-        _showPreviewModal = true;
-        StateHasChanged();
-
-        try
-        {
-            var secret = Protector.Unprotect(cred.EncryptedSecret);
-            var passphrase = string.IsNullOrEmpty(cred.EncryptedPassphrase) ? null : Protector.Unprotect(cred.EncryptedPassphrase);
-            var port = cred.Port is > 0 ? cred.Port.Value : (_protocol == StepType.TransfertSftp ? 22 : 21);
-            _previewContent = await BrowserService.GetFilePreviewAsync(_protocol, host, port, cred.Username ?? "anonymous", secret, item.FullPath, authType: cred.AuthType, passphrase: passphrase);
-        }
-        catch (Exception ex)
-        {
-            _previewContent = $"Impossible de lire l'aperçu du fichier : {ex.Message}";
-        }
-        finally
-        {
+            _isUploading = false;
             _loadingPreview = false;
-            StateHasChanged();
         }
     }
 
-    private async Task UploadFileAsync(InputFileChangeEventArgs e)
+    private Task ConnectAsync()
     {
-        if (!_canWrite) { _errorMessage = "Ton rôle ne permet que la consultation dans l'explorateur distant."; return; }
-        var cred = CurrentCredential;
-        if (cred is null) return;
-        var host = cred.Host ?? "";
-        if (string.IsNullOrWhiteSpace(host)) return;
-
-        _isUploading = true;
-        _errorMessage = null;
-        StateHasChanged();
-
-        try
+        if (_isConnected) return Task.CompletedTask;
+        return RunOperationAsync(async (cred, protocol) =>
         {
-            var secret = Protector.Unprotect(cred.EncryptedSecret);
-            var passphrase = string.IsNullOrEmpty(cred.EncryptedPassphrase) ? null : Protector.Unprotect(cred.EncryptedPassphrase);
-            var port = cred.Port is > 0 ? cred.Port.Value : (_protocol == StepType.TransfertSftp ? 22 : 21);
+            await LoadDirectoryAsync(cred, protocol, "/");
+            _connectedCredential = cred;
+            _connectedProtocol = protocol;
+            _isConnected = true;
+        }, connecting: true);
+    }
 
+    private void Disconnect()
+    {
+        if (!_busy) ResetConnection();
+    }
+
+    private void ResetConnection()
+    {
+        _isConnected = false;
+        _connectedCredential = null;
+        _items.Clear();
+        _currentPath = "/";
+        _itemToDelete = null;
+        _showNewFolderModal = false;
+        _showPreviewModal = false;
+        _previewItem = null;
+        _previewContent = "";
+        _newFolderName = "";
+    }
+
+    private Task NavigateTo(string path) =>
+        RunOperationAsync((cred, protocol) => LoadDirectoryAsync(cred, protocol, string.IsNullOrWhiteSpace(path) ? "/" : path));
+
+    private Task NavigateUp()
+    {
+        if (_currentPath == "/" || string.IsNullOrWhiteSpace(_currentPath)) return Task.CompletedTask;
+        var trimmed = _currentPath.TrimEnd('/');
+        var lastSlash = trimmed.LastIndexOf('/');
+        return NavigateTo(lastSlash <= 0 ? "/" : trimmed[..lastSlash]);
+    }
+
+    private Task RefreshAsync() => NavigateTo(_currentPath);
+
+    private async Task LoadDirectoryAsync(Credential cred, StepType protocol, string path)
+    {
+        _loading = true;
+        if (!_disposed) StateHasChanged();
+        var (secret, passphrase, port) = GetConnectionSecret(cred, protocol);
+        var items = await BrowserService.ListItemsAsync(protocol, cred.Host!, port, cred.Username ?? "anonymous",
+            secret, path, cred.AuthType, passphrase, _lifetime.Token);
+        _lifetime.Token.ThrowIfCancellationRequested();
+        // Commit the path and its listing together so a failed navigation cannot target the wrong directory.
+        _items = items;
+        _currentPath = path;
+        _itemToDelete = null;
+    }
+
+    private (string Secret, string? Passphrase, int Port) GetConnectionSecret(Credential cred, StepType protocol) =>
+        (Protector.Unprotect(cred.EncryptedSecret),
+         string.IsNullOrEmpty(cred.EncryptedPassphrase) ? null : Protector.Unprotect(cred.EncryptedPassphrase),
+         cred.Port is > 0 ? cred.Port.Value : (protocol == StepType.TransfertSftp ? 22 : 21));
+
+    private Task DownloadFileAsync(RemoteItemInfo item) =>
+        RunOperationAsync(async (cred, protocol) =>
+        {
+            if (item.IsDirectory || !_items.Contains(item)) return;
+            var (secret, passphrase, port) = GetConnectionSecret(cred, protocol);
+            var bytes = await BrowserService.DownloadFileBytesAsync(protocol, cred.Host!, port, cred.Username ?? "anonymous",
+                secret, item.FullPath, cred.AuthType, passphrase, _lifetime.Token);
+            await JS.InvokeVoidAsync("kernelMK.downloadFile", _lifetime.Token, item.Name,
+                "application/octet-stream", Convert.ToBase64String(bytes));
+        });
+
+    private Task PreviewFileAsync(RemoteItemInfo item) =>
+        RunOperationAsync(async (cred, protocol) =>
+        {
+            if (item.IsDirectory || !_items.Contains(item)) return;
+            _previewItem = item;
+            _previewContent = "";
+            _previewSearch = "";
+            _copiedToClipboard = false;
+            _loadingPreview = true;
+            _showPreviewModal = true;
+            StateHasChanged();
+            var (secret, passphrase, port) = GetConnectionSecret(cred, protocol);
+            _previewContent = await BrowserService.GetFilePreviewAsync(protocol, cred.Host!, port,
+                cred.Username ?? "anonymous", secret, item.FullPath, authType: cred.AuthType,
+                passphrase: passphrase, ct: _lifetime.Token);
+        });
+
+    private Task UploadFileAsync(InputFileChangeEventArgs e) =>
+        RunOperationAsync(async (cred, protocol) =>
+        {
             var files = e.GetMultipleFiles(maximumFileCount: 30);
+            // Validate the entire batch before writing the first file.
+            if (files.Any(file => !RemoteEntryName.IsValid(file.Name)))
+                throw new InvalidOperationException("Le nom d'un fichier est invalide : les chemins et caractères réservés sont interdits.");
+            if (files.Any(file => file.Size > 100 * 1024 * 1024))
+                throw new InvalidOperationException("Chaque fichier doit faire au maximum 100 Mo.");
+
+            _isUploading = true;
+            StateHasChanged();
+            var (secret, passphrase, port) = GetConnectionSecret(cred, protocol);
+            var targetPath = _currentPath;
             foreach (var file in files)
             {
-                await using var stream = file.OpenReadStream(maxAllowedSize: 100 * 1024 * 1024); // 100 Mo max
-                await BrowserService.UploadFileStreamAsync(_protocol, host, port, cred.Username ?? "anonymous", secret, _currentPath, file.Name, stream, cred.AuthType, passphrase);
+                await using var stream = file.OpenReadStream(maxAllowedSize: 100 * 1024 * 1024, cancellationToken: _lifetime.Token);
+                await BrowserService.UploadFileStreamAsync(protocol, cred.Host!, port, cred.Username ?? "anonymous",
+                    secret, targetPath, file.Name, stream, cred.AuthType, passphrase, _lifetime.Token);
             }
-
-            await RefreshAsync();
-        }
-        catch (Exception ex)
-        {
-            _errorMessage = $"Erreur lors de l'envoi du fichier : {ex.Message}";
-        }
-        finally
-        {
-            _isUploading = false;
-            StateHasChanged();
-        }
-    }
+            await LoadDirectoryAsync(cred, protocol, targetPath);
+        }, write: true);
 
     private List<string> GetPreviewLines()
     {
@@ -691,70 +688,66 @@ else
 
     private async Task CopyPreviewAsync()
     {
-        if (string.IsNullOrEmpty(_previewContent)) return;
-        await JS.InvokeVoidAsync("kernelMK.copyToClipboard", _previewContent);
-        _copiedToClipboard = true;
-        StateHasChanged();
-        await Task.Delay(2000);
-        _copiedToClipboard = false;
-        StateHasChanged();
+        if (string.IsNullOrEmpty(_previewContent) || _disposed) return;
+        try
+        {
+            await JS.InvokeVoidAsync("kernelMK.copyToClipboard", _lifetime.Token, _previewContent);
+            _copiedToClipboard = true;
+            StateHasChanged();
+            await Task.Delay(2000, _lifetime.Token);
+            _copiedToClipboard = false;
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
+        catch (JSException ex)
+        {
+            Logger.LogDebug(ex, "Presse-papiers indisponible");
+            _errorMessage = "Le navigateur ne permet pas la copie. Sélectionnez le texte de l'aperçu.";
+        }
     }
 
     private void ConfirmDelete(RemoteItemInfo item)
     {
-        _itemToDelete = item;
+        if (!_busy && _isConnected && _canWrite && _items.Contains(item)) _itemToDelete = item;
     }
 
-    private async Task DeleteConfirmedAsync()
+    private Task DeleteConfirmedAsync()
     {
-        if (!_canWrite) { _errorMessage = "Ton rôle ne permet que la consultation dans l'explorateur distant."; _itemToDelete = null; return; }
-        if (_itemToDelete is null) return;
-        var cred = CurrentCredential;
-        if (cred is null) return;
-        var host = cred.Host ?? "";
-        if (string.IsNullOrWhiteSpace(host)) return;
-
-        try
+        var item = _itemToDelete;
+        if (item is null) return Task.CompletedTask;
+        return RunOperationAsync(async (cred, protocol) =>
         {
-            var secret = Protector.Unprotect(cred.EncryptedSecret);
-            var passphrase = string.IsNullOrEmpty(cred.EncryptedPassphrase) ? null : Protector.Unprotect(cred.EncryptedPassphrase);
-            var port = cred.Port is > 0 ? cred.Port.Value : (_protocol == StepType.TransfertSftp ? 22 : 21);
-            await BrowserService.DeleteItemAsync(_protocol, host, port, cred.Username ?? "anonymous", secret, _itemToDelete.FullPath, _itemToDelete.IsDirectory, cred.AuthType, passphrase);
-
+            if (!_items.Contains(item)) return;
+            var (secret, passphrase, port) = GetConnectionSecret(cred, protocol);
+            await BrowserService.DeleteItemAsync(protocol, cred.Host!, port, cred.Username ?? "anonymous",
+                secret, item.FullPath, item.IsDirectory, cred.AuthType, passphrase, _lifetime.Token);
             _itemToDelete = null;
-            await RefreshAsync();
-        }
-        catch (Exception ex)
-        {
-            _errorMessage = $"Erreur lors de la suppression : {ex.Message}";
-        }
+            await LoadDirectoryAsync(cred, protocol, _currentPath);
+        }, write: true);
     }
 
-    private async Task CreateFolderAsync()
+    private Task CreateFolderAsync()
     {
-        if (!_canWrite) { _errorMessage = "Ton rôle ne permet que la consultation dans l'explorateur distant."; _showNewFolderModal = false; return; }
-        if (string.IsNullOrWhiteSpace(_newFolderName)) return;
-        var cred = CurrentCredential;
-        if (cred is null) return;
-        var host = cred.Host ?? "";
-        if (string.IsNullOrWhiteSpace(host)) return;
-
-        try
+        var folderName = _newFolderName.Trim();
+        return RunOperationAsync(async (cred, protocol) =>
         {
-            var secret = Protector.Unprotect(cred.EncryptedSecret);
-            var passphrase = string.IsNullOrEmpty(cred.EncryptedPassphrase) ? null : Protector.Unprotect(cred.EncryptedPassphrase);
-            var port = cred.Port is > 0 ? cred.Port.Value : (_protocol == StepType.TransfertSftp ? 22 : 21);
-            var newPath = _currentPath.TrimEnd('/') + "/" + _newFolderName.Trim();
-            await BrowserService.CreateDirectoryAsync(_protocol, host, port, cred.Username ?? "anonymous", secret, newPath, cred.AuthType, passphrase);
-
+            if (!RemoteEntryName.IsValid(folderName))
+                throw new InvalidOperationException("Saisissez un seul nom de dossier, sans chemin ni caractère réservé.");
+            var (secret, passphrase, port) = GetConnectionSecret(cred, protocol);
+            var newPath = _currentPath.TrimEnd('/') + "/" + folderName;
+            await BrowserService.CreateDirectoryAsync(protocol, cred.Host!, port, cred.Username ?? "anonymous",
+                secret, newPath, cred.AuthType, passphrase, _lifetime.Token);
             _showNewFolderModal = false;
             _newFolderName = "";
-            await RefreshAsync();
-        }
-        catch (Exception ex)
-        {
-            _errorMessage = $"Erreur lors de la création du dossier : {ex.Message}";
-        }
+            await LoadDirectoryAsync(cred, protocol, _currentPath);
+        }, write: true);
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        _lifetime.Cancel();
+        // An in-flight operation can still observe the token until it has unwound.
     }
 
     private record Breadcrumb(string Name, string Path);

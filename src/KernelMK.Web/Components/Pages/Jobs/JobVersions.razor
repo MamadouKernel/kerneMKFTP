@@ -1,0 +1,188 @@
+@page "/jobs/{JobId:guid}/versions"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = "Administrateur,Developpeur")]
+@using Microsoft.EntityFrameworkCore
+@using KernelMK.Engine.Queue
+@using KernelMK.Engine.Audit
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject JobVersionService JobVersionManager
+@inject AuditService Audit
+@inject AuthenticationStateProvider AuthState
+@inject IAuthorizationService Authorization
+@inject ILogger<JobVersions> Logger
+
+<PageTitle>Versions du job · kernelMK</PageTitle>
+
+@if (_loading)
+{
+    <p class="text-sm text-slate-500">Chargement…</p>
+}
+else if (_jobName is null)
+{
+    <div class="kmk-card p-6 text-rose-700">Job introuvable.</div>
+}
+else
+{
+    <div class="flex flex-wrap items-center justify-between gap-3 mb-6">
+        <div>
+            <h1 class="text-xl sm:text-2xl font-bold text-slate-900">Versions de @_jobName</h1>
+            <p class="text-sm text-slate-500 mt-1">Historique immuable enregistré dans la base SQLite locale.</p>
+        </div>
+        <a class="kmk-btn-secondary text-xs" href="@($"/jobs/{JobId}/edit")">Retour au job</a>
+    </div>
+
+    @if (_notice is not null) { <div class="kmk-card p-4 mb-4 bg-emerald-50 text-emerald-800" role="status">@_notice</div> }
+    @if (_error is not null) { <div class="kmk-card p-4 mb-4 bg-rose-50 text-rose-800" role="alert">@_error</div> }
+
+    <div class="kmk-card p-4 mb-5 text-sm text-indigo-900 bg-indigo-50 border-indigo-100">
+        Chaque sauvegarde crée une version numérotée avec son empreinte SHA-256. Une restauration crée une nouvelle version et ne supprime jamais l'historique.
+    </div>
+
+    @if (_versions.Count == 0)
+    {
+        <div class="kmk-card p-10 text-center text-slate-500">Aucune version historique. La prochaine sauvegarde créera la version 1.</div>
+    }
+    else
+    {
+        <div class="space-y-3">
+            @foreach (var version in _versions)
+            {
+                <article class="kmk-card p-5">
+                    <div class="flex flex-wrap justify-between gap-3">
+                        <div>
+                            <h2 class="font-bold text-slate-900">Version @version.VersionNumber</h2>
+                            <p class="text-sm text-slate-600">@version.ChangeSummary</p>
+                        </div>
+                        <div class="text-right text-xs text-slate-500">
+                            <div>@version.CreatedAt.ToString("dd/MM/yyyy HH:mm:ss") UTC</div>
+                            <div>@(version.CreatedBy ?? "Système")</div>
+                        </div>
+                    </div>
+                    <div class="font-mono text-[11px] text-slate-500 break-all mt-3" title="@version.DefinitionHash">
+                        SHA-256 @version.DefinitionHash
+                    </div>
+                    <div class="flex flex-wrap items-center gap-3 mt-4">
+                        <details class="flex-1">
+                            <summary class="cursor-pointer text-sm font-semibold text-brand-600">Afficher la définition JSON</summary>
+                            <pre class="mt-3 p-4 bg-slate-950 text-slate-100 rounded-xl text-xs overflow-auto max-h-[32rem] whitespace-pre-wrap">@version.DefinitionJson</pre>
+                        </details>
+                        @if (version.Id != _versions[0].Id)
+                        {
+                            <button type="button" class="kmk-btn-secondary text-xs text-amber-700"
+                                    disabled="@_busy" @onclick="() => OpenRestore(version)">Restaurer cette version</button>
+                        }
+                    </div>
+                </article>
+            }
+        </div>
+    }
+}
+
+@if (_restoreTarget is not null)
+{
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
+        <section class="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl" role="dialog" aria-modal="true">
+            <h2 class="text-lg font-bold">Restaurer la version @_restoreTarget.VersionNumber</h2>
+            <p class="text-sm text-slate-600 mt-2">La configuration actuelle sera remplacée. L'état précédent reste conservé dans l'historique.</p>
+            <div class="bg-amber-50 border border-amber-200 rounded-xl p-4 my-4 text-sm text-amber-900">
+                @if (_differences.Count == 0)
+                {
+                    <p>Aucune différence détectée.</p>
+                }
+                else
+                {
+                    <p class="font-semibold mb-2">Sections modifiées :</p>
+                    <ul class="list-disc pl-5">
+                        @foreach (var difference in _differences) { <li>@difference</li> }
+                    </ul>
+                }
+            </div>
+            <label class="flex items-start gap-2 text-sm my-4">
+                <input type="checkbox" class="mt-1" @bind="_restoreAcknowledged" disabled="@_busy" />
+                <span>Je confirme le remplacement de la définition actuelle et la création d'une nouvelle version.</span>
+            </label>
+            <div class="flex justify-end gap-2">
+                <button type="button" class="kmk-btn-secondary text-xs" disabled="@_busy" @onclick="CloseRestore">Annuler</button>
+                <button type="button" class="kmk-btn-primary text-xs" disabled="@(_busy || !_restoreAcknowledged)" @onclick="ConfirmRestoreAsync">
+                    @(_busy ? "Restauration…" : "Restaurer")
+                </button>
+            </div>
+        </section>
+    </div>
+}
+
+@code {
+    [Parameter] public Guid JobId { get; set; }
+    private bool _loading = true;
+    private bool _busy;
+    private bool _restoreAcknowledged;
+    private string? _jobName;
+    private string? _notice;
+    private string? _error;
+    private List<JobDefinitionVersion> _versions = [];
+    private JobDefinitionVersion? _restoreTarget;
+    private IReadOnlyList<string> _differences = [];
+
+    protected override Task OnParametersSetAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _jobName = await db.Jobs.AsNoTracking().Where(j => j.Id == JobId).Select(j => j.Name).SingleOrDefaultAsync();
+        _versions = _jobName is null ? [] : await db.JobDefinitionVersions.AsNoTracking()
+            .Where(v => v.JobId == JobId).OrderByDescending(v => v.VersionNumber).ToListAsync();
+        _loading = false;
+    }
+
+    private void OpenRestore(JobDefinitionVersion version)
+    {
+        _error = null;
+        _restoreTarget = version;
+        _restoreAcknowledged = false;
+        _differences = _versions.Count == 0 ? [] :
+            JobVersionService.DescribeDifferences(_versions[0].DefinitionJson, version.DefinitionJson);
+    }
+
+    private void CloseRestore()
+    {
+        _restoreTarget = null;
+        _restoreAcknowledged = false;
+        _differences = [];
+    }
+
+    private async Task ConfirmRestoreAsync()
+    {
+        if (_restoreTarget is null || !_restoreAcknowledged || _busy) return;
+        _busy = true;
+        _error = null;
+        _notice = null;
+        var target = _restoreTarget;
+        try
+        {
+            var user = (await AuthState.GetAuthenticationStateAsync()).User;
+            if (!(await Authorization.AuthorizeAsync(user, "ApplicationAccess")).Succeeded ||
+                !(user.IsInRole("Administrateur") || user.IsInRole("Developpeur")))
+            {
+                _error = "Votre session ou votre rôle ne permet plus cette restauration.";
+                return;
+            }
+            var userName = user.Identity?.Name ?? "utilisateur";
+            await using var db = await DbFactory.CreateDbContextAsync();
+            await using var transaction = await db.Database.BeginTransactionAsync();
+            var restored = await JobVersionManager.RestoreAsync(db, JobId, target.Id, userName);
+            await transaction.CommitAsync();
+            await Audit.LogAsync(AuditAction.Modification, nameof(Job), JobId.ToString(), _jobName,
+                null, userName, $"Restauration de la version {target.VersionNumber} vers la version {restored.VersionNumber}");
+            CloseRestore();
+            _notice = $"Version {target.VersionNumber} restaurée et enregistrée comme version {restored.VersionNumber}.";
+            await LoadAsync();
+        }
+        catch (InvalidOperationException ex) { _error = ex.Message; }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Échec de restauration de la version {VersionId}", target.Id);
+            _error = "La restauration a échoué ; la définition actuelle a été conservée.";
+        }
+        finally { _busy = false; }
+    }
+}

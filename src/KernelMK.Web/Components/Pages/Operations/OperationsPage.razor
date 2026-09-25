@@ -1,0 +1,152 @@
+@page "/operations"
+@rendermode InteractiveServer
+@attribute [Authorize(Roles = "Administrateur,Superviseur,Auditeur")]
+@implements IDisposable
+@using System.Diagnostics
+@using KernelMK.Web.Services
+@using KernelMK.Engine.Infrastructure
+@using KernelMK.Engine.Workflow
+@inject DashboardSnapshotCache Cache
+@inject IDbWriteQueue WriteQueue
+@inject IJobExecutionCoordinator Coordinator
+@inject ILogger<OperationsPage> Logger
+
+<PageTitle>Centre de pilotage · kernelMK</PageTitle>
+
+<div class="ops-page">
+    <section class="ops-hero">
+        <div class="ops-eyebrow"><span class="ops-live-dot"></span> KERNELMK / OPERATIONS</div>
+        <div class="ops-heading">
+            <div><h1>Le contrôle, en un regard.</h1><p>Activité des workflows, qualité de service et performance de votre plateforme.</p></div>
+            <button class="ops-button" @onclick="RefreshAsync" disabled="@_loading">@(_loading ? "Actualisation…" : "↻ Actualiser")</button>
+        </div>
+        <div class="ops-hero-footer">
+            <span>@(_snapshot is null ? "En attente des mesures" : $"Instantané du {_snapshot.GeneratedAt.ToLocalTime():dd MMM · HH:mm:ss}")</span>
+            <div class="ops-periods" aria-label="Période des indicateurs">
+                @foreach (var period in new[] { 24, 168, 720 })
+                {
+                    <button class="@(_period == period ? "selected" : "")" aria-pressed="@(_period == period)" @onclick="() => ChangePeriodAsync(period)">@(period == 24 ? "24 heures" : period == 168 ? "7 jours" : "30 jours")</button>
+                }
+            </div>
+        </div>
+    </section>
+
+    @if (_error is not null)
+    {
+        <div class="ops-alert" role="alert">@_error Les dernières mesures restent affichées lorsqu’elles sont disponibles.</div>
+    }
+    @if (_snapshot is not null && _statistics is not null)
+    {
+        <div class="ops-section-label"><span>VUE OPÉRATIONNELLE</span><span>Actualisation automatique · 15 s <button class="ops-text-button" @onclick="() => _paused = !_paused">@(_paused ? "Reprendre" : "Mettre en pause")</button></span></div>
+        <section class="ops-metrics" aria-label="Indicateurs opérationnels">
+            <article class="ops-metric"><span>Workflows actifs</span><strong>@_snapshot.ActiveJobs<small>/ @_snapshot.TotalJobs</small></strong><p>Configurés pour l’exploitation</p></article>
+            <article class="ops-metric"><span>Jobs en cours</span><strong>@_runningJobs</strong><p>Suivi en mémoire du moteur</p></article>
+            <article class="ops-metric"><span>Taux de succès</span><strong>@SuccessRate<small>@(SuccessRate == "—" ? "" : "%")</small></strong><p>@_snapshot.SuccessCount succès · @_snapshot.FailedCount échecs</p></article>
+            <article class="ops-metric"><span>Fichiers traités</span><strong>@_snapshot.FilesProcessed.ToString("N0")</strong><p>Sur la période sélectionnée</p></article>
+        </section>
+
+        <div class="ops-columns">
+            <section class="ops-panel">
+                <div class="ops-panel-title"><div><span class="ops-eyebrow">PERFORMANCE</span><h2>Chaque lecture compte.</h2></div><span class="ops-tag">Cache partagé</span></div>
+                <p class="ops-description">Les tableaux de bord réutilisent un même instantané. Les demandes simultanées partagent le même chargement.</p>
+                <div class="ops-cache-score"><strong>@ReuseRate.ToString("0")<small>%</small></strong><span>des demandes servies sans<br />nouveau chargement</span></div>
+                <div class="ops-meter" role="meter" aria-label="Taux de réutilisation du cache" aria-valuenow="@ReuseRate" aria-valuemin="0" aria-valuemax="100"><span style="@($"width:{ReuseRate.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}%")"></span></div>
+                <dl class="ops-data-list">
+                    <div><dt>Lectures en cache</dt><dd>@_statistics.Hits.ToString("N0")</dd></div>
+                    <div><dt>Demandes regroupées</dt><dd>@_statistics.CoalescedRequests.ToString("N0")</dd></div>
+                    <div><dt>Chargements réalisés</dt><dd>@_statistics.Loads.ToString("N0")</dd></div>
+                    <div><dt>Dernier chargement</dt><dd>@_statistics.LastLoadMilliseconds.ToString("N1") ms</dd></div>
+                    <div><dt>Instantanés conservés</dt><dd>@_statistics.Entries / @_statistics.Capacity</dd></div>
+                    <div><dt>Validité d’un instantané</dt><dd>@_statistics.TimeToLiveSeconds s</dd></div>
+                </dl>
+                <p class="ops-footnote">Compteurs depuis le démarrage. Le temps indiqué mesure le chargement serveur, pas la latence de votre navigateur.</p>
+            </section>
+            <div class="ops-stack">
+                <section class="ops-panel">
+                    <div class="ops-panel-title"><div><span class="ops-eyebrow">VIGILANCE</span><h2>Les signaux à suivre.</h2></div></div>
+                    <div class="ops-signal @(_snapshot.FailedCount > 0 ? "attention" : "")"><span class="ops-signal-icon">@(_snapshot.FailedCount > 0 ? "!" : "✓")</span><div><strong>@_snapshot.FailedCount exécution(s) en échec</strong><p>@(_snapshot.FailedCount > 0 ? "Consultez les diagnostics pour identifier les causes." : "Aucun échec enregistré sur cette période.")</p></div><a href="executions">Historique →</a></div>
+                    <div class="ops-signal @(_failedWrites > 0 ? "attention" : "")"><span class="ops-signal-icon">@(_failedWrites > 0 ? "!" : "✓")</span><div><strong>@_failedWrites écriture(s) auxiliaire(s) perdue(s)</strong><p>Refus ou échecs de la file d’audit et de notifications depuis le démarrage.</p></div></div>
+                    <div class="ops-signal @(_statistics.LoadFailures > 0 ? "attention" : "")"><span class="ops-signal-icon">@(_statistics.LoadFailures > 0 ? "!" : "✓")</span><div><strong>@_statistics.LoadFailures échec(s) de chargement</strong><p>La prochaine demande retente une lecture de la base.</p></div></div>
+                </section>
+                <section class="ops-panel ops-runtime">
+                    <div><span class="ops-eyebrow">PROCESSUS SERVEUR</span><h2>Ressources en direct</h2></div>
+                    <div class="ops-runtime-grid"><div><strong>@_memoryMb.ToString("N0") <small>Mo</small></strong><span>Mémoire résidente</span></div><div><strong>@UptimeLabel</strong><span>Depuis le démarrage</span></div></div>
+                    <p class="ops-footnote">Mesures du processus kernelMK, relevées à chaque actualisation.</p>
+                </section>
+            </div>
+        </div>
+        <section class="ops-actions" aria-label="Raccourcis d’exploitation">
+            <a href="jobs"><span>01 / ORCHESTRER</span><strong>Vos workflows <b>↗</b></strong><p>Consulter les jobs et leur planification</p></a>
+            <a href="cartographie-edi"><span>02 / COMPRENDRE</span><strong>Les échanges EDI <b>↗</b></strong><p>Explorer les connexions et partenaires</p></a>
+            <a href="rapport-flux"><span>03 / MESURER</span><strong>Le bilan des flux <b>↗</b></strong><p>Analyser les transferts et les résultats</p></a>
+        </section>
+    }
+    else if (_loading)
+    {
+        <div class="ops-loading" role="status">Préparation de votre centre de pilotage…</div>
+    }
+</div>
+
+@code {
+    private readonly CancellationTokenSource _lifetime = new();
+    private DashboardSnapshot? _snapshot;
+    private DashboardCacheStatistics? _statistics;
+    private bool _loading, _paused;
+    private int _period = 24, _runningJobs, _failedWrites;
+    private double _memoryMb;
+    private TimeSpan _uptime;
+    private string? _error;
+    private string SuccessRate => _snapshot is null || _snapshot.SuccessCount + _snapshot.FailedCount == 0 ? "—" : (100d * _snapshot.SuccessCount / (_snapshot.SuccessCount + _snapshot.FailedCount)).ToString("0.0");
+    private double ReuseRate => _statistics is null || _statistics.Hits + _statistics.Misses == 0 ? 0 : Math.Clamp(100d * (_statistics.Hits + _statistics.CoalescedRequests) / (_statistics.Hits + _statistics.Misses), 0, 100);
+    private string UptimeLabel => _uptime.TotalDays >= 1 ? $"{(int)_uptime.TotalDays} j {_uptime.Hours} h" : $"{(int)_uptime.TotalHours} h {_uptime.Minutes} min";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshAsync();
+        _ = RefreshLoopAsync(_lifetime.Token);
+    }
+
+    private async Task ChangePeriodAsync(int period)
+    {
+        if (_loading) return;
+        _period = period;
+        await RefreshAsync();
+    }
+
+    private async Task RefreshAsync()
+    {
+        if (_loading || _lifetime.IsCancellationRequested) return;
+        _loading = true;
+        try
+        {
+            _snapshot = await Cache.GetAsync(_period, _lifetime.Token);
+            _statistics = Cache.GetStatistics();
+            _runningJobs = Coordinator.GetRunningJobIds().Count;
+            _failedWrites = WriteQueue.FailedWriteCount;
+            using var process = Process.GetCurrentProcess();
+            _memoryMb = process.WorkingSet64 / 1048576d;
+            _uptime = DateTime.UtcNow - process.StartTime.ToUniversalTime();
+            _error = null;
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Chargement du centre de pilotage impossible");
+            _error = "Les mesures sont momentanément indisponibles.";
+        }
+        finally { _loading = false; }
+    }
+
+    private async Task RefreshLoopAsync(CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(15));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(ct))
+                if (!_paused) await InvokeAsync(async () => { await RefreshAsync(); StateHasChanged(); });
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+    }
+
+    public void Dispose() { _lifetime.Cancel(); _lifetime.Dispose(); }
+}

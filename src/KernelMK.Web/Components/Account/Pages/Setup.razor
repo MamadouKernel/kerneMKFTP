@@ -9,6 +9,7 @@
 @inject SignInManager<ApplicationUser> SignInManager
 @inject IdentityRedirectManager RedirectManager
 @inject SetupState SetupState
+@inject AppDbContext Database
 
 <PageTitle>Configuration initiale · kernelMK</PageTitle>
 
@@ -95,23 +96,41 @@
 
     public async Task CreateAdminAsync()
     {
-        var user = new ApplicationUser
+        await SetupState.CreationLock.WaitAsync();
+        ApplicationUser user;
+        try
         {
-            UserName = Input.Email,
-            Email = Input.Email,
-            DisplayName = Input.DisplayName,
-            EmailConfirmed = true
-        };
+            // The initial GET check is insufficient: multiple POSTs may already be in flight.
+            if (SetupState.AdminExists || (await UserManager.GetUsersInRoleAsync(nameof(AppRole.Administrateur))).Count > 0)
+            {
+                SetupState.AdminExists = true;
+                errorMessage = "Le compte administrateur a déjà été créé. Connectez-vous.";
+                return;
+            }
 
-        var result = await UserManager.CreateAsync(user, Input.Password);
-        if (!result.Succeeded)
-        {
-            errorMessage = "Erreur : " + string.Join(", ", result.Errors.Select(e => e.Description));
-            return;
+            await using var transaction = await Database.Database.BeginTransactionAsync();
+            user = new ApplicationUser
+            {
+                UserName = Input.Email,
+                Email = Input.Email,
+                DisplayName = Input.DisplayName,
+                EmailConfirmed = true
+            };
+            var result = await UserManager.CreateAsync(user, Input.Password);
+            if (result.Succeeded)
+                result = await UserManager.AddToRoleAsync(user, nameof(AppRole.Administrateur));
+            if (!result.Succeeded)
+            {
+                errorMessage = "Erreur : " + string.Join(", ", result.Errors.Select(e => e.Description));
+                return; // Transaction disposal rolls back user creation as well as role assignment.
+            }
+            await transaction.CommitAsync();
+            SetupState.AdminExists = true;
         }
-
-        await UserManager.AddToRoleAsync(user, nameof(KernelMK.Core.AppRole.Administrateur));
-        SetupState.AdminExists = true;
+        finally
+        {
+            SetupState.CreationLock.Release();
+        }
 
         await SignInManager.SignInAsync(user, isPersistent: false);
         RedirectManager.RedirectTo("Account/Manage/EnableAuthenticator");

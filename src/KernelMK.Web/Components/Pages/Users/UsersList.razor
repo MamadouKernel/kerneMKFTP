@@ -8,6 +8,7 @@
 @using KernelMK.Engine.Audit
 @inject UserManager<ApplicationUser> UserManager
 @inject RoleManager<IdentityRole> RoleManager
+@inject UserAccessService UserAccess
 @inject AuditService Audit
 @inject AuthenticationStateProvider AuthState
 @inject IDbContextFactory<AppDbContext> DbFactory
@@ -234,7 +235,13 @@ else
             return;
         }
 
-        await UserManager.AddToRoleAsync(user, _newRole);
+        var roleResult = await UserManager.AddToRoleAsync(user, _newRole);
+        if (!roleResult.Succeeded)
+        {
+            await UserManager.DeleteAsync(user);
+            _message = string.Join(", ", roleResult.Errors.Select(e => e.Description));
+            return;
+        }
         await Audit.LogAsync(AuditAction.Creation, nameof(ApplicationUser), user.Id, user.Email, null, _currentUser, $"Rôle initial : {_newRole}");
 
         _newEmail = _newDisplayName = _newPassword = "";
@@ -243,8 +250,14 @@ else
 
     private async Task ToggleActiveAsync(ApplicationUser user, bool active)
     {
-        user.Active = active;
-        await UserManager.UpdateAsync(user);
+        var result = await UserAccess.SetActiveAsync(user.Id, active);
+        if (!result.Succeeded)
+        {
+            _message = string.Join(", ", result.Errors.Select(e => e.Description));
+            return;
+        }
+        _message = null;
+        await LoadAsync();
         await Audit.LogAsync(active ? AuditAction.Activation : AuditAction.Desactivation, nameof(ApplicationUser), user.Id, user.Email, null, _currentUser);
     }
 
@@ -259,8 +272,14 @@ else
 
     private async Task ToggleRoleAsync(ApplicationUser user, string role, bool assign)
     {
-        if (assign) await UserManager.AddToRoleAsync(user, role);
-        else await UserManager.RemoveFromRoleAsync(user, role);
+        var result = await UserAccess.SetRoleAsync(user.Id, role, assign);
+        if (!result.Succeeded)
+        {
+            _message = string.Join(", ", result.Errors.Select(e => e.Description));
+            await LoadAsync();
+            return;
+        }
+        _message = null;
 
         await Audit.LogAsync(AuditAction.Modification, nameof(ApplicationUser), user.Id, user.Email, null, _currentUser,
             $"Rôle {role} {(assign ? "attribué" : "retiré")}");

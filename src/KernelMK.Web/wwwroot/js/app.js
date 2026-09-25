@@ -96,6 +96,7 @@ window.kernelMK = {
         }
     },
     globalSearch: {
+        unregister: function () { kernelMK.globalSearch.dotNetRef = null; },
         dotNetRef: null,
         register: function (dotNetRef) {
             kernelMK.globalSearch.dotNetRef = dotNetRef;
@@ -151,11 +152,14 @@ window.kernelMK = {
                     applicationServerKey: kernelMK.push._urlBase64ToUint8Array(vapidPublicKey)
                 });
 
+                var csrfResponse = await fetch('/api/security/antiforgery', { credentials: 'same-origin', cache: 'no-store' });
+                if (!csrfResponse.ok) return false;
+                var csrf = await csrfResponse.json();
                 var json = subscription.toJSON();
                 var response = await fetch('/api/push/subscribe', {
                     method: 'POST',
                     credentials: 'same-origin',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrf.token },
                     body: JSON.stringify({ endpoint: json.endpoint, keys: json.keys })
                 });
                 return response.ok;
@@ -172,12 +176,15 @@ window.kernelMK = {
                 var subscription = await reg.pushManager.getSubscription();
                 if (!subscription) return true;
 
+                var csrfResponse = await fetch('/api/security/antiforgery', { credentials: 'same-origin', cache: 'no-store' });
+                if (!csrfResponse.ok) return false;
+                var csrf = await csrfResponse.json();
                 var endpoint = subscription.endpoint;
                 await subscription.unsubscribe();
                 await fetch('/api/push/unsubscribe', {
                     method: 'POST',
                     credentials: 'same-origin',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrf.token },
                     body: JSON.stringify({ endpoint: endpoint })
                 });
                 return true;

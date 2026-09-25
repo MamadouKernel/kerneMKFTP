@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
@@ -24,6 +25,12 @@ public class AppSignInManager : SignInManager<ApplicationUser>
         IUserConfirmation<ApplicationUser> confirmation)
         : base(userManager, contextAccessor, claimsFactory, optionsAccessor, logger, schemes, confirmation)
     {
+    }
+
+    public override async Task<ApplicationUser?> ValidateSecurityStampAsync(ClaimsPrincipal? principal)
+    {
+        var user = await base.ValidateSecurityStampAsync(principal);
+        return user is not null && user.Active && !await UserManager.IsLockedOutAsync(user) ? user : null;
     }
 
     protected override async Task<SignInResult?> PreSignInCheck(ApplicationUser user)

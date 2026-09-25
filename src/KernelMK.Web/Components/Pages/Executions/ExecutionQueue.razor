@@ -1,0 +1,453 @@
+@page "/queue"
+@rendermode InteractiveServer
+@attribute [Authorize(Policy = "ApplicationAccess")]
+@implements IDisposable
+@using Microsoft.EntityFrameworkCore
+@using KernelMK.Engine.Queue
+@using KernelMK.Engine.Audit
+@inject IDbContextFactory<AppDbContext> DbFactory
+@inject JobQueueService JobQueue
+@inject AuthenticationStateProvider AuthState
+@inject IAuthorizationService Authorization
+@inject AuditService Audit
+@inject ILogger<ExecutionQueue> Logger
+
+<PageTitle>File d'attente · kernelMK</PageTitle>
+
+<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+    <div>
+        <h1 class="text-xl sm:text-2xl font-bold text-slate-900">File d'attente</h1>
+        <p class="text-sm text-slate-500 mt-1">Demandes persistantes, priorités et suivi des exécutions. Dates en UTC.</p>
+    </div>
+    <div class="flex gap-2">
+        <a href="jobs" class="kmk-btn-secondary text-xs">Voir les jobs</a>
+        <button type="button" class="kmk-btn-secondary text-xs" @onclick="LoadAsync" disabled="@_refreshing">
+            @(_refreshing ? "Actualisation…" : "Actualiser")
+        </button>
+    </div>
+</div>
+
+<div class="kmk-card p-4 mb-5 bg-indigo-50 border-indigo-100 text-sm text-indigo-900">
+    Les demandes en attente restent enregistrées après un redémarrage.
+    Une exécution interrompue nécessite une vérification avant toute relance.
+    La priorité 9 passe avant la priorité 0 ; à priorité égale, la demande la plus ancienne passe d'abord.
+</div>
+
+@if (_notice is not null)
+{
+    <div class="kmk-card p-4 mb-5 text-sm text-emerald-800 bg-emerald-50 border-emerald-200" role="status">@_notice</div>
+}
+@if (_error is not null)
+{
+    <div class="kmk-card p-4 mb-5 text-sm text-rose-800 bg-rose-50 border-rose-200" role="alert">@_error</div>
+}
+
+@if (_loadError is not null)
+{
+    <div class="kmk-card p-4 mb-5 text-sm text-amber-900 bg-amber-50 border-amber-200" role="alert">@_loadError</div>
+}
+<div class="kmk-card p-4 mb-5 flex flex-col sm:flex-row sm:items-end gap-3">
+    <div class="flex-1">
+        <label for="queue-status" class="block text-xs font-semibold text-slate-600 mb-1">État des demandes</label>
+        <select id="queue-status" class="kmk-select text-sm" @bind="_filterStatus" @bind:after="FilterChangedAsync" disabled="@_refreshing">
+            <option value="active">À traiter : en attente, en cours et à vérifier</option>
+            <option value="">Tous les états</option>
+            @foreach (var status in Enum.GetValues<JobRequestStatus>())
+            {
+                <option value="@status">@FormatStatus(status)</option>
+            }
+        </select>
+    </div>
+    <p class="text-xs text-slate-500">@_total demande(s) · Actualisation toutes les 5 secondes</p>
+</div>
+
+@if (_loading)
+{
+    <div class="kmk-card p-12 text-center text-sm text-slate-500" role="status">Chargement des demandes…</div>
+}
+else
+{
+    <div class="kmk-table-container">
+        <table class="kmk-table">
+            <caption class="sr-only">Demandes d'exécution, état, priorité et actions autorisées</caption>
+            <thead>
+                <tr>
+                    <th scope="col">Job / Demande</th>
+                    <th scope="col">État</th>
+                    <th scope="col">Priorité</th>
+                    <th scope="col">Dates (UTC)</th>
+                    <th scope="col">Déclencheur</th>
+                    <th scope="col">Exécution</th>
+                    <th scope="col" class="text-right">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var request in _requests)
+                {
+                    <tr @key="request.Id">
+                        <td class="min-w-[220px]">
+                            <div class="font-semibold text-slate-900">@(request.Job?.Name ?? "Job supprimé")</div>
+                            <div class="text-xs text-slate-500 font-mono mt-1" title="@request.Id">@ShortId(request.Id)</div>
+                            @if (request.RetryOfRequestId is Guid originalId)
+                            {
+                                <div class="text-xs text-slate-500 mt-1" title="@originalId">Relance de @ShortId(originalId)</div>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(request.Message))
+                            {
+                                <div class="text-xs text-slate-500 mt-1 max-w-sm break-words">@request.Message</div>
+                            }
+                        </td>
+                        <td><span class="@StatusBadge(request.Status)">@FormatStatus(request.Status)</span></td>
+                        <td>
+                            <AuthorizeView Policy="Exploitant" Context="priorityAuth">
+                                <Authorized>
+                                    @if (request.Status == JobRequestStatus.Pending)
+                                    {
+                                        <select class="kmk-select text-xs" value="@request.Priority" @onchange="e => ChangePriorityAsync(request, e)" disabled="@_actionBusy"
+                                                aria-label="@($"Priorité du job {request.Job?.Name}")">
+                                            @for (var priority = 0; priority <= 9; priority++)
+                                            {
+                                                <option value="@priority">@priority</option>
+                                            }
+                                        </select>
+                                    }
+                                    else
+                                    {
+                                        <span class="font-mono">@request.Priority</span>
+                                    }
+                                </Authorized>
+                                <NotAuthorized><span class="font-mono">@request.Priority</span></NotAuthorized>
+                            </AuthorizeView>
+                        </td>
+                        <td class="text-xs text-slate-600 whitespace-nowrap">
+                            <div>Demande : @FormatDate(request.RequestedAt)</div>
+                            @if (request.StartedAt is DateTime startedAt)
+                            {
+                                <div class="mt-1">Début : @FormatDate(startedAt)</div>
+                            }
+                            @if (request.FinishedAt is DateTime finishedAt)
+                            {
+                                <div class="mt-1">Fin : @FormatDate(finishedAt)</div>
+                            }
+                        </td>
+                        <td class="text-xs text-slate-600 max-w-xs break-words">@request.TriggeredBy</td>
+                        <td>
+                            @if (request.ExecutionId is Guid executionId)
+                            {
+                                <a href="@($"executions/{executionId}")" class="text-xs font-semibold text-brand-600 underline">Voir les traces</a>
+                            }
+                            else
+                            {
+                                <span class="text-xs text-slate-400">Pas encore démarrée</span>
+                            }
+                        </td>
+                        <td class="text-right">
+                            <AuthorizeView Policy="Exploitant" Context="actionsAuth">
+                                <div class="flex flex-wrap justify-end gap-2">
+                                    @if (request.Status is JobRequestStatus.Pending or JobRequestStatus.NeedsReview)
+                                    {
+                                        <button type="button" class="kmk-btn-secondary kmk-btn-xs" disabled="@_actionBusy" @onclick="() => CancelAsync(request)">Annuler</button>
+                                    }
+                                    @if (request.Status is JobRequestStatus.NeedsReview or JobRequestStatus.Failed)
+                                    {
+                                        <button type="button" class="kmk-btn-secondary kmk-btn-xs text-amber-700" disabled="@(_actionBusy || request.Job is null)" @onclick="() => OpenRetryAsync(request)">Relancer depuis le début</button>
+                                    }
+                                </div>
+                            </AuthorizeView>
+                        </td>
+                    </tr>
+                }
+                @if (_requests.Count == 0)
+                {
+                    <tr><td colspan="7" class="text-center py-12 text-slate-500">Aucune demande pour cet état.</td></tr>
+                }
+            </tbody>
+        </table>
+        <div class="flex flex-wrap items-center justify-between gap-3 p-4 border-t border-slate-100">
+            <span class="text-xs text-slate-500">Page @_page sur @TotalPages · @PageSize demandes par page</span>
+            <div class="flex gap-2">
+                <button type="button" class="kmk-btn-secondary kmk-btn-xs" disabled="@(_refreshing || _page <= 1)" @onclick="() => ChangePageAsync(-1)">Précédente</button>
+                <button type="button" class="kmk-btn-secondary kmk-btn-xs" disabled="@(_refreshing || _page >= TotalPages)" @onclick="() => ChangePageAsync(1)">Suivante</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_retryTarget is not null)
+{
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
+        <section class="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200" role="dialog" aria-modal="true" aria-labelledby="queue-retry-title" aria-describedby="queue-retry-warning">
+            <h2 id="queue-retry-title" class="text-lg font-bold text-slate-900">Relancer « @_retryTarget.Job?.Name »</h2>
+            <div id="queue-retry-warning" class="text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded-xl p-4 my-4 space-y-2">
+                <p><strong>Reprendre après les étapes réussies</strong> ignore uniquement les étapes dont le succès est enregistré et exige que la définition du job soit strictement identique.</p>
+                <p><strong>Repartir du début</strong> rejoue toutes les étapes avec la configuration actuelle. Les transferts, scripts et envois déjà réalisés peuvent être répétés.</p>
+                <p>Vérifiez les traces et les effets externes avant de continuer.</p>
+            </div>
+            @if (_retryTarget.ExecutionId is Guid previousExecutionId)
+            {
+                <a href="@($"executions/{previousExecutionId}")" class="text-sm text-brand-600 underline">Consulter l'exécution précédente</a>
+            }
+            @if (_error is not null)
+            {
+                <p class="text-sm text-rose-800 my-3" role="alert">@_error</p>
+            }
+            <label class="flex items-start gap-2 text-sm text-slate-700 my-4">
+                <input type="checkbox" class="mt-1" @bind="_retryAcknowledged" disabled="@_actionBusy" />
+                <span>J'ai vérifié les effets déjà produits et je confirme le mode de relance choisi.</span>
+            </label>
+            <div class="flex flex-wrap justify-end gap-2">
+                <button type="button" class="kmk-btn-secondary text-xs" disabled="@_actionBusy" @onclick="CloseRetry">Retour</button>
+                @if (_retryTarget.ExecutionId is not null)
+                {
+                    <button type="button" class="kmk-btn-secondary text-xs text-indigo-700" disabled="@(_actionBusy || !_retryAcknowledged)" @onclick="ConfirmResumeAsync">Reprendre après les étapes réussies</button>
+                }
+                <button type="button" class="kmk-btn-primary text-xs" disabled="@(_actionBusy || !_retryAcknowledged)" @onclick="ConfirmRetryAsync">Repartir du début</button>
+            </div>
+        </section>
+    </div>
+}
+
+@code {
+    private const int PageSize = 50;
+    private readonly CancellationTokenSource _lifetime = new();
+    private List<JobExecutionRequest> _requests = new();
+    private string _filterStatus = "active";
+    private string? _notice;
+    private string? _error;
+    private string? _loadError;
+    private bool _loading = true;
+    private bool _refreshing;
+    private bool _actionBusy;
+    private bool _disposed;
+    private int _page = 1;
+    private int _total;
+    private JobExecutionRequest? _retryTarget;
+    private bool _retryAcknowledged;
+    private int TotalPages => Math.Max(1, (int)Math.Ceiling(_total / (double)PageSize));
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    protected override Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender) _ = RefreshPeriodicallyAsync(_lifetime.Token);
+        return Task.CompletedTask;
+    }
+
+    private async Task RefreshPeriodicallyAsync(CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(ct))
+            {
+                await InvokeAsync(async () =>
+                {
+                    if (_disposed) return;
+                    await LoadAsync();
+                    StateHasChanged();
+                });
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Actualisation de la file interrompue");
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        if (_refreshing || _disposed) return;
+        _refreshing = true;
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync(_lifetime.Token);
+            var query = db.JobExecutionRequests.AsNoTracking();
+            if (_filterStatus == "active")
+                query = query.Where(r => r.Status == JobRequestStatus.Pending || r.Status == JobRequestStatus.Running || r.Status == JobRequestStatus.NeedsReview);
+            else if (Enum.TryParse<JobRequestStatus>(_filterStatus, out var status))
+                query = query.Where(r => r.Status == status);
+
+            _total = await query.CountAsync(_lifetime.Token);
+            _page = Math.Clamp(_page, 1, TotalPages);
+            var ordered = _filterStatus is "active" or "Pending"
+                ? query.OrderBy(r => r.Status == JobRequestStatus.NeedsReview ? 0 : r.Status == JobRequestStatus.Running ? 1 : 2)
+                    .ThenByDescending(r => r.Priority).ThenBy(r => r.RequestedAt).ThenBy(r => r.Id)
+                : query.OrderByDescending(r => r.RequestedAt).ThenBy(r => r.Id);
+            _requests = await ordered.Include(r => r.Job)
+                .Skip((_page - 1) * PageSize).Take(PageSize)
+                .ToListAsync(_lifetime.Token);
+            _loadError = null;
+        }
+        catch (OperationCanceledException) when (_disposed) { }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Impossible de charger la file d'exécution");
+            _loadError = "La file ne peut pas être actualisée. Les informations affichées peuvent être anciennes.";
+        }
+        finally
+        {
+            _loading = false;
+            _refreshing = false;
+        }
+    }
+
+    private async Task FilterChangedAsync()
+    {
+        _page = 1;
+        await LoadAsync();
+    }
+
+    private async Task ChangePageAsync(int delta)
+    {
+        _page = Math.Clamp(_page + delta, 1, TotalPages);
+        await LoadAsync();
+    }
+
+    private async Task<bool> CanOperateAsync()
+    {
+        var user = (await AuthState.GetAuthenticationStateAsync()).User;
+        var allowed = (await Authorization.AuthorizeAsync(user, "ApplicationAccess")).Succeeded &&
+            (await Authorization.AuthorizeAsync(user, "Exploitant")).Succeeded;
+        if (!allowed) _error = "Votre compte n'est pas autorisé à modifier les demandes.";
+        return allowed;
+    }
+
+    private Task CancelAsync(JobExecutionRequest request) => PerformActionAsync(async userName =>
+    {
+        if (!await JobQueue.CancelAsync(request.Id, _lifetime.Token))
+        {
+            _error = "L'état de cette demande a changé. Seules les demandes en attente ou à vérifier peuvent être annulées.";
+            return "";
+        }
+        await Audit.LogAsync(AuditAction.Annulation, nameof(JobExecutionRequest), request.Id.ToString(),
+            request.Job?.Name, null, userName, "Demande retirée de la file");
+        return "La demande a été annulée.";
+    });
+
+    private async Task ChangePriorityAsync(JobExecutionRequest request, ChangeEventArgs args)
+    {
+        if (!int.TryParse(args.Value?.ToString(), out var priority) || priority is < 0 or > 9) return;
+        await PerformActionAsync(async userName =>
+        {
+            if (!await JobQueue.SetPriorityAsync(request.Id, priority, _lifetime.Token))
+            {
+                _error = "La priorité n'a pas été modifiée : la demande n'est plus en attente.";
+                return "";
+            }
+            await Audit.LogAsync(AuditAction.Modification, nameof(JobExecutionRequest), request.Id.ToString(),
+                request.Job?.Name, null, userName, $"Priorité modifiée : {request.Priority} → {priority}");
+            return $"Priorité enregistrée : {priority}.";
+        });
+    }
+
+    private async Task OpenRetryAsync(JobExecutionRequest request)
+    {
+        _error = null;
+        if (_actionBusy || !await CanOperateAsync()) return;
+        _retryTarget = request;
+        _retryAcknowledged = false;
+    }
+
+    private void CloseRetry()
+    {
+        _retryTarget = null;
+        _retryAcknowledged = false;
+    }
+
+    private async Task ConfirmResumeAsync()
+    {
+        if (_retryTarget is null || !_retryAcknowledged || _actionBusy) return;
+        var target = _retryTarget;
+        await PerformActionAsync(async userName =>
+        {
+            var retry = await JobQueue.RetryFromCheckpointAsync(target.Id, $"Reprise contrôlée ({userName})", _lifetime.Token);
+            CloseRetry();
+            if (retry is null)
+            {
+                _error = "Aucune demande créée : l'état a changé ou cette demande a déjà été relancée.";
+                return "";
+            }
+            await Audit.LogAsync(AuditAction.ExecutionManuelle, nameof(JobExecutionRequest), retry.Id.ToString(),
+                target.Job?.Name, null, userName, $"Reprise contrôlée de l'exécution {target.ExecutionId}");
+            return $"Nouvelle demande {ShortId(retry.Id)} enregistrée. Les étapes déjà réussies et vérifiées ne seront pas rejouées.";
+        });
+    }
+    private async Task ConfirmRetryAsync()
+    {
+        if (_retryTarget is null || !_retryAcknowledged || _actionBusy) return;
+        var target = _retryTarget;
+        await PerformActionAsync(async userName =>
+        {
+            var retry = await JobQueue.RetryAsync(target.Id, $"Relance manuelle ({userName})", _lifetime.Token);
+            CloseRetry();
+            if (retry is null)
+            {
+                _error = "Aucune demande créée : l'état a changé ou cette demande a déjà été relancée.";
+                return "";
+            }
+            await Audit.LogAsync(AuditAction.ExecutionManuelle, nameof(JobExecutionRequest), retry.Id.ToString(),
+                target.Job?.Name, null, userName, $"Relance complète de {target.Id} avec la configuration actuelle");
+            return $"Nouvelle demande {ShortId(retry.Id)} enregistrée. Toutes les étapes seront rejouées avec la configuration actuelle.";
+        });
+    }
+
+    private async Task PerformActionAsync(Func<string, Task<string>> action)
+    {
+        if (_actionBusy || _disposed) return;
+        _actionBusy = true;
+        _error = null;
+        _notice = null;
+        try
+        {
+            if (!await CanOperateAsync()) return;
+            var user = (await AuthState.GetAuthenticationStateAsync()).User;
+            var notice = await action(user.Identity?.Name ?? "utilisateur");
+            _notice = string.IsNullOrWhiteSpace(notice) ? null : notice;
+            await LoadAsync();
+        }
+        catch (OperationCanceledException) when (_disposed) { }
+        catch (InvalidOperationException ex)
+        {
+            _error = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Impossible de modifier la demande d'exécution");
+            _error = "L'action n'a pas pu être confirmée. Actualisez la file avant de réessayer.";
+        }
+        finally
+        {
+            _actionBusy = false;
+        }
+    }
+
+    private static string ShortId(Guid id) => id.ToString("N")[..8];
+    private static string FormatDate(DateTime date) => date.ToString("dd/MM/yyyy HH:mm:ss");
+    private static string FormatStatus(JobRequestStatus status) => status switch
+    {
+        JobRequestStatus.Pending => "En attente",
+        JobRequestStatus.Running => "En cours",
+        JobRequestStatus.Succeeded => "Réussie",
+        JobRequestStatus.Failed => "Échec",
+        JobRequestStatus.Canceled => "Annulée",
+        JobRequestStatus.NeedsReview => "À vérifier",
+        _ => status.ToString()
+    };
+    private static string StatusBadge(JobRequestStatus status) => status switch
+    {
+        JobRequestStatus.Pending => "kmk-badge-info",
+        JobRequestStatus.Running => "kmk-badge-running",
+        JobRequestStatus.Succeeded => "kmk-badge-success",
+        JobRequestStatus.Failed => "kmk-badge-danger",
+        JobRequestStatus.NeedsReview => "kmk-badge-warning",
+        _ => "kmk-badge-neutral"
+    };
+
+    public void Dispose()
+    {
+        _disposed = true;
+        _lifetime.Cancel();
+        _lifetime.Dispose();
+    }
+}

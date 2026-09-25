@@ -30,3 +30,8 @@ certs/
 
 # Logs
 *.log
+
+# Local QA and test results
+scratch/qa/
+TestResults/
+archives/

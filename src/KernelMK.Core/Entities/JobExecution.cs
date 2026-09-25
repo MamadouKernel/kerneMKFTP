@@ -17,6 +17,7 @@ public class JobExecution
     public int? ReturnCode { get; set; }
     public string? Message { get; set; }
     public int AttemptNumber { get; set; } = 1;
+    public string? JobDefinitionHash { get; set; }
 
     public List<StepExecutionLog> StepLogs { get; set; } = new();
 
