@@ -187,3 +187,10 @@ img {
   color: #4338ca;
   font-weight: 600;
 }
+/* Blazor recovery visibility fallback; detailed presentation lives in resilience.css. */
+#components-reconnect-modal { display: none; }
+#components-reconnect-modal.components-reconnect-show,
+#components-reconnect-modal.components-reconnect-failed,
+#components-reconnect-modal.components-reconnect-rejected { display: grid; }
+#components-reconnect-modal.components-reconnect-hide,
+#blazor-error-ui { display: none; }
