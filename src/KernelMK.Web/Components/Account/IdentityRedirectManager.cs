@@ -32,6 +32,20 @@ internal sealed class IdentityRedirectManager(NavigationManager navigationManage
         throw new InvalidOperationException($"{nameof(IdentityRedirectManager)} can only be used during static rendering.");
     }
 
+    public void RedirectHttp(HttpContext context, string? uri)
+    {
+        uri ??= "";
+        if (!Uri.IsWellFormedUriString(uri, UriKind.Relative))
+            uri = navigationManager.ToBaseRelativePath(uri);
+        var target = navigationManager.ToAbsoluteUri(uri);
+        context.Response.Redirect(target.PathAndQuery);
+    }
+
+    public void RedirectHttp(HttpContext context, string uri, Dictionary<string, object?> queryParameters)
+    {
+        var uriWithoutQuery = navigationManager.ToAbsoluteUri(uri).GetLeftPart(UriPartial.Path);
+        RedirectHttp(context, navigationManager.GetUriWithQueryParameters(uriWithoutQuery, queryParameters));
+    }
     [DoesNotReturn]
     public void RedirectTo(string uri, Dictionary<string, object?> queryParameters)
     {

@@ -81,6 +81,9 @@
 </div>
 
 @code {
+    [CascadingParameter]
+    private HttpContext HttpContext { get; set; } = default!;
+
     private string? message;
     private ApplicationUser user = default!;
 
@@ -118,12 +121,14 @@
             }
 
             Logger.LogInformation("Utilisateur ID '{UserId}' connecté avec un code de secours.", userId);
-            RedirectManager.RedirectTo(ReturnUrl);
+            RedirectManager.RedirectHttp(HttpContext, ReturnUrl);
+            return;
         }
         else if (result.IsLockedOut)
         {
             Logger.LogWarning("Compte utilisateur ID '{UserId}' verrouillé.", userId);
-            RedirectManager.RedirectTo("Account/Lockout");
+            RedirectManager.RedirectHttp(HttpContext, "Account/Lockout");
+            return;
         }
         else
         {
