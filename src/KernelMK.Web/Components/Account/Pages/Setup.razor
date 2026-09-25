@@ -79,6 +79,9 @@
 </div>
 
 @code {
+    [CascadingParameter]
+    private HttpContext HttpContext { get; set; } = default!;
+
     private string? errorMessage;
 
     [SupplyParameterFromForm]
@@ -90,7 +93,8 @@
         if (SetupState.AdminExists || (await UserManager.GetUsersInRoleAsync(nameof(KernelMK.Core.AppRole.Administrateur))).Count > 0)
         {
             SetupState.AdminExists = true;
-            RedirectManager.RedirectTo("Account/Login");
+            HttpContext.Response.Redirect("/Account/Login");
+            return;
         }
     }
 
@@ -133,7 +137,7 @@
         }
 
         await SignInManager.SignInAsync(user, isPersistent: false);
-        RedirectManager.RedirectTo("Account/Manage/EnableAuthenticator");
+        HttpContext.Response.Redirect("/Account/Manage/EnableAuthenticator");
     }
 
     private sealed class InputModel
