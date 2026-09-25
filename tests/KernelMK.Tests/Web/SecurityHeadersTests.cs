@@ -19,6 +19,8 @@ public sealed class SecurityHeadersTests
         Assert.Equal("nosniff", context.Response.Headers["X-Content-Type-Options"].ToString());
         Assert.Equal("SAMEORIGIN", context.Response.Headers["X-Frame-Options"].ToString());
         Assert.Equal("strict-origin-when-cross-origin", context.Response.Headers["Referrer-Policy"].ToString());
+        Assert.Equal("camera=(), geolocation=(), microphone=(), payment=(), usb=()", context.Response.Headers["Permissions-Policy"].ToString());
+        Assert.Equal("same-origin", context.Response.Headers["Cross-Origin-Opener-Policy"].ToString());
         Assert.Equal("frame-ancestors 'self'; base-uri 'self'; object-src 'none'", context.Response.Headers["Content-Security-Policy"].ToString());
     }
 }

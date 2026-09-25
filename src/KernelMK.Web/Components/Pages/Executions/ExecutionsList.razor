@@ -8,6 +8,7 @@
 @inject IDbContextFactory<AppDbContext> DbFactory
 @inject IJobExecutionCoordinator ExecutionCoordinator
 @inject IJSRuntime JS
+@inject ILogger<ExecutionsList> Logger
 
 <PageTitle>Historique d'exécution · kernelMK · Côte d'Ivoire Terminal</PageTitle>
 
@@ -354,7 +355,11 @@ else
                 await InvokeAsync(StateHasChanged);
             }
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Actualisation périodique des exécutions interrompue");
+        }
     }
 
     private async Task LoadDataAsync()
@@ -367,8 +372,9 @@ else
     private async Task RefreshAsync()
     {
         await using var db = await DbFactory.CreateDbContextAsync();
-        _jobs = await db.Jobs.OrderBy(j => j.Name).ToListAsync();
+        _jobs = await db.Jobs.AsNoTracking().OrderBy(j => j.Name).ToListAsync();
         _executions = await db.JobExecutions
+            .AsNoTracking()
             .Include(e => e.Job)
             .Include(e => e.StepLogs)
             .OrderByDescending(e => e.StartedAt)

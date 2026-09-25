@@ -10,6 +10,7 @@
 @inject IJobExecutionCoordinator ExecutionCoordinator
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
+@inject ILogger<ExecutionDetail> Logger
 
 <PageTitle>Détail d'exécution · kernelMK</PageTitle>
 
@@ -551,7 +552,11 @@ else
                 await InvokeAsync(StateHasChanged);
             }
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Actualisation periodique du detail execution interrompue");
+        }
     }
 
     public void Dispose() => StopLiveRefresh();
@@ -575,6 +580,7 @@ else
     {
         await using var db = await DbFactory.CreateDbContextAsync();
         _execution = await db.JobExecutions
+            .AsNoTracking()
             .Include(e => e.Job!).ThenInclude(j => j.Steps)
             .Include(e => e.StepLogs)
             .FirstOrDefaultAsync(e => e.Id == ExecutionId);
