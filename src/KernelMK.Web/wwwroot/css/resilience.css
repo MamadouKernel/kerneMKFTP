@@ -1,0 +1,75 @@
+/* Résilience Blazor : état visible pendant une coupure du circuit et repli après une erreur de rendu. */
+#components-reconnect-modal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(4px);
+}
+#components-reconnect-modal.components-reconnect-show,
+#components-reconnect-modal.components-reconnect-failed,
+#components-reconnect-modal.components-reconnect-rejected { display: grid; }
+#components-reconnect-modal.components-reconnect-hide { display: none; }
+.kmk-reconnect-card {
+  width: min(100%, 26rem);
+  padding: 1.5rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 1rem;
+  background: white;
+  color: #334155;
+  text-align: center;
+  box-shadow: 0 24px 64px rgba(15, 23, 42, 0.25);
+}
+.kmk-reconnect-card strong { display: block; margin-bottom: .4rem; color: #0f172a; font-size: 1rem; }
+.kmk-reconnect-card p { margin: 0 0 1rem; color: #64748b; font-size: .875rem; }
+.kmk-reconnect-spinner {
+  width: 2rem;
+  height: 2rem;
+  margin: 0 auto 1rem;
+  border: 3px solid #e0e7ff;
+  border-top-color: #4f46e5;
+  border-radius: 9999px;
+  animation: kmk-spin .8s linear infinite;
+}
+.components-reconnect-failed .kmk-reconnect-spinner,
+.components-reconnect-rejected .kmk-reconnect-spinner { display: none; }
+.kmk-reconnect-card > .components-reconnect-show,
+.kmk-reconnect-card > .components-reconnect-failed,
+.kmk-reconnect-card > .components-reconnect-rejected { display: none; }
+.components-reconnect-show .components-reconnect-show,
+.components-reconnect-failed .components-reconnect-failed,
+.components-reconnect-rejected .components-reconnect-rejected { display: block; }
+.kmk-recovery-button {
+  border: 0;
+  border-radius: .75rem;
+  padding: .65rem 1rem;
+  background: #4f46e5;
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+}
+#blazor-error-ui {
+  display: none;
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  left: 1rem;
+  z-index: 10001;
+  padding: .9rem 3rem .9rem 1rem;
+  border: 1px solid #fecaca;
+  border-radius: .85rem;
+  background: #fff1f2;
+  color: #9f1239;
+  box-shadow: 0 16px 40px rgba(15, 23, 42, .18);
+  font-size: .875rem;
+}
+#blazor-error-ui .reload { margin-left: .5rem; font-weight: 700; }
+#blazor-error-ui .dismiss { position: absolute; top: .45rem; right: .75rem; border: 0; background: transparent; color: inherit; font-size: 1.4rem; cursor: pointer; }
+.kmk-render-error { max-width: 38rem; margin: 4rem auto; padding: 2rem; border: 1px solid #fecaca; border-radius: 1rem; background: white; text-align: center; box-shadow: 0 16px 40px rgba(15, 23, 42, .08); }
+.kmk-render-error-icon { display: grid; width: 3rem; height: 3rem; margin: 0 auto 1rem; place-items: center; border-radius: 9999px; background: #fff1f2; color: #e11d48; font-size: 1.4rem; font-weight: 800; }
+.kmk-render-error p { margin: .5rem auto 1.25rem; color: #64748b; }
+@keyframes kmk-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .kmk-reconnect-spinner { animation: none; } }
