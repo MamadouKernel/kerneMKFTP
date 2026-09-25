@@ -81,10 +81,10 @@ else
     else
     {
         <div class="kmk-table-container mb-6">
-            <table class="kmk-table">
+            <table class="kmk-table flux-report-table">
                 <thead>
                     <tr>
-                        <th class="min-w-[200px]">Job</th>
+                        <th class="flux-job-column">Job</th>
                         <th class="min-w-[160px]">Armateur / Partenaire</th>
                         <th class="min-w-[150px]">Dernière activité</th>
                         <th class="min-w-[130px]">Connexions réussies</th>
@@ -101,7 +101,7 @@ else
                     @foreach (var row in PagedSummaryRows)
                     {
                         <tr>
-                            <td class="text-sm font-semibold text-slate-900">@row.JobName</td>
+                            <td class="flux-job-column text-sm font-semibold text-slate-900" title="@row.JobName">@row.JobName</td>
                             <td class="text-sm text-slate-700">@row.Armateur</td>
                             <td>
                                 @{ var (silenceLabel, silenceClass) = FormatSilence(row.DerniereActivite); }
@@ -150,11 +150,11 @@ else
     else
     {
         <div class="kmk-table-container">
-            <table class="kmk-table">
+            <table class="kmk-table flux-report-table">
                 <thead>
                     <tr>
                         <th class="min-w-[110px]">Date</th>
-                        <th class="min-w-[200px]">Job</th>
+                        <th class="flux-job-column">Job</th>
                         <th class="min-w-[160px]">Armateur / Partenaire</th>
                         <th class="min-w-[120px]">Envoyés ⬆️</th>
                         <th class="min-w-[120px]">Reçus ⬇️</th>
@@ -166,7 +166,7 @@ else
                     {
                         <tr>
                             <td class="text-xs font-mono text-slate-600">@row.Date.ToString("dd/MM/yyyy")</td>
-                            <td class="text-sm font-semibold text-slate-900">@row.JobName</td>
+                            <td class="flux-job-column text-sm font-semibold text-slate-900" title="@row.JobName">@row.JobName</td>
                             <td class="text-sm text-slate-700">@row.Armateur</td>
                             <td class="text-sm font-bold text-emerald-600">@row.Envoyes</td>
                             <td class="text-sm font-bold text-sky-600">@row.Recus</td>
