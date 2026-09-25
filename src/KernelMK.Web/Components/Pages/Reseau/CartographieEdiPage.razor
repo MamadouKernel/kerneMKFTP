@@ -10,12 +10,12 @@
 @inject IJobExecutionCoordinator ExecutionCoordinator
 @inject IJSRuntime JS
 
-<PageTitle>Cartographie EDI · kernelMK</PageTitle>
+<PageTitle>Cartographie des flux &amp; jobs · kernelMK</PageTitle>
 
 <div class="kmk-page-header mb-6">
     <div>
         <h1 class="mb-1 flex items-center gap-2">
-            <span>🌊 Cartographie des échanges EDI</span>
+            <span>🗺️ Cartographie des flux &amp; jobs</span>
         </h1>
         <p class="text-sm text-slate-500">
             Vue par partenaire/armateur : quels messages EDIFACT (COPARN, CODECO, COARRI, MANIFEST) sont échangés, dans quel sens
@@ -40,7 +40,7 @@
 
 
 <section class="edi-kpi-grid mb-6" aria-label="Synthèse réelle des échanges EDI">
-    <article class="edi-kpi-card"><span class="edi-kpi-icon edi-kpi-icon-partners">◈</span><div><small>Partenaires configurés</small><strong>@_nodes.Count</strong><p>@ActivePartnerCount actif(s) maintenant</p></div></article>
+    <article class="edi-kpi-card"><span class="edi-kpi-icon edi-kpi-icon-partners">◈</span><div><small>Flux et jobs cartographiés</small><strong>@_nodes.Count</strong><p>@ActivePartnerCount nœud(s) actif(s) maintenant</p></div></article>
     <article class="edi-kpi-card"><span class="edi-kpi-icon edi-kpi-icon-out">↑</span><div><small>Messages envoyés</small><strong>@TotalSent</strong><p>Sur la période sélectionnée</p></div></article>
     <article class="edi-kpi-card"><span class="edi-kpi-icon edi-kpi-icon-in">↓</span><div><small>Messages reçus</small><strong>@TotalReceived</strong><p>Sur la période sélectionnée</p></div></article>
     <article class="edi-kpi-card"><span class="edi-kpi-icon edi-kpi-icon-live">●</span><div><small>Flux en cours</small><strong>@_active.Count</strong><p>@LastActivityLabel</p></div></article>
@@ -109,7 +109,7 @@ else
 
     <div class="hidden sm:block kmk-card edi-map-shell overflow-x-auto">
         <div class="edi-map-toolbar">
-            <div><span class="edi-eyebrow">TOPOLOGIE OPÉRATIONNELLE</span><h2>CIT ↔ partenaires EDI</h2></div>
+            <div><span class="edi-eyebrow">TOPOLOGIE OPÉRATIONNELLE</span><h2>CIT ↔ partenaires, systèmes et dossiers</h2></div>
             <div class="edi-map-legend"><span><i class="edi-dot edi-dot-out"></i> Émission</span><span><i class="edi-dot edi-dot-in"></i> Réception</span><span><i class="edi-dot edi-dot-live"></i> En cours</span></div>
         </div>
         <svg viewBox="@($"0 0 1040 {SvgHeight}")" class="w-full edi-map-canvas" style="min-width: 820px; height: @(SvgHeight)px; max-height: 70vh;">
@@ -320,10 +320,41 @@ else
 
     private static readonly HashSet<StepType> FileOpsTypes = new()
     {
-        StepType.FichierCopier, StepType.FichierDeplacer, StepType.FichierRenommer, StepType.FichierDecompresser
+        StepType.FichierCopier, StepType.FichierDeplacer, StepType.FichierRenommer, StepType.FichierSupprimer,
+        StepType.FichierCompresser, StepType.FichierDecompresser, StepType.FichierVerifier
     };
 
     private static bool IsUncPath(string? path) => !string.IsNullOrWhiteSpace(path) && path.StartsWith(@"\\", StringComparison.Ordinal);
+
+    private static string FileOperationLabel(StepType type) => type switch
+    {
+        StepType.FichierCopier => "Copie",
+        StepType.FichierDeplacer => "Déplacement",
+        StepType.FichierRenommer => "Renommage",
+        StepType.FichierSupprimer => "Suppression",
+        StepType.FichierCompresser => "Compression",
+        StepType.FichierDecompresser => "Décompression",
+        StepType.FichierVerifier => "Vérification",
+        _ => "Fichier"
+    };
+
+    private static string CompactPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return "—";
+        var normalized = path.Trim().TrimEnd('\\', '/');
+        return normalized.Length <= 34 ? normalized : "…" + normalized[^33..];
+    }
+
+    private static (string Key, string Label, string Channel) ResolveFileNode(Job job, FileOpStepConfig config)
+    {
+        if (!string.IsNullOrWhiteSpace(config.Armateur))
+            return (config.Armateur, config.Armateur, IsUncPath(config.SourcePath) || IsUncPath(config.DestinationPath) ? "SMB" : "LOCAL");
+
+        var source = CompactPath(config.SourcePath);
+        var destination = CompactPath(config.DestinationPath);
+        var route = string.IsNullOrWhiteSpace(config.DestinationPath) ? source : $"{source} → {destination}";
+        return ($"FILE:{job.Id}:{route}", $"{job.Name} · {route}", IsUncPath(config.SourcePath) || IsUncPath(config.DestinationPath) ? "SMB" : "LOCAL");
+    }
 
     /// <summary>Les deux canaux physiques par lesquels transitent les EDI (cf. cartographie de référence CIT) :
     /// SFTP (fichiers, 10.88.146.50) et SMTP (email). Un même partenaire peut utiliser l'un, l'autre, ou les deux.</summary>
@@ -478,11 +509,10 @@ else
                 try
                 {
                     var fcfg = JsonSerializer.Deserialize<FileOpStepConfig>(s.ConfigJson);
-                    if (fcfg is null || string.IsNullOrWhiteSpace(fcfg.Armateur)) continue;
-                    if (!IsUncPath(fcfg.SourcePath) && !IsUncPath(fcfg.DestinationPath)) continue;
-
-                    AddPartnerType(fcfg.Armateur, null, "Fichier", ChannelSftp);
-                    jobArmateur ??= fcfg.Armateur;
+                    if (fcfg is null || string.IsNullOrWhiteSpace(fcfg.SourcePath)) continue;
+                    var fileNode = ResolveFileNode(job, fcfg);
+                    AddPartnerType(fileNode.Key, fileNode.Label, FileOperationLabel(s.Type), fileNode.Channel);
+                    if (!string.IsNullOrWhiteSpace(fcfg.Armateur)) jobArmateur ??= fcfg.Armateur;
                 }
                 catch { }
             }
@@ -530,6 +560,9 @@ else
                 }
                 catch { }
             }
+            var jobKey = $"JOB:{job.Id}:PROCESS";
+            foreach (var typeLabel in job.Steps.Select(s => s.Type.ToString()).Distinct().DefaultIfEmpty("Job"))
+                AddPartnerType(jobKey, job.Name, typeLabel, "TRAITEMENT");
         }
 
         _nodes = partnerAgg
@@ -584,12 +617,9 @@ else
                     else if (FileOpsTypes.Contains(step.Type))
                     {
                         var fcfg = JsonSerializer.Deserialize<FileOpStepConfig>(step.ConfigJson);
-                        if (fcfg is null || string.IsNullOrWhiteSpace(fcfg.Armateur)) continue;
-
-                        var outbound = IsUncPath(fcfg.DestinationPath);
-                        if (!outbound && !IsUncPath(fcfg.SourcePath)) continue;
-
-                        active.Add(new EdiExchange(exec.JobId, exec.Job.Name, fcfg.Armateur, outbound, "Fichier", ChannelSftp));
+                        if (fcfg is null || string.IsNullOrWhiteSpace(fcfg.SourcePath)) continue;
+                        var fileNode = ResolveFileNode(exec.Job, fcfg);
+                        active.Add(new EdiExchange(exec.JobId, exec.Job.Name, fileNode.Key, true, FileOperationLabel(step.Type), fileNode.Channel));
                     }
                     else if (step.Type == StepType.EmailSmtp)
                     {
@@ -604,6 +634,13 @@ else
                         if (string.IsNullOrWhiteSpace(mrcfg?.Armateur)) continue;
 
                         active.Add(new EdiExchange(exec.JobId, exec.Job.Name, mrcfg.Armateur, false, "IMAP", ChannelSmtp));
+                    }
+                    else
+                    {
+                        var jobKey = $"JOB:{exec.Job.Id}:PROCESS";
+                        if (!partnerAgg.ContainsKey(jobKey))
+                            AddPartnerType(jobKey, exec.Job.Name, step.Type.ToString(), "TRAITEMENT");
+                        active.Add(new EdiExchange(exec.JobId, exec.Job.Name, jobKey, true, step.Type.ToString(), "TRAITEMENT"));
                     }
                 }
                 catch
