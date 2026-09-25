@@ -108,6 +108,12 @@ if (Test-Path $currentExe) {
     Write-Host "[SAUVEGARDE] Ancien KernelMK.exe archive dans : $backupDir" -ForegroundColor Gray
 }
 
+$currentManifest = Join-Path $InstallDir "KernelMK.staticwebassets.endpoints.json"
+if (Test-Path $currentManifest) {
+    Copy-Item $currentManifest -Destination (Join-Path $backupDir "KernelMK.staticwebassets.endpoints.json") -Force
+    Write-Host "[SAUVEGARDE] Ancien manifeste des ressources statiques archive." -ForegroundColor Gray
+}
+
 $currentWwwroot = Join-Path $InstallDir "wwwroot"
 if (Test-Path $currentWwwroot) {
     Copy-Item $currentWwwroot -Destination (Join-Path $backupDir "wwwroot") -Recurse -Force
@@ -117,6 +123,13 @@ if (Test-Path $currentWwwroot) {
 # 5. Application des fichiers mis a jour
 Write-Host "Remplacement de l'executable KernelMK.exe..." -ForegroundColor Cyan
 Copy-Item (Join-Path $patchSourceDir "KernelMK.exe") -Destination $InstallDir -Force
+
+$patchManifest = Join-Path $patchSourceDir "KernelMK.staticwebassets.endpoints.json"
+if (-not (Test-Path $patchManifest)) {
+    throw "Le patch est incomplet : manifeste des ressources statiques introuvable."
+}
+Write-Host "Mise a jour du manifeste des ressources statiques..." -ForegroundColor Cyan
+Copy-Item $patchManifest -Destination $InstallDir -Force
 
 # Mise a jour des assets wwwroot (fichiers statiques, docs, css)
 $patchWwwroot = Join-Path $patchSourceDir "wwwroot"

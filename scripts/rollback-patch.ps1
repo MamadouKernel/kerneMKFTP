@@ -131,6 +131,17 @@ if ($runningProc) {
 Write-Host "Restauration de KernelMK.exe..." -ForegroundColor Cyan
 Copy-Item $backupExe -Destination (Join-Path $InstallDir "KernelMK.exe") -Force
 
+$installManifest = Join-Path $InstallDir "KernelMK.staticwebassets.endpoints.json"
+$backupManifest = Join-Path $selectedBackup.FullName "KernelMK.staticwebassets.endpoints.json"
+if (Test-Path $backupManifest) {
+    Write-Host "Restauration du manifeste des ressources statiques..." -ForegroundColor Cyan
+    Copy-Item $backupManifest -Destination $installManifest -Force
+}
+elseif (Test-Path $installManifest) {
+    Remove-Item -LiteralPath $installManifest -Force
+    Write-Host "[ATTENTION] L'ancienne version n'avait pas de manifeste externe ; le manifeste du patch a ete retire." -ForegroundColor Yellow
+}
+
 $backupWwwroot = Join-Path $selectedBackup.FullName "wwwroot"
 if (Test-Path $backupWwwroot) {
     $installWwwroot = Join-Path $InstallDir "wwwroot"

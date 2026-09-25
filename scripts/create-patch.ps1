@@ -72,6 +72,14 @@ Write-Host "Assemblage des composants du patch dans : $OutputDir" -ForegroundCol
 Copy-Item $sourceExe -Destination $OutputDir -Force
 Write-Host "  + KernelMK.exe" -ForegroundColor White
 
+# Le manifeste est indispensable lorsque le patch ajoute un nouvel asset reference par @Assets.
+$sourceAssetsManifest = Join-Path $publishDir "KernelMK.staticwebassets.endpoints.json"
+if (-not (Test-Path $sourceAssetsManifest)) {
+    throw "Manifeste des ressources statiques introuvable : $sourceAssetsManifest"
+}
+Copy-Item $sourceAssetsManifest -Destination $OutputDir -Force
+Write-Host "  + KernelMK.staticwebassets.endpoints.json" -ForegroundColor White
+
 # Copie de wwwroot
 $sourceWwwroot = Join-Path $publishDir "wwwroot"
 if (Test-Path $sourceWwwroot) {
