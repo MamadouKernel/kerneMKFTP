@@ -94,6 +94,12 @@ if (Test-Path $applyScript) {
     Write-Host "  + Script d'application : apply-patch.ps1" -ForegroundColor White
 }
 
+$validatorScript = Join-Path $PSScriptRoot "test-patch-package.ps1"
+if (Test-Path $validatorScript) {
+    Copy-Item $validatorScript -Destination $OutputDir -Force
+    Write-Host "  + Validation autonome : test-patch-package.ps1" -ForegroundColor White
+}
+
 $rollbackScript = Join-Path $PSScriptRoot "rollback-patch.ps1"
 if (Test-Path $rollbackScript) {
     Copy-Item $rollbackScript -Destination $OutputDir -Force
@@ -146,6 +152,10 @@ if ($Zip) {
     if (-not (Test-Path -LiteralPath $zipPath) -or (Get-Item -LiteralPath $zipPath).Length -eq 0) {
         throw "La creation du ZIP de patch a echoue ou produit une archive vide."
     }
+
+    Write-Host "Validation de securite et d'integrite du paquet..." -ForegroundColor Cyan
+    & (Join-Path $PSScriptRoot "test-patch-package.ps1") -PatchPath $zipPath | Format-List
+    if ($LASTEXITCODE -ne 0) { throw "La validation du paquet a echoue." }
 
     $zipSize = (Get-Item -LiteralPath $zipPath).Length / 1MB
     Write-Host ("Archive de patch prete : {0} ({1:N1} Mo)" -f $zipPath, $zipSize) -ForegroundColor Green

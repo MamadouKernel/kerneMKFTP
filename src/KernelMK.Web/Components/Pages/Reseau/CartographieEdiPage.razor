@@ -47,6 +47,23 @@
 </section>
 
 <EdiLifecycleDiagram />
+<div class="kmk-card edi-map-filters mb-5">
+    <label class="edi-filter-search">
+        <span>Rechercher</span>
+        <input class="kmk-input" type="search" placeholder="Job, partenaire, dossier, protocole…" @bind="_nodeSearch" @bind:event="oninput" />
+    </label>
+    <label>
+        <span>Canal</span>
+        <select class="kmk-select" @bind="_channelFilter">
+            <option value="ALL">Tous les canaux</option>
+            @foreach (var channel in AvailableChannels)
+            {
+                <option value="@channel">@channel</option>
+            }
+        </select>
+    </label>
+    <div class="edi-filter-result"><strong>@VisibleNodes.Count</strong><span>nœud(s) affiché(s)</span></div>
+</div>
 
 @if (_loading)
 {
@@ -78,7 +95,7 @@ else
 {
     <!-- Petit écran : liste verticale (le diagramme SVG large horizontal ne se lit pas bien sur mobile) -->
     <div class="sm:hidden edi-partner-list">
-        @foreach (var node in _nodes)
+        @foreach (var node in VisibleNodes)
         {
             var exchanges = _active.Where(a => a.PartnerCode == node.Code).ToList();
             var isActive = exchanges.Count > 0;
@@ -123,7 +140,7 @@ else
                 </filter>
             </defs>
 
-            @foreach (var node in _nodes)
+            @foreach (var node in VisibleNodes)
             {
                 var y = GetNodeY(node);
                 var exchanges = _active.Where(a => a.PartnerCode == node.Code).ToList();
@@ -280,6 +297,17 @@ else
         : "Aucun échange sur la période";
 
     private List<PartnerNode> _nodes = new();
+    private string _nodeSearch = string.Empty;
+    private string _channelFilter = "ALL";
+    private List<string> AvailableChannels => _nodes.SelectMany(n => n.Channels).Distinct().OrderBy(c => c).ToList();
+    private List<PartnerNode> VisibleNodes => _nodes.Where(n =>
+        (_channelFilter == "ALL" || n.Channels.Contains(_channelFilter)) &&
+        (string.IsNullOrWhiteSpace(_nodeSearch) ||
+         n.Code.Contains(_nodeSearch, StringComparison.OrdinalIgnoreCase) ||
+         (n.Label?.Contains(_nodeSearch, StringComparison.OrdinalIgnoreCase) ?? false) ||
+         n.MessageTypes.Any(t => t.Contains(_nodeSearch, StringComparison.OrdinalIgnoreCase)) ||
+         n.Channels.Any(c => c.Contains(_nodeSearch, StringComparison.OrdinalIgnoreCase))))
+        .ToList();
     private List<EdiExchange> _active = new();
     private List<EdiFlowRow> _historyRows = new();
     private DateTime _historyDateFrom = DateTime.Today.AddDays(-30);
@@ -290,7 +318,7 @@ else
     private CancellationTokenSource? _cts;
 
     private const int RowHeight = 64;
-    private int SvgHeight => Math.Max(200, _nodes.Count * RowHeight + 40);
+    private int SvgHeight => Math.Max(200, VisibleNodes.Count * RowHeight + 40);
     private int HubY => SvgHeight / 2;
 
     /// <summary>Palette inspirée des couleurs de coques/conteneurs des grands armateurs — un nœud, une couleur, pour repérer les partenaires d'un coup d'œil.</summary>
@@ -374,7 +402,7 @@ else
 
     private int GetNodeY(PartnerNode node)
     {
-        var index = _nodes.IndexOf(node);
+        var index = VisibleNodes.IndexOf(node);
         return 40 + index * RowHeight + RowHeight / 2;
     }
 
@@ -435,7 +463,7 @@ else
 
     private async Task Push3DDataAsync(bool init)
     {
-        var nodesPayload = _nodes.Select(n => new
+        var nodesPayload = VisibleNodes.Select(n => new
         {
             host = n.Code,
             name = (n.Label is not null ? n.Label + " — " : "") + string.Join(", ", n.MessageTypes)
