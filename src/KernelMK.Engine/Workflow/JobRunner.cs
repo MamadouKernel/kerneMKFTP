@@ -287,6 +287,7 @@ public class JobRunner : IJobRunner, IQueuedJobRunner
             .ToDictionary(x => x.Order, x => x.Next);
         var currentOrder = steps.First().Order;
         var visited = new HashSet<int>();
+        var encounteredFailure = false;
 
         while (true)
         {
@@ -334,6 +335,7 @@ public class JobRunner : IJobRunner, IQueuedJobRunner
             }
             else
             {
+                encounteredFailure = true;
                 switch (step.OnErrorAction)
                 {
                     case OnErrorAction.Arreter:
@@ -348,7 +350,7 @@ public class JobRunner : IJobRunner, IQueuedJobRunner
             }
 
             var nextOrder = nextOrders[currentOrder];
-            if (nextOrder is null) return true;
+            if (nextOrder is null) return !encounteredFailure;
             currentOrder = nextOrder.Value;
         }
     }

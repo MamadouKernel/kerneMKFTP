@@ -175,6 +175,10 @@ else
                                         <option value="@c.Id">@c.Name @(!string.IsNullOrWhiteSpace(c.Host) ? $" · {c.Host}" : "")</option>
                                     }
                                 </select>
+                                @if (GetCredentialConfigurationIssue(step) is { } credentialIssue)
+                                {
+                                    <p class="mt-1 text-xs font-medium text-red-700" role="alert">@credentialIssue</p>
+                                }
                             </div>
                             <div class="flex items-end">
                                 <button type="button" class="kmk-btn-secondary w-full" @onclick="() => LoadTemplate(step)">Modèle par défaut</button>
@@ -1450,6 +1454,32 @@ else
     private string? GetCredentialName(Guid? credentialId) =>
         credentialId is null ? null : _credentials.FirstOrDefault(c => c.Id == credentialId)?.Name;
 
+    private string? GetCredentialConfigurationIssue(JobStep step)
+    {
+        if (step.Type != StepType.ReceptionEmailImap) return null;
+        if (step.CredentialId is null) return "Sélectionnez un credential de type « Compte Email (IMAP) ».";
+
+        var credential = _credentials.FirstOrDefault(c => c.Id == step.CredentialId.Value);
+        if (credential is null) return "Le credential sélectionné n'est plus disponible.";
+        return ValidateImapCredential(credential);
+    }
+
+    private static string? ValidateImapCredential(Credential credential)
+    {
+        if (credential.Type != CredentialType.ImapEmail)
+            return "Le credential sélectionné doit être de type « Compte Email (IMAP) ».";
+        if (string.IsNullOrWhiteSpace(credential.Host))
+            return "Le serveur IMAP est manquant dans le credential. Renseignez « Hôte / Serveur » ; le port 993 peut rester implicite.";
+        if (string.IsNullOrWhiteSpace(credential.Username))
+            return "Le nom d'utilisateur IMAP est manquant dans le credential.";
+        if (string.IsNullOrWhiteSpace(credential.EncryptedSecret))
+            return "Le secret d'authentification IMAP est manquant dans le credential.";
+        if (credential.AuthType == CredentialAuthType.OAuth2Microsoft365 &&
+            (string.IsNullOrWhiteSpace(credential.OAuth2ClientId) || string.IsNullOrWhiteSpace(credential.OAuth2TenantId)))
+            return "Le credential OAuth2 Microsoft 365 doit contenir l'ID d'application et l'ID du tenant.";
+        return null;
+    }
+
     private TransferStepConfig GetOrCreateTransferConfig(JobStep step)
     {
         if (!_transferConfigs.TryGetValue(step, out var config))
@@ -1853,6 +1883,21 @@ else
         {
             _saveError = "Une étape utilise un identifiant supprimé ou non autorisé pour votre rôle. Sélectionnez un identifiant autorisé.";
             return;
+        }
+
+        foreach (var step in _job.Steps.Where(s => s.Type == StepType.ReceptionEmailImap))
+        {
+            var credential = step.CredentialId is { } id
+                ? availableCredentials.FirstOrDefault(c => c.Id == id)
+                : null;
+            var issue = credential is null
+                ? "Sélectionnez un credential de type « Compte Email (IMAP) »."
+                : ValidateImapCredential(credential);
+            if (issue is not null)
+            {
+                _saveError = $"Étape « {step.Name} » : {issue}";
+                return;
+            }
         }
 
         await using var transaction = await db.Database.BeginTransactionAsync();

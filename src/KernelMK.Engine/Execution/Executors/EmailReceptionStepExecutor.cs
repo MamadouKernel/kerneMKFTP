@@ -32,9 +32,24 @@ public class EmailReceptionStepExecutor : IStepExecutor
         var config = JsonSerializer.Deserialize<EmailReceptionStepConfig>(context.Step.ConfigJson)
                       ?? throw new InvalidOperationException("Configuration de réception email invalide.");
 
-        if (context.ResolvedCredential is not { Host: not null } cred)
+        if (context.ResolvedCredential is not { } cred)
         {
-            return StepExecutionResult.Fail("Aucun credential IMAP (hôte/utilisateur/mot de passe) associé à cette étape — sélectionne un credential de type « Compte Email (IMAP) ».");
+            return StepExecutionResult.Fail("Aucun credential IMAP associé à cette étape — sélectionnez un credential de type « Compte Email (IMAP) ».");
+        }
+
+        if (string.IsNullOrWhiteSpace(cred.Host))
+        {
+            return StepExecutionResult.Fail("Le credential IMAP sélectionné est incomplet : renseignez le champ « Hôte / Serveur » (par exemple outlook.office365.com). Le port 993 sera utilisé par défaut s'il est vide.");
+        }
+
+        if (string.IsNullOrWhiteSpace(cred.Username))
+        {
+            return StepExecutionResult.Fail("Le credential IMAP sélectionné est incomplet : renseignez le champ « Nom d'utilisateur / Identifiant ».");
+        }
+
+        if (string.IsNullOrWhiteSpace(cred.Secret))
+        {
+            return StepExecutionResult.Fail("Le credential IMAP sélectionné est incomplet : renseignez son secret d'authentification.");
         }
 
         if (string.IsNullOrWhiteSpace(config.DownloadPath))

@@ -127,6 +127,27 @@ public class JobRunnerTests
     }
 
     [Fact]
+    public async Task ContinuedStepFailureKeepsOverallExecutionFailed()
+    {
+        var calls = 0;
+        await using var fixture = new Fixture(new Executor(_ => Task.FromResult(
+            ++calls == 1 ? StepExecutionResult.Fail("échec simulé") : StepExecutionResult.Ok())));
+        var job = CreateJob();
+        job.MaxRetries = 0;
+        job.Steps[0].OnErrorAction = OnErrorAction.Poursuivre;
+        job.Steps.Add(new JobStep { Name = "Étape suivante", Type = StepType.CommandeSysteme, Order = 2 });
+        await fixture.Seed(job);
+
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var result = await scope.ServiceProvider.GetRequiredService<IJobRunner>().RunAsync(job.Id, "test");
+
+        Assert.Equal(2, calls);
+        Assert.Equal(JobStatus.Echec, result.Status);
+        Assert.Equal(1, result.ReturnCode);
+        Assert.Equal("Exécution terminée en échec après reprises.", result.Message);
+    }
+
+    [Fact]
     public async Task JobTimeoutAlsoInterruptsRetryDelay()
     {
         await using var fixture = new Fixture(new Executor(_ => Task.FromResult(StepExecutionResult.Fail("retry"))));
