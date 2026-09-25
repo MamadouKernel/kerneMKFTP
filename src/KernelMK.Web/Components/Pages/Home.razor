@@ -78,12 +78,9 @@
         </button>
 
         <AuthorizeView Roles="Administrateur,Superviseur,Exploitant">
-            @if (_runningCount > 0)
-            {
-                <button class="kmk-btn-secondary flex items-center gap-1.5 text-xs py-2 text-amber-700" @onclick="CleanOrphanedExecutionsAsync" disabled="@_cleaningOrphans" title="Annule uniquement les exécutions en base qui ne sont plus suivies par le moteur">
-                    @(_cleaningOrphans ? "Nettoyage..." : "Nettoyer exécutions bloquées")
-                </button>
-            }
+            <button class="kmk-btn-secondary flex items-center gap-1.5 text-xs py-2 text-amber-700" @onclick="CleanOrphanedExecutionsAsync" disabled="@_cleaningOrphans" title="Recherche puis annule uniquement les exécutions en base qui ne sont plus suivies par le moteur">
+                @(_cleaningOrphans ? "Nettoyage..." : "Nettoyer exécutions bloquées")
+            </button>
         </AuthorizeView>
         <button class="kmk-btn-secondary flex items-center gap-1.5 text-xs py-2" @onclick="LoadDashboardAsync" disabled="@_refreshing">
             <svg class="h-3.5 w-3.5 @(_refreshing ? "animate-spin text-brand-600" : "text-slate-500")" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
