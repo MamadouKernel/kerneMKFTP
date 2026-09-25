@@ -202,7 +202,19 @@
         }
 
         <main class="flex-1 px-4 py-6 sm:px-6 lg:px-8 max-w-7xl w-full mx-auto">
-            @Body
+            <ErrorBoundary>
+                <ChildContent>
+                    @Body
+                </ChildContent>
+                <ErrorContent Context="renderError">
+                    <section class="kmk-render-error" role="alert">
+                        <div class="kmk-render-error-icon" aria-hidden="true">!</div>
+                        <h1>Cette page n’a pas pu s’afficher</h1>
+                        <p>Une erreur inattendue a interrompu son rendu. Elle a été enregistrée dans les journaux du serveur.</p>
+                        <a href="@NavigationManager.Uri" class="kmk-btn-primary" data-enhance-nav="false">Recharger cette page</a>
+                    </section>
+                </ErrorContent>
+            </ErrorBoundary>
         </main>
     </div>
 </div>
