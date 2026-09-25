@@ -86,6 +86,16 @@ input, select, textarea, button { min-width: 0; max-width: 100%; }
 }
 pre { max-width: 100%; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 
+@media (max-width: 1279.98px) {
+    .kmk-page-header { grid-template-columns: minmax(0, 1fr); }
+    .kmk-page-header > :last-child { justify-self: stretch; }
+    .kmk-page-actions {
+        grid-auto-flow: row;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr));
+        width: 100%;
+    }
+    .kmk-page-actions > * { width: 100%; }
+}
 @media (max-width: 1023.98px) {
     .kmk-app-shell { grid-template-columns: minmax(0, 1fr); }
     .kmk-app-content, .kmk-sidebar { grid-column: 1; }
