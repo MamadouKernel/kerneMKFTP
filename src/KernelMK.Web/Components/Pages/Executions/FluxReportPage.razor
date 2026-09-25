@@ -29,7 +29,7 @@
         <label class="kmk-label">Au</label>
         <input type="date" class="kmk-input !py-2 text-xs" @bind="_dateTo" @bind:after="LoadAsync" />
     </div>
-    <div class="flex-1 min-w-[180px]">
+    <div class="kmk-flex-field flex-1 min-w-[180px]">
         <label class="kmk-label">Job</label>
         <select class="kmk-select !py-2 text-xs" @bind="_filterJob" @bind:after="LoadAsync">
             <option value="">Tous les jobs</option>
@@ -39,7 +39,7 @@
             }
         </select>
     </div>
-    <div class="flex-1 min-w-[180px]">
+    <div class="kmk-flex-field flex-1 min-w-[180px]">
         <label class="kmk-label">Armateur / Partenaire</label>
         <select class="kmk-select !py-2 text-xs" @bind="_filterArmateur" @bind:after="LoadAsync">
             <option value="">Tous les armateurs</option>

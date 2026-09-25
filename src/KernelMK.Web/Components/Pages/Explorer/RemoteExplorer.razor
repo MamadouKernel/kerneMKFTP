@@ -17,7 +17,7 @@
 
 <PageTitle>Explorateur Distant · kernelMK</PageTitle>
 
-<div class="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+<div class="kmk-page-header mb-6">
     <div>
         <h1 class="flex items-center gap-2.5">
             <span class="h-9 w-9 rounded-xl bg-brand-50 text-brand-600 flex items-center justify-center shadow-sm">
@@ -34,7 +34,7 @@
 <!-- Barre de connexion -->
 <div class="kmk-card mb-6">
     <div class="kmk-card-body flex flex-wrap items-end gap-3">
-        <div class="flex-1 min-w-[240px]">
+        <div class="kmk-flex-field flex-1 min-w-[240px]">
             <label class="kmk-label" for="remote-credential">Serveur / Identifiant enregistré</label>
             <select id="remote-credential" class="kmk-select" @bind="_selectedCredId" disabled="@(_isConnected || _busy)">
                 <option value="">Sélectionnez un serveur...</option>

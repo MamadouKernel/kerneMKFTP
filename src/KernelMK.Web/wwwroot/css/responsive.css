@@ -1,0 +1,130 @@
+/* Responsive structure shared by every interactive page. This file is kept
+   independent from the utility CSS build so production never needs a compiler. */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { min-width: 0; max-width: 100%; overflow-x: clip; }
+img, video, canvas, svg { max-width: 100%; }
+input, select, textarea, button { min-width: 0; max-width: 100%; }
+
+.kmk-app-shell {
+    display: grid;
+    grid-template-columns: 16rem minmax(0, 1fr);
+    min-height: 100vh;
+    min-height: 100dvh;
+}
+.kmk-sidebar { grid-column: 1; grid-row: 1; min-width: 0; }
+.kmk-app-content {
+    grid-column: 2;
+    grid-row: 1;
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr);
+    min-width: 0;
+}
+.kmk-topbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 1rem;
+}
+.kmk-topbar-brand { min-width: 0; overflow: hidden; }
+.kmk-topbar-brand span { min-width: 0; }
+.kmk-topbar-actions {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: max-content;
+    align-items: center;
+    justify-content: end;
+    gap: .625rem;
+}
+.kmk-alert-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: .75rem;
+}
+.kmk-main {
+    grid-row: -2 / -1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+.kmk-main > *, .kmk-card, .kmk-card-body, .ops-panel, .ops-stack, .ops-columns {
+    min-width: 0;
+    max-width: 100%;
+}
+.kmk-responsive-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+    gap: 1rem;
+}
+.kmk-page-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 1rem;
+}
+.kmk-page-header > :last-child { min-width: 0; justify-self: end; }
+.kmk-pagination {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: .5rem;
+}
+.kmk-page-actions {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: max-content;
+    align-items: center;
+    gap: .625rem;
+}
+.overflow-x-auto {
+    max-width: 100%;
+    overscroll-behavior-inline: contain;
+    scrollbar-gutter: stable;
+}
+pre { max-width: 100%; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+@media (max-width: 1023.98px) {
+    .kmk-app-shell { grid-template-columns: minmax(0, 1fr); }
+    .kmk-app-content, .kmk-sidebar { grid-column: 1; }
+}
+@media (max-width: 767.98px) {
+    .kmk-topbar { gap: .5rem; }
+    .kmk-topbar-actions { gap: .375rem; }
+    .kmk-alert-actions, .kmk-page-header, .kmk-pagination { grid-template-columns: minmax(0, 1fr); }
+    .kmk-page-header > :last-child { justify-self: stretch; }
+    .kmk-flex-field { flex-basis: 100%; min-width: 0 !important; width: 100%; }
+    .kmk-page-actions {
+        grid-auto-flow: row;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr));
+        width: 100%;
+    }
+    .kmk-page-actions > * { width: 100%; }
+    .kmk-alert-actions > a, .kmk-alert-actions > button { justify-self: start; }
+}
+@media (max-width: 479.98px) {
+    .kmk-topbar { padding-inline: .75rem; }
+    .kmk-topbar-brand { gap: .5rem; }
+    .kmk-main { padding: 1.25rem .75rem; }
+    .kmk-topbar-actions .kmk-btn-secondary { padding-inline: .5rem; }
+    .kmk-dropdown > div {
+        position: fixed;
+        top: 4.25rem;
+        right: .75rem;
+        left: .75rem;
+        width: auto;
+        max-width: none;
+    }
+    .ops-metrics, .ops-runtime-grid { grid-template-columns: minmax(0, 1fr); }
+    .ops-panel-title, .ops-cache-score {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        align-items: start;
+    }
+    .ops-cache-score { gap: .75rem; }
+    .ops-data-list > div {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { scroll-behavior: auto !important; }
+}

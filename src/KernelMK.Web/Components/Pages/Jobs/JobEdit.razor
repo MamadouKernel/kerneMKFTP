@@ -29,7 +29,7 @@
 }
 else
 {
-    <div class="flex items-center justify-between gap-3 mb-6">
+    <div class="kmk-page-header mb-6">
         <h1>@(IsNew ? "Nouveau job" : $"Job : {_job.Name}")</h1>
         @if (!IsNew)
         {
@@ -380,7 +380,7 @@ else
 
                                                 @if (_testResults.TryGetValue(step, out var testResult) && testResult is not null)
                                                 {
-                                                    <div class="flex-1 min-w-[280px]">
+                                                    <div class="kmk-flex-field flex-1 min-w-[280px]">
                                                         @if (testResult.Success)
                                                         {
                                                             <div class="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 flex items-start gap-2">
