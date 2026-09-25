@@ -47,7 +47,7 @@
 
         <div class="ops-columns">
             <section class="ops-panel">
-                <div class="ops-panel-title"><div><span class="ops-eyebrow">PERFORMANCE</span><h2>Moins de lectures SQLite.</h2></div><span class="ops-tag">Cache mémoire</span></div>
+                <div class="ops-panel-title"><div><span class="ops-eyebrow">PERFORMANCE</span><h2>Moins de lectures SQLite.</h2></div><div class="flex items-center gap-2"><span class="ops-tag">Cache mémoire</span><button type="button" class="ops-text-button" @onclick="ClearCacheAsync" disabled="@_loading">Vider le cache</button></div></div>
                 <p class="ops-description">Les pages de suivi réutilisent leurs agrégats pendant quelques secondes. Les consultations simultanées partagent une seule lecture SQLite.</p>
                 <div class="ops-cache-score"><strong>@ReuseRate.ToString("0")<small>%</small></strong><span>des consultations servies sans<br />nouvelle lecture SQLite</span></div>
                 <div class="ops-meter" role="meter" aria-label="Taux de réutilisation du cache" aria-valuenow="@ReuseRate" aria-valuemin="0" aria-valuemax="100"><span style="@($"width:{ReuseRate.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)}%")"></span></div>
@@ -60,6 +60,10 @@
                     <div><dt>Instantanés conservés</dt><dd>@_statistics.Entries / @_statistics.Capacity</dd></div>
                     <div><dt>Validité d’un instantané</dt><dd>@_statistics.TimeToLiveSeconds s</dd></div>
                 </dl>
+                @if (_cacheNotice is not null)
+                {
+                    <p class="ops-footnote text-emerald-700" role="status">@_cacheNotice</p>
+                }
                 <p class="ops-footnote">Compteurs techniques depuis le démarrage du serveur. Ils augmentent lorsque les pages de suivi sont consultées, même si la base ne contient aucun job. Le temps indiqué mesure la lecture côté serveur.</p>
             </section>
             <div class="ops-stack">
@@ -97,6 +101,7 @@
     private double _memoryMb;
     private TimeSpan _uptime;
     private string? _error;
+    private string? _cacheNotice;
     private string SuccessRate => _snapshot is null || _snapshot.SuccessCount + _snapshot.FailedCount == 0 ? "—" : (100d * _snapshot.SuccessCount / (_snapshot.SuccessCount + _snapshot.FailedCount)).ToString("0.0");
     private double ReuseRate => _statistics?.ReuseRate ?? 0;
     private string UptimeLabel => _uptime.TotalDays >= 1 ? $"{(int)_uptime.TotalDays} j {_uptime.Hours} h" : $"{(int)_uptime.TotalHours} h {_uptime.Minutes} min";
@@ -114,6 +119,13 @@
         await RefreshAsync();
     }
 
+    private async Task ClearCacheAsync()
+    {
+        if (_loading) return;
+        Cache.Invalidate();
+        _cacheNotice = "Les instantanés 24 h, 7 j et 30 j ont été invalidés. La période affichée a été recalculée.";
+        await RefreshAsync();
+    }
     private async Task RefreshAsync()
     {
         if (_loading || _lifetime.IsCancellationRequested) return;
