@@ -9,20 +9,9 @@
     <link rel="stylesheet" href="@Assets["css/app.css"]" />
     <link rel="stylesheet" href="@Assets["css/premium.css"]" />
     <link rel="stylesheet" href="@Assets["css/resilience.css"]" />
-    <ImportMap />
     <link rel="icon" type="image/png" href="favicon.png" />
     <link rel="manifest" href="manifest.json" />
     <HeadOutlet />
-    <style>
-        details summary {
-            list-style: none !important;
-        }
-        details summary::-webkit-details-marker,
-        details summary::marker {
-            display: none !important;
-            content: "" !important;
-        }
-    </style>
 </head>
 
 <body class="h-full">
@@ -35,17 +24,17 @@
             <p class="components-reconnect-show">La connexion au serveur a été interrompue. La page va reprendre automatiquement.</p>
             <strong class="components-reconnect-failed">Connexion au serveur impossible</strong>
             <p class="components-reconnect-failed">Vérifiez le réseau, puis réessayez.</p>
-            <button id="components-reconnect-button" class="components-reconnect-failed kmk-recovery-button" type="button" onclick="window.Blazor?.reconnect?.()">Réessayer</button>
+            <button id="components-reconnect-button" class="components-reconnect-failed kmk-recovery-button" type="button" data-kmk-action="reconnect">Réessayer</button>
             <strong class="components-reconnect-rejected">La session n’est plus disponible</strong>
             <p class="components-reconnect-rejected">Le serveur a redémarré ou votre session a expiré.</p>
-            <button class="components-reconnect-rejected kmk-recovery-button" type="button" onclick="location.reload()">Recharger la page</button>
+            <button class="components-reconnect-rejected kmk-recovery-button" type="button" data-kmk-action="reload">Recharger la page</button>
         </div>
     </div>
 
     <div id="blazor-error-ui" data-nosnippet role="alert">
         Une erreur d’affichage est survenue.
         <a href="" class="reload" data-enhance-nav="false">Recharger la page</a>
-        <button type="button" class="dismiss" aria-label="Fermer" onclick="this.parentElement.style.display='none'">×</button>
+        <button type="button" class="dismiss" aria-label="Fermer" data-kmk-action="dismiss-error">×</button>
     </div>
     <script src="_framework/blazor.web.js"></script>
     <script src="js/app.js"></script>

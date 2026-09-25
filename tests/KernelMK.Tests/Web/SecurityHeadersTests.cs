@@ -21,6 +21,10 @@ public sealed class SecurityHeadersTests
         Assert.Equal("strict-origin-when-cross-origin", context.Response.Headers["Referrer-Policy"].ToString());
         Assert.Equal("camera=(), geolocation=(), microphone=(), payment=(), usb=()", context.Response.Headers["Permissions-Policy"].ToString());
         Assert.Equal("same-origin", context.Response.Headers["Cross-Origin-Opener-Policy"].ToString());
-        Assert.Equal("frame-ancestors 'self'; base-uri 'self'; object-src 'none'", context.Response.Headers["Content-Security-Policy"].ToString());
+        var policy = context.Response.Headers["Content-Security-Policy"].ToString();
+        Assert.Contains("default-src 'self'", policy);
+        Assert.Contains("script-src 'self'", policy);
+        Assert.DoesNotContain("http:", policy);
+        Assert.DoesNotContain("https:", policy);
     }
 }

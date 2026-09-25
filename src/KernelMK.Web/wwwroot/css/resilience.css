@@ -1,3 +1,7 @@
+details summary { list-style: none !important; }
+details summary::-webkit-details-marker,
+details summary::marker { display: none !important; content: " !important; }
+
 /* Résilience Blazor : état visible pendant une coupure du circuit et repli après une erreur de rendu. */
 #components-reconnect-modal {
   display: none;

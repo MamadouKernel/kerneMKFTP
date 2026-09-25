@@ -107,7 +107,7 @@ else
                                     @sharedKey
                                 </div>
                                 <button type="button" class="kmk-btn-secondary text-xs shrink-0 py-2 px-3"
-                                        onclick="navigator.clipboard.writeText('@sharedKey?.Replace(" ", "")').then(() => alert('Clé secrète copiée !'))">
+                                        data-kmk-action="copy" data-kmk-copy="@sharedKey?.Replace(" ", "")" data-kmk-message="Clé secrète copiée !">
                                     Copier
                                 </button>
                             </div>

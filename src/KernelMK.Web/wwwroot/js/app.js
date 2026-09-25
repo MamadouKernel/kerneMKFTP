@@ -206,6 +206,34 @@ document.addEventListener('keydown', function (e) {
     }
 });
 
+// Actions statiques déléguées : aucun gestionnaire JavaScript intégré au HTML n'est nécessaire.
+document.addEventListener('click', async function (e) {
+    const target = e.target instanceof Element ? e.target.closest('[data-kmk-action]') : null;
+    if (!target) return;
+
+    switch (target.dataset.kmkAction) {
+        case 'toggle-password':
+            kernelMK.togglePasswordVisibility(target);
+            break;
+        case 'global-search':
+            if (kernelMK.globalSearch.dotNetRef) await kernelMK.globalSearch.dotNetRef.invokeMethodAsync('ToggleOpen');
+            break;
+        case 'copy':
+            if (await kernelMK.copyToClipboard(target.dataset.kmkCopy || '')) {
+                window.alert(target.dataset.kmkMessage || 'Copié dans le presse-papier.');
+            }
+            break;
+        case 'reconnect':
+            await window.Blazor?.reconnect?.();
+            break;
+        case 'reload':
+            window.location.reload();
+            break;
+        case 'dismiss-error':
+            target.parentElement?.style.setProperty('display', 'none');
+            break;
+    }
+});
 // Fermeture automatique des menus <details class="kmk-dropdown"> lors d'un clic en dehors
 document.addEventListener('click', function (e) {
     document.querySelectorAll('details.kmk-dropdown[open]').forEach(function (d) {

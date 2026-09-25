@@ -12,7 +12,9 @@ public sealed class SecurityHeadersMiddleware(RequestDelegate next)
         headers.TryAdd("Permissions-Policy", "camera=(), geolocation=(), microphone=(), payment=(), usb=()");
         headers.TryAdd("Cross-Origin-Opener-Policy", "same-origin");
         // Restrict framing and document base URLs without blocking Blazor's inline scripts.
-        headers.TryAdd("Content-Security-Policy", "frame-ancestors 'self'; base-uri 'self'; object-src 'none'");
+        headers.TryAdd("Content-Security-Policy",
+            "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'self'; form-action 'self'; " +
+            "script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ws: wss:");
         return next(context);
     }
 }
