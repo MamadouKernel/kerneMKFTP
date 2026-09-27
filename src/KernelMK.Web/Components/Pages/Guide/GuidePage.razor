@@ -72,8 +72,10 @@
             <div class="kmk-card-body text-sm text-slate-600 space-y-2">
                 <p>Première page après connexion, rafraîchie automatiquement toutes les 5 secondes. Affiche en un
                    coup d'œil : nombre de jobs actifs/inactifs, jobs en cours, réussites/échecs des dernières 24h,
-                   fichiers traités, durée moyenne, prochaines exécutions planifiées et derniers incidents avec leur
-                   cause exacte (étape en cause + message d'erreur).</p>
+                   fichiers traités, durée moyenne et prochaines exécutions. Le tableau distingue un <strong>échec</strong>
+                   (un lancement terminé en erreur) d'un <strong>incident actif</strong> (un job dont le dernier lancement
+                   est toujours en échec). Plusieurs échecs du même job ne forment donc qu'un incident actif ; un succès
+                   ultérieur classe les anciens échecs comme rétablis sans effacer l'historique.</p>
                 <p>Si aucun job n'existe encore, un écran d'accueil te propose de créer le premier.</p>
             </div>
         </section>

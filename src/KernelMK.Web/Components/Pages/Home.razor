@@ -26,7 +26,7 @@
             {
                 <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200 shadow-sm">
                     <span class="h-2 w-2 rounded-full bg-rose-500 animate-pulse"></span>
-                    @_activeIncidentCount job(s) à traiter maintenant
+                    @_activeIncidentCount incident(s) actif(s) à traiter
                 </span>
             }
             else if (_totalJobs == 0)
@@ -124,14 +124,15 @@
     <span>Instantané mutualisé · @_snapshotAt.ToLocalTime().ToString("HH:mm:ss") · validité 15 s</span>
     <a href="operations" class="font-semibold text-brand-600">Centre des opérations →</a>
 </div>
+<div class="mb-2 text-xs text-slate-600"><strong>À retenir :</strong> un <strong>échec</strong> est un lancement terminé en erreur ; un <strong>incident actif</strong> est un job dont le dernier lancement est toujours en échec. Plusieurs échecs du même job peuvent donc correspondre à un seul incident.</div>
 <div class="mb-4 grid grid-cols-1 md:grid-cols-3 gap-2 text-xs">
-    <div class="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2"><strong class="text-rose-800">@_activeIncidentCount job(s) à traiter</strong><p class="text-rose-700 mt-0.5">Le dernier lancement de ces jobs est encore en échec.</p></div>
+    <div class="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2"><strong class="text-rose-800">@_activeIncidentCount incident(s) actif(s)</strong><p class="text-rose-700 mt-0.5">Un incident = un job dont le dernier lancement est encore en échec.</p></div>
     <div class="rounded-lg border border-slate-200 bg-white px-3 py-2"><strong class="text-slate-800">@_failedCount échec(s) d’exécution (@PeriodLabel)</strong><p class="text-slate-500 mt-0.5">Chaque lancement terminé en échec est conservé dans l’historique.</p></div>
     <div class="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2"><strong class="text-emerald-800">@_recoveredFailureCount échec(s) rétabli(s)</strong><p class="text-emerald-700 mt-0.5">Une exécution plus récente du même job a réussi.</p></div>
 </div>
 @if (_failedCount > _recentIncidents.Count)
 {
-    <p class="mb-4 text-xs text-amber-700">Le diagnostic détaille les @_recentIncidents.Count derniers incidents parmi @_failedCount sur la période. Les indicateurs globaux comptent toute la période.</p>
+    <p class="mb-4 text-xs text-amber-700">Le diagnostic détaille les @_recentIncidents.Count derniers échecs parmi @_failedCount sur la période. Les indicateurs globaux comptent toute la période.</p>
 }
 <!-- Diagnostic Global : y a-t-il une anomalie, et de quel côté ? -->
 <div class="mb-6 rounded-xl border @(_citSideCount + _armateurSideCount + _indetermineSideCount == 0 ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-white") p-4 shadow-sm">
@@ -151,7 +152,7 @@
             <span class="h-9 w-9 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center text-lg flex-shrink-0">⚠</span>
             <div>
                 <div class="font-bold text-slate-900 text-sm">Diagnostic global des anomalies (@PeriodLabel)</div>
-                <p class="text-xs text-slate-500 mt-0.5">Répartition des incidents par origine probable — voir « Derniers incidents &amp; Diagnostics » ci-dessous pour le détail par job.</p>
+                <p class="text-xs text-slate-500 mt-0.5">Répartition des échecs par origine probable — voir « Historique des échecs &amp; diagnostics » ci-dessous.</p>
             </div>
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -898,17 +899,17 @@
     </div>
 </div>
 
-<!-- Supervision des Incidents Récents & Diagnostic Intelligent -->
+<!-- Historique des échecs et état opérationnel des incidents -->
 <div class="kmk-card">
     <div class="kmk-card-header flex items-center justify-between">
         <div class="flex items-center gap-2">
             <span class="h-2.5 w-2.5 rounded-full @(_recentIncidents.Count > 0 ? "bg-rose-500" : "bg-emerald-500")"></span>
-            <span class="font-bold text-slate-900">Derniers incidents &amp; Diagnostics</span>
+            <span class="font-bold text-slate-900">Historique des échecs &amp; diagnostics</span>
         </div>
         @if (_recentIncidents.Count > 0)
         {
             <span class="px-2 py-0.5 rounded-full text-xs font-semibold bg-rose-100 text-rose-700">
-                @_recentIncidents.Count incident(s)
+                @_recentIncidents.Count échec(s) affiché(s)
             </span>
         }
     </div>
@@ -1069,7 +1070,7 @@ else if (_loadError is null)
     private int _incidentsPageSize = 10;
     private IEnumerable<DashboardIncident> PagedIncidents => _recentIncidents.Skip((_incidentsPage - 1) * _incidentsPageSize).Take(_incidentsPageSize);
 
-    // Diagnostic global : classification de chaque incident par origine probable (CIT vs partenaire/armateur)
+    // Diagnostic global : classification de chaque échec par origine probable (CIT vs partenaire/armateur)
     private Dictionary<Guid, (SideClassification Diag, string Armateur)> _incidentSideByExecution = new();
     private int _citSideCount, _armateurSideCount, _indetermineSideCount;
     private List<(string Label, int Count)> _citSideDetails = new();
