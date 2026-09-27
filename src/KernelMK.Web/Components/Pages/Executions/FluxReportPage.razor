@@ -86,7 +86,7 @@ else
                     <tr>
                         <th class="flux-job-column">Job</th>
                         <th class="min-w-[160px]">Armateur / Partenaire</th>
-                        <th class="min-w-[150px]">Dernière activité</th>
+                        <th class="min-w-[150px]">Dernière connexion</th>
                         <th class="min-w-[130px]">Connexions réussies</th>
                         <th class="min-w-[130px]">Connexions échouées</th>
                         <th class="min-w-[110px]">Taux de succès</th>
@@ -104,7 +104,7 @@ else
                             <td class="flux-job-column text-sm font-semibold text-slate-900" title="@row.JobName">@row.JobName</td>
                             <td class="text-sm text-slate-700">@row.Armateur</td>
                             <td>
-                                @{ var (silenceLabel, silenceClass) = FormatSilence(row.DerniereActivite); }
+                                @{ var (silenceLabel, silenceClass) = FormatSilence(row.DerniereConnexion); }
                                 <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold @silenceClass">
                                     @silenceLabel
                                 </span>
@@ -124,8 +124,8 @@ else
             <Pagination @bind-CurrentPage="_summaryPage" @bind-PageSize="_summaryPageSize" TotalItems="_summaryRows.Count" />
         </div>
         <p class="text-xs text-slate-400 mb-6 -mt-4">
-            « Dernière activité » : tous fichiers confondus, indépendamment de la période sélectionnée ci-dessus
-            (orange dès 3 jours sans échange, rouge dès 7 jours). « Taux de succès » : connexions réussies /
+            « Dernière connexion » : dernière connexion distante réussie, même sans fichier correspondant, indépendamment de la période sélectionnée
+            (orange dès 3 jours sans connexion, rouge dès 7 jours). « Taux de succès » : connexions réussies /
             tentatives totales sur la période affichée. « Aucun fichier trouvé » : connexion réussie mais rien ne
             correspondait au filtre de récupération à ce moment-là. « Connexions échouées » : échec réel
             (authentification, réseau, hôte injoignable...).
@@ -196,7 +196,7 @@ else
         int ConnexionsReussies, int ConnexionsEchouees, int AucunFichierDisponible,
         DateTime? DernierEnvoi, int TotalEnvoyes,
         DateTime? DerniereReception, int TotalRecus,
-        DateTime? DerniereActivite)
+        DateTime? DerniereConnexion)
     {
         public double? TauxSucces => (ConnexionsReussies + ConnexionsEchouees) > 0
             ? 100.0 * ConnexionsReussies / (ConnexionsReussies + ConnexionsEchouees)
@@ -338,26 +338,47 @@ else
             .Where(l => l.StartedAt >= fromUtc && l.StartedAt < toUtc)
             .ToListAsync();
 
-        // Dernière activité tous-temps (hors filtre de période) : un superviseur veut savoir "depuis quand on
-        // n'a rien reçu de cet armateur" même s'il a resserré la période affichée à quelques jours.
-        // Regroupé par étape et agrégé côté base (MAX) plutôt que de rapatrier tout l'historique en mémoire —
-        // cette requête ne grandit pas avec le volume total de logs au fil des années.
-        var lastSuccessLogs = await db.StepExecutionLogs
+        // Les échanges de fichiers et les connexions sont deux informations distinctes. Une connexion peut réussir
+        // alors qu'aucun fichier ne correspond au filtre : elle doit alimenter « Dernière connexion », mais pas
+        // « Dernier envoi » / « Dernière réception ».
+        var lastFileLogs = await db.StepExecutionLogs
             .Where(l => l.Status == StepExecutionStatus.Succes && l.FilesProcessedCsv != null && l.FilesProcessedCsv != "")
             .GroupBy(l => l.JobStepId)
-            .Select(g => new { JobStepId = g.Key, FinishedAt = g.Max(l => (DateTime?)(l.FinishedAt ?? l.StartedAt)), StartedAt = g.Max(l => l.StartedAt) })
+            .Select(g => new { JobStepId = g.Key, When = g.Max(l => (DateTime?)(l.FinishedAt ?? l.StartedAt)) })
+            .ToListAsync();
+
+        var lastSuccessfulConnections = await db.StepExecutionLogs
+            .Where(l => l.Status == StepExecutionStatus.Succes)
+            .GroupBy(l => l.JobStepId)
+            .Select(g => new { JobStepId = g.Key, When = g.Max(l => (DateTime?)(l.FinishedAt ?? l.StartedAt)) })
+            .ToListAsync();
+
+        var lastEmptyConnections = await db.StepExecutionLogs
+            .Where(l => l.Status == StepExecutionStatus.Echec && l.ErrorOutput != null && l.ErrorOutput.Contains(NoMatchingFileMarker))
+            .GroupBy(l => l.JobStepId)
+            .Select(g => new { JobStepId = g.Key, When = g.Max(l => (DateTime?)(l.FinishedAt ?? l.StartedAt)) })
             .ToListAsync();
 
         var globalLastDict = new Dictionary<(string Job, string Armateur), (DateTime? DernierEnvoi, DateTime? DerniereReception)>();
-        foreach (var log in lastSuccessLogs)
+        foreach (var log in lastFileLogs)
         {
             if (!stepInfo.TryGetValue(log.JobStepId, out var info)) continue;
-            var when = (log.FinishedAt ?? log.StartedAt).ToLocalTime();
+            var when = log.When!.Value.ToLocalTime();
             var key = (info.JobName, info.Armateur);
             globalLastDict.TryGetValue(key, out var last);
             globalLastDict[key] = info.Upload
                 ? (last.DernierEnvoi is null || when > last.DernierEnvoi ? when : last.DernierEnvoi, last.DerniereReception)
                 : (last.DernierEnvoi, last.DerniereReception is null || when > last.DerniereReception ? when : last.DerniereReception);
+        }
+
+        var globalLastConnectionDict = new Dictionary<(string Job, string Armateur), DateTime>();
+        foreach (var log in lastSuccessfulConnections.Concat(lastEmptyConnections))
+        {
+            if (log.When is null || !stepInfo.TryGetValue(log.JobStepId, out var info)) continue;
+            var when = log.When.Value.ToLocalTime();
+            var key = (info.JobName, info.Armateur);
+            if (!globalLastConnectionDict.TryGetValue(key, out var current) || when > current)
+                globalLastConnectionDict[key] = when;
         }
 
         var dict = new Dictionary<(DateOnly Date, string Job, string Armateur), (int Envoyes, int Recus)>();
@@ -413,19 +434,15 @@ else
         {
             summaryDict.TryGetValue(key, out var s);
             globalLastDict.TryGetValue(key, out var last);
-            var derniereActivite = (last.DernierEnvoi, last.DerniereReception) switch
-            {
-                (null, null) => (DateTime?)null,
-                (var e, null) => e,
-                (null, var r) => r,
-                (var e, var r) => e > r ? e : r
-            };
+            var derniereConnexion = globalLastConnectionDict.TryGetValue(key, out var connectionAt)
+                ? connectionAt
+                : (DateTime?)null;
             return new PartnerSummary(
                 key.JobName, key.Armateur,
                 s.Reussies, s.Echouees, s.AucunFichier,
                 last.DernierEnvoi, s.TotalEnvoyes,
                 last.DerniereReception, s.TotalRecus,
-                derniereActivite);
+                derniereConnexion);
         });
 
         if (!string.IsNullOrWhiteSpace(_filterJob))
@@ -441,7 +458,7 @@ else
 
         _rows = allRows.OrderByDescending(r => r.Date).ThenBy(r => r.JobName).ThenBy(r => r.Armateur).ToList();
         // Les partenaires les plus silencieux (jamais vus, ou vus il y a le plus longtemps) remontent en premier.
-        _summaryRows = allSummaryRows.OrderBy(r => r.DerniereActivite ?? DateTime.MinValue).ThenBy(r => r.JobName).ThenBy(r => r.Armateur).ToList();
+        _summaryRows = allSummaryRows.OrderBy(r => r.DerniereConnexion ?? DateTime.MinValue).ThenBy(r => r.JobName).ThenBy(r => r.Armateur).ToList();
 
         _jobNames = stepInfo.Values.Select(v => v.JobName).Distinct().OrderBy(n => n).ToList();
         _armateurNames = stepInfo.Values.Select(v => v.Armateur).Distinct().OrderBy(n => n).ToList();
@@ -449,14 +466,14 @@ else
         _loading = false;
     }
 
-    private static (string Label, string CssClass) FormatSilence(DateTime? derniereActivite)
+    private static (string Label, string CssClass) FormatSilence(DateTime? derniereConnexion)
     {
-        if (derniereActivite is null)
+        if (derniereConnexion is null)
         {
             return ("Jamais", "bg-red-100 text-red-700");
         }
 
-        var days = (DateTime.Now - derniereActivite.Value).TotalDays;
+        var days = (DateTime.Now - derniereConnexion.Value).TotalDays;
         var label = days < 1 ? "Aujourd'hui" : $"Il y a {(int)days} j";
 
         if (days >= SilenceAlerteDays) return (label, "bg-red-100 text-red-700");
@@ -497,14 +514,14 @@ else
 
     private static readonly string[] SummaryHeaders =
     {
-        "Job", "Armateur", "Dernière activité", "Connexions réussies", "Connexions échouées",
+        "Job", "Armateur", "Dernière connexion", "Connexions réussies", "Connexions échouées",
         "Taux de succès", "Aucun fichier trouvé", "Dernier envoi", "Total envoyés", "Dernière réception", "Total reçus"
     };
 
     private static string[] SummaryRowToArray(PartnerSummary row) => new[]
     {
         row.JobName, row.Armateur,
-        row.DerniereActivite.HasValue ? row.DerniereActivite.Value.ToString("dd/MM/yyyy HH:mm:ss") : "Jamais",
+        row.DerniereConnexion.HasValue ? row.DerniereConnexion.Value.ToString("dd/MM/yyyy HH:mm:ss") : "Jamais",
         row.ConnexionsReussies.ToString(), row.ConnexionsEchouees.ToString(),
         row.TauxSucces.HasValue ? $"{row.TauxSucces.Value:0}%" : "—",
         row.AucunFichierDisponible.ToString(),
