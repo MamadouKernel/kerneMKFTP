@@ -13,6 +13,8 @@ public sealed record DashboardSnapshot
     public int RunningCount { get; init; }
     public int SuccessCount { get; init; }
     public int FailedCount { get; init; }
+    public int ActiveIncidentCount { get; init; }
+    public int RecoveredFailureCount { get; init; }
     public long TotalFilesSent { get; init; }
     public long TotalFilesReceived { get; init; }
     public int PartnerCount { get; init; }
@@ -39,7 +41,7 @@ public sealed record DashboardNotification(string JobName, NotificationEvent Eve
 public enum AnomalySide { Cit, Armateur, Indetermine, FauxPositif }
 public sealed record SideClassification(AnomalySide Side, string Label, string CssClass, string Icon);
 public sealed record DashboardIncident(Guid Id, string JobName, DateTime StartedAt, string StepName,
-    SideClassification Diagnosis, string Armateur);
+    SideClassification Diagnosis, string Armateur, bool IsRecovered, bool IsActive);
 public sealed record DashboardPartner(string Armateur, long FichiersEnvoyes, long FichiersRecuperes,
     int TotalExecutions, DateTime? DernierEchange, string? DernierFichier)
 {

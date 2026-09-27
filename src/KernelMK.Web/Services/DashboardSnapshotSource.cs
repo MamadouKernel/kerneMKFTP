@@ -18,6 +18,13 @@ public sealed class DashboardSnapshotSource(IDbContextFactory<AppDbContext> fact
         var jobs = await db.Jobs.AsNoTracking().GroupBy(j => j.Enabled)
             .Select(g => new { Enabled = g.Key, Count = g.Count() }).ToListAsync(cancellationToken);
         var running = await db.JobExecutions.CountAsync(e => e.Status == JobStatus.EnCours, cancellationToken);
+        // Un incident actif correspond à un job dont la dernière exécution est encore en échec.
+        // Un succès ultérieur rétablit le job sans effacer ses échecs historiques.
+        var activeIncidentCount = await db.Jobs.AsNoTracking()
+            .CountAsync(j => j.LastStatus == JobStatus.Echec, cancellationToken);
+        var recoveredFailureCount = await db.JobExecutions.AsNoTracking()
+            .CountAsync(e => e.StartedAt >= since && e.Status == JobStatus.Echec &&
+                e.Job != null && e.Job.LastStatus == JobStatus.Succes, cancellationToken);
         // SQLite translates DateTime.Ticks to SQL. No execution history is materialized for this aggregate.
         var totals = await db.JobExecutions.AsNoTracking()
             .Where(e => e.StartedAt >= since && e.FinishedAt != null).GroupBy(e => 1)
@@ -71,6 +78,8 @@ public sealed class DashboardSnapshotSource(IDbContextFactory<AppDbContext> fact
             .Select(e => new
             {
                 e.Id, JobName = e.Job == null ? "Job supprimé" : e.Job.Name.Substring(0, 160), e.StartedAt,
+                IsRecovered = e.Job != null && e.Job.LastStatus == JobStatus.Succes,
+                IsActive = e.Job == null || e.Job.LastStatus == JobStatus.Echec,
                 Message = e.Message == null ? null : e.Message.Substring(0, 2048),
                 Failure = e.StepLogs.Where(l => l.Status == StepExecutionStatus.Echec || l.Status == StepExecutionStatus.Timeout)
                     .OrderBy(l => l.Order).Select(l => new
@@ -81,7 +90,8 @@ public sealed class DashboardSnapshotSource(IDbContextFactory<AppDbContext> fact
             }).ToListAsync(cancellationToken);
         var incidents = incidentRows.Select(e => new DashboardIncident(e.Id, e.JobName, e.StartedAt,
             e.Failure?.StepName ?? "Étape inconnue", DashboardDiagnostics.ClassifySide(e.Failure?.ErrorOutput ?? e.Message),
-            e.Failure is not null && stepConfigs.TryGetValue(e.Failure.JobStepId, out var info) ? info.Armateur : "—")).ToImmutableArray();
+            e.Failure is not null && stepConfigs.TryGetValue(e.Failure.JobStepId, out var info) ? info.Armateur : "—",
+            e.IsRecovered, e.IsActive)).ToImmutableArray();
 
         var connectionGroups = await db.StepExecutionLogs.AsNoTracking()
             .Where(l => l.StartedAt >= since && (l.Status == StepExecutionStatus.Succes || l.Status == StepExecutionStatus.Echec || l.Status == StepExecutionStatus.Timeout))
@@ -128,6 +138,7 @@ public sealed class DashboardSnapshotSource(IDbContextFactory<AppDbContext> fact
             GeneratedAt = timeProvider.GetUtcNow().UtcDateTime, PeriodHours = periodHours,
             TotalJobs = jobs.Sum(j => j.Count), ActiveJobs = jobs.Where(j => j.Enabled).Sum(j => j.Count),
             RunningCount = running, SuccessCount = totals?.Success ?? 0, FailedCount = totals?.Failed ?? 0,
+            ActiveIncidentCount = activeIncidentCount, RecoveredFailureCount = recoveredFailureCount,
             AverageDurationSeconds = Math.Max(0, totals?.Average ?? 0), FilesProcessed = filesProcessed,
             Upcoming = upcoming.ToImmutableArray(),
             RecentExecutions = executions.Select(e => e with { FileCount = executionFiles.GetValueOrDefault(e.Id) }).ToImmutableArray(),
